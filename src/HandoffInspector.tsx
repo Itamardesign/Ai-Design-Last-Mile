@@ -50,7 +50,7 @@ import {
   Wand2,
   X,
 } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import {
   CUSTOM_DESIGN_TOKENS_STORAGE_KEY,
   defaultDeviceForKind,
@@ -66,6 +66,7 @@ import { useDesignTokens } from './DesignTokensProvider.js';
 import { fallbackDesignTokens } from './detect/defaultTokens.js';
 import type { ColorToken as BrandColorToken, RadiusToken, SpacingToken } from './types.js';
 import { ensureDesignToolsStyles } from './injectStyles.js';
+import { detectFontStacksFromPage, primaryFontFamily } from './detect/detectFromPage.js';
 
 /**
  * Module-level (not React state): a handful of top-level helper functions below the component
@@ -1991,6 +1992,19 @@ function HandoffInspectorPanel() {
   const colorTokens = secondaryCollectionActive ? aiGuideColorTokens : brandColorTokens;
   const typePresets = secondaryCollectionActive ? aiGuideTypographyRecipes : typographyRecipes;
 
+  /**
+   * The font list is read from the page rather than hard-coded.
+   *
+   * This dropdown used to name the fonts of the site the inspector was extracted from, so on any
+   * other project every option applied a font that did not exist there. Sampling the live page
+   * means the choices are always the fonts the site actually loaded.
+   */
+  const pageFonts = useMemo(() => {
+    if (!open || typeof document === 'undefined') return [];
+    // Keeps the authored stack as the value so the fallback survives, e.g. `Georgia, serif`.
+    return detectFontStacksFromPage(document.body).map((font) => ({ label: font.label, value: font.stack }));
+  }, [open]);
+
   const refresh = useCallback((element = selectedRef.current || hoverRef.current) => {
     if (element && element.isConnected) setSnapshot(createSnapshot(element));
   }, []);
@@ -2744,11 +2758,11 @@ function HandoffInspectorPanel() {
                 <NumberField label="Opacity" value={cssNumber(snapshot.styles.opacity, 1) * 100} min={0} max={100} suffix="%" onChange={(value) => applyStyle('opacity', String(Number(value) / 100))} />
               </ToolSection>
               {['text', 'button', 'link', 'input'].includes(snapshot.kind) && <ToolSection title="Typography" icon={Type}>
-                <label className="hi-control"><span>Font</span><select value={snapshot.styles['font-family']} onChange={(event) => applyStyle('font-family', event.target.value)}><option value="var(--font-primary-family)">Primary · Product</option><option value="var(--font-secondary-family)">Editorial · Display</option><option value="Rubik, sans-serif">Rubik</option><option value="Poppins, sans-serif">Poppins</option><option value="var(--font-geom-family)">Geom</option><option value="var(--font-unbounded-family)">Unbounded</option><option value="var(--font-marcellus-family)">Marcellus</option></select></label>
+                <label className="hi-control"><span>Font</span><select value={snapshot.styles['font-family']} onChange={(event) => applyStyle('font-family', event.target.value)}>{!pageFonts.some((font) => font.value === snapshot.styles['font-family']) && <option value={snapshot.styles['font-family']}>Current · {primaryFontFamily(snapshot.styles['font-family'])}</option>}{pageFonts.map((font) => <option key={font.value} value={font.value}>{font.label}</option>)}</select></label>
                 <div className="hi-control-pair"><label className="hi-control hi-compact-control"><span>Size</span><select value={snapshot.styles['font-size']} onChange={(event) => applyStyle('font-size', event.target.value)}>{FONT_SIZES.map((size) => <option key={size}>{size}</option>)}</select></label><label className="hi-control hi-compact-control"><span>Weight</span><select value={snapshot.styles['font-weight']} onChange={(event) => applyStyle('font-weight', event.target.value)}>{['300', '400', '500', '600', '700', '800', '900'].map((weight) => <option key={weight}>{weight}</option>)}</select></label></div>
                 <div className="hi-control-pair"><NumberField label="Line" value={snapshot.styles['line-height']} onChange={(value) => applyStyle('line-height', value)} /><NumberField label="Track" value={snapshot.styles['letter-spacing']} step={0.1} onChange={(value) => applyStyle('letter-spacing', value)} /></div>
                 <div className="hi-segmented" aria-label="Text alignment">{TEXT_ALIGNMENTS.map(({ value, label, Icon }) => <button key={value} title={label} aria-label={label} className={snapshot.styles['text-align'] === value ? 'is-active' : ''} onClick={() => applyStyle('text-align', value)}><Icon size={14} /></button>)}</div>
-                <div className="hi-type-presets">{typePresets.slice(2).map((recipe) => <button key={recipe.label} onClick={() => recipe.css.split(';').filter(Boolean).forEach((part) => { const [property, ...value] = part.split(':'); applyStyle(property.trim(), value.join(':').trim()); })}>{recipe.label}</button>)}</div>
+                <div className="hi-type-presets">{typePresets.map((recipe) => <button key={recipe.label} onClick={() => recipe.css.split(';').filter(Boolean).forEach((part) => { const [property, ...value] = part.split(':'); applyStyle(property.trim(), value.join(':').trim()); })}>{recipe.label}</button>)}</div>
               </ToolSection>}
               <ToolSection title="Effects" icon={Sparkles} defaultOpen={false}>
                 <label className="hi-control"><span>Shadow</span><select value={snapshot.styles['box-shadow']} onChange={(event) => applyStyle('box-shadow', event.target.value)}><option value="none">None</option><option value="0 1px 2px rgba(0,0,0,.08)">Subtle</option><option value="0 8px 24px rgba(23,18,87,.12)">Elevated</option><option value="0 20px 50px rgba(23,18,87,.18)">Floating</option><option value={snapshot.styles['box-shadow']}>Current / custom</option></select></label>
