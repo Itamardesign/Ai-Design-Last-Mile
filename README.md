@@ -36,10 +36,20 @@ export default function App() {
 
 ### How you actually see it
 
-A floating **"Inspect"** button appears in the bottom corner of your running app. Click it to
-open the panel, then hover and click any element on the page to select it. From there you can
-edit its color, spacing and typography, preview it across device sizes, run an accessibility
-audit, and copy out the resulting CSS.
+**The inspector is off by default.** Add `?designmode=true` to your URL to switch it on:
+
+```
+http://localhost:5173/?designmode=true
+```
+
+A floating **"Inspect"** button then appears in the corner of the page. Click it to open the
+panel, then hover and click any element to select it. From there you can edit its color, spacing
+and typography, preview it across device sizes, run an accessibility audit, and copy out the
+resulting CSS.
+
+Without the flag the component renders nothing at all — no button, no listeners, and not even
+its stylesheet — so it is safe to leave mounted in a production build. Sending someone a link
+with `?designmode=true` is all they need to start inspecting.
 
 `Esc` deselects the current element, and closes the inspector when nothing is selected.
 
@@ -47,18 +57,23 @@ It reads and writes the live DOM, so it works against your real rendered app, no
 edits are visual only — nothing is written back to your source files; you copy the CSS out and
 apply it yourself.
 
-### Two things worth knowing
+### Overriding the gate
 
-**Styles load themselves** on first render, so there is nothing to import. (The raw stylesheet
-is still exported as `@merakimind/design-inspector/design-tools.css` if you'd rather bundle it.)
-
-**It ships to production if you let it.** The component renders that launcher button for every
-visitor. Gate it if you don't want that:
+Pass `enabled` to decide for yourself and skip the URL check entirely — for example, to have the
+inspector always on while developing:
 
 ```tsx
-{import.meta.env.DEV && <HandoffInspector />}   // Vite
-{process.env.NODE_ENV !== 'production' && <HandoffInspector />}   // Next.js / CRA
+<HandoffInspector enabled={import.meta.env.DEV} />              // Vite
+<HandoffInspector enabled={process.env.NODE_ENV !== 'production'} />  // Next.js / CRA
 ```
+
+`enabled` always wins: `enabled={false}` keeps it off even with `?designmode=true` in the URL.
+
+### Styles
+
+They load themselves the first time the inspector opens, so there is nothing to import. (The raw
+stylesheet is still exported as `@merakimind/design-inspector/design-tools.css` if you'd rather
+bundle it yourself.)
 
 ### Optional: give it your design tokens
 

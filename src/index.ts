@@ -1,4 +1,4 @@
-export { default as HandoffInspector } from './HandoffInspector.js';
+export { default as HandoffInspector, DESIGN_MODE_PARAM, type HandoffInspectorProps } from './HandoffInspector.js';
 export { DesignTokensProvider, useDesignTokens } from './DesignTokensProvider.js';
 export { detectTokensFromLiveCss } from './detect/detectFromLiveCss.js';
 export { auditPageForTokenSuggestions } from './detect/auditForSuggestions.js';

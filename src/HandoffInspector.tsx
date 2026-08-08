@@ -67,9 +67,6 @@ import { fallbackDesignTokens } from './detect/defaultTokens.js';
 import type { ColorToken as BrandColorToken, RadiusToken, SpacingToken } from './types.js';
 import { ensureDesignToolsStyles } from './injectStyles.js';
 
-// Self-installing styles: no CSS import required from the consumer, and a safe no-op on the server.
-ensureDesignToolsStyles();
-
 /**
  * Module-level (not React state): a handful of top-level helper functions below the component
  * (matchToken, findNearestToken) need the active spacing/radius scale but aren't components
@@ -1927,7 +1924,11 @@ function MeasurementDetails({ snapshot }: { snapshot: ElementSnapshot }) {
   </>;
 }
 
-export default function HandoffInspector() {
+function HandoffInspectorPanel() {
+  // Only reached when the design-mode gate is open, so a production bundle never pays for the
+  // stylesheet injection.
+  ensureDesignToolsStyles();
+
   const { tokens: designTokens, source: designTokensSource, generateFromPage: generateDesignSystemFromPage } = useDesignTokens();
   const brandColorTokens = designTokens.collections[0]?.colors ?? [];
   const aiGuideColorTokens = designTokens.collections[1]?.colors ?? brandColorTokens;
@@ -2782,4 +2783,52 @@ export default function HandoffInspector() {
       </aside>
     </>}
   </div>;
+}
+
+/** Query-string flag that opts a page into the inspector. */
+export const DESIGN_MODE_PARAM = 'designmode';
+
+/** True when the current URL carries `?designmode=true`. */
+function designModeInUrl(): boolean {
+  if (!isBrowser) return false;
+  try {
+    return new URLSearchParams(window.location.search).get(DESIGN_MODE_PARAM)?.toLowerCase() === 'true';
+  } catch {
+    return false;
+  }
+}
+
+export type HandoffInspectorProps = {
+  /**
+   * Force the inspector on or off, bypassing the URL check — e.g. `enabled={import.meta.env.DEV}`
+   * to have it always available locally. Omit to use `?designmode=true`.
+   */
+  enabled?: boolean;
+};
+
+/**
+ * Renders the inspector only when the page opts in with `?designmode=true`.
+ *
+ * The gate exists because this component mounts a visible launcher button and binds global
+ * pointer/key listeners — without it, dropping `<HandoffInspector />` into an app ships a design
+ * tool to every real visitor. Defaulting to off means shipping it is a deliberate act.
+ *
+ * The flag is deliberately read after mount rather than during render: the server has no URL to
+ * read, so deciding during render would make the server and client disagree and trip a hydration
+ * mismatch in Next.js/Remix.
+ */
+export default function HandoffInspector({ enabled }: HandoffInspectorProps = {}) {
+  const [urlEnabled, setUrlEnabled] = useState(false);
+
+  useEffect(() => {
+    if (enabled !== undefined) return;
+    const read = () => setUrlEnabled(designModeInUrl());
+    read();
+    // Client-side navigation can add or drop the flag without a page load.
+    window.addEventListener('popstate', read);
+    return () => window.removeEventListener('popstate', read);
+  }, [enabled]);
+
+  if (!(enabled ?? urlEnabled)) return null;
+  return <HandoffInspectorPanel />;
 }
