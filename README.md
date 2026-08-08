@@ -18,26 +18,62 @@ Node 18+ is required to install, because the package builds itself from source o
 
 ## Usage
 
-Styles are injected automatically on first render — there is no CSS import to remember. (The
-raw stylesheet is still exported as `@merakimind/design-inspector/design-tools.css` if you'd
-rather bundle it yourself.)
+Render `<HandoffInspector />` once, anywhere in your app. That's the whole setup — no CSS
+import, no provider, no configuration:
 
 ```tsx
-import { DesignTokensProvider, HandoffInspector } from '@merakimind/design-inspector';
+import { HandoffInspector } from '@merakimind/design-inspector';
 
 export default function App() {
   return (
-    <DesignTokensProvider tokens={myTokens /* optional — see below */}>
+    <>
       {/* ...your app... */}
       <HandoffInspector />
-    </DesignTokensProvider>
+    </>
   );
 }
 ```
 
-`HandoffInspector` renders nothing until toggled open — wire that however you like (a query
-param, a keyboard shortcut, a dev-only route). It reads/writes the live DOM directly, so it works
-against your real rendered app, not a mock.
+### How you actually see it
+
+A floating **"Inspect"** button appears in the bottom corner of your running app. Click it to
+open the panel, then hover and click any element on the page to select it. From there you can
+edit its color, spacing and typography, preview it across device sizes, run an accessibility
+audit, and copy out the resulting CSS.
+
+`Esc` deselects the current element, and closes the inspector when nothing is selected.
+
+It reads and writes the live DOM, so it works against your real rendered app, not a mock. Your
+edits are visual only — nothing is written back to your source files; you copy the CSS out and
+apply it yourself.
+
+### Two things worth knowing
+
+**Styles load themselves** on first render, so there is nothing to import. (The raw stylesheet
+is still exported as `@merakimind/design-inspector/design-tools.css` if you'd rather bundle it.)
+
+**It ships to production if you let it.** The component renders that launcher button for every
+visitor. Gate it if you don't want that:
+
+```tsx
+{import.meta.env.DEV && <HandoffInspector />}   // Vite
+{process.env.NODE_ENV !== 'production' && <HandoffInspector />}   // Next.js / CRA
+```
+
+### Optional: give it your design tokens
+
+Wrapping in `DesignTokensProvider` lets the inspector suggest bindings against your own design
+system instead of guessing. It is entirely optional — without it, the inspector detects your CSS
+variables automatically and falls back to sensible defaults.
+
+```tsx
+import { DesignTokensProvider, HandoffInspector } from '@merakimind/design-inspector';
+
+<DesignTokensProvider tokens={myTokens}>
+  {/* ...your app... */}
+  <HandoffInspector />
+</DesignTokensProvider>
+```
 
 ## Where its tokens come from
 
