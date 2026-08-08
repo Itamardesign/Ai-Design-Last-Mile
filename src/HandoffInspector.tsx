@@ -256,11 +256,31 @@ type StoredChange = {
 
 type StoredSession = { savedAt: string; variables: Array<[string, string]>; changes: StoredChange[] };
 
+/**
+ * The inspector only ever does anything in a browser, but the module still gets imported and
+ * first-rendered on the server (Next.js, Remix, tests). Reading `window` during render would
+ * crash that render outright, so every pre-mount storage read goes through here.
+ *
+ * The try/catch is not just for SSR: `localStorage` also throws in private-mode Safari and in
+ * sandboxed iframes, where losing a saved preference is fine but crashing the tool is not.
+ */
+const isBrowser = typeof window !== 'undefined';
+
+function readStoredPreference(key: string): string | null {
+  if (!isBrowser) return null;
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
 function sessionKey() {
   return `${SESSION_STORAGE_PREFIX}${window.location.pathname.replace(/\/+$/, '') || '/'}`;
 }
 
 function readStoredSession(): StoredSession | null {
+  if (!isBrowser) return null;
   try {
     const raw = window.localStorage.getItem(sessionKey());
     if (!raw) return null;
@@ -338,7 +358,7 @@ function toColorInput(value: string) {
 
 function readCustomDesignTokens(): CustomDesignToken[] {
   try {
-    const parsed = JSON.parse(window.localStorage.getItem(CUSTOM_DESIGN_TOKENS_STORAGE_KEY) ?? '[]');
+    const parsed = JSON.parse(readStoredPreference(CUSTOM_DESIGN_TOKENS_STORAGE_KEY) ?? '[]');
     return Array.isArray(parsed) ? parsed : [];
   } catch {
     return [];
@@ -1227,7 +1247,7 @@ function DeviceOverlay({ presetId, onPresetChange, snapshot, dock, hidden, editV
   const [orientation, setOrientation] = useState<'portrait' | 'landscape'>('portrait');
   // Start from the direction the reader is actually browsing in. Forcing LTR would render a Hebrew
   // page in a left-to-right layout, which is a worse lie than not previewing it at all.
-  const [direction, setDirection] = useState<'ltr' | 'rtl'>(() => (document.documentElement.dir === 'rtl' ? 'rtl' : 'ltr'));
+  const [direction, setDirection] = useState<'ltr' | 'rtl'>(() => (isBrowser && document.documentElement.dir === 'rtl' ? 'rtl' : 'ltr'));
   const [freezeReveals, setFreezeReveals] = useState(true);
   const [zoom, setZoom] = useState<'fit' | number>('fit');
   const [picking, setPicking] = useState(true);
@@ -1921,7 +1941,7 @@ export default function HandoffInspector() {
   activeRadiusTokens = inspectorRadiusTokens;
   const [open, setOpen] = useState(false);
   const [scope, setScope] = useState<DesignScope>('free');
-  const [dock, setDock] = useState<'left' | 'right'>(() => window.localStorage.getItem('meraki-inspector-dock') === 'left' ? 'left' : 'right');
+  const [dock, setDock] = useState<'left' | 'right'>(() => readStoredPreference('meraki-inspector-dock') === 'left' ? 'left' : 'right');
   const [locked, setLocked] = useState(false);
   const [snapshot, setSnapshot] = useState<ElementSnapshot | null>(null);
   const [changes, setChanges] = useState<DesignChange[]>([]);
@@ -1933,7 +1953,7 @@ export default function HandoffInspector() {
   const [editVersion, setEditVersion] = useState(0);
   const [restorable, setRestorable] = useState<StoredSession | null>(null);
   const [restoreNote, setRestoreNote] = useState<string | null>(null);
-  const [canvasEdit, setCanvasEdit] = useState(() => window.localStorage.getItem('meraki-inspector-canvas-edit') !== 'off');
+  const [canvasEdit, setCanvasEdit] = useState(() => readStoredPreference('meraki-inspector-canvas-edit') !== 'off');
   /** Live geometry while a handle is being dragged — the snapshot only catches up once the drag commits. */
   const [canvasRect, setCanvasRect] = useState<ElementSnapshot['rect'] | null>(null);
   const [canvasSize, setCanvasSize] = useState<string | null>(null);
