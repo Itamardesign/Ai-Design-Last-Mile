@@ -73,9 +73,3 @@ The `source` field from `useDesignTokens()` tells you which of these is active.
 If your project has more than one design language (e.g. marketing vs. product), pass 2 entries
 in `tokens.collections` — the inspector shows a switcher in its header. With 0 or 1 collections
 the switcher is hidden.
-
-## What's NOT included
-
-The original blog-style walkthrough page that demos this tool (`InspectorPost.tsx` in the source
-repo) is intentionally left out — it's tightly coupled to that project's i18n, analytics, and
-brand assets, and isn't part of the reusable tool.
