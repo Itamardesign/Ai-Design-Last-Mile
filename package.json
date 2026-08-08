@@ -1,0 +1,48 @@
+{
+  "name": "@merakimind/design-inspector",
+  "version": "0.1.0",
+  "description": "A live, in-browser design inspection and handoff tool: select any element, edit it visually, and export design-system-ready CSS + instructions.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./detect/loadStaticConfig.node": {
+      "types": "./dist/detect/loadStaticConfig.node.d.ts",
+      "default": "./dist/detect/loadStaticConfig.node.js"
+    },
+    "./design-tools.css": "./dist/design-tools.css"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build": "npm run clean && tsc -p tsconfig.json && node scripts/copy-assets.mjs",
+    "prepublishOnly": "npm run build"
+  },
+  "peerDependencies": {
+    "react": ">=18",
+    "react-dom": ">=18"
+  },
+  "dependencies": {
+    "lucide-react": "^0.468.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.14.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "react": "^19.0.1",
+    "react-dom": "^19.0.1",
+    "typescript": "~5.8.2"
+  },
+  "keywords": ["design-system", "devtools", "inspector", "handoff", "react"],
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  }
+}
