@@ -11,7 +11,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { join } from 'node:path';
-import type { ColorToken, DesignTokens, RadiusToken, SpacingToken } from '../types';
+import type { ColorToken, DesignTokens, RadiusToken, SpacingToken } from '../types.js';
 
 function fromTokensJson(path: string): DesignTokens | null {
   if (!existsSync(path)) return null;

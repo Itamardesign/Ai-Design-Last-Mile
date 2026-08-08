@@ -1,4 +1,4 @@
-import type { DesignSystemCollection, DesignTokens, RadiusToken, SpacingToken } from '../types';
+import type { DesignSystemCollection, DesignTokens, RadiusToken, SpacingToken } from '../types.js';
 
 const HEX_OR_FUNC_COLOR = /^(#|rgb|hsl|oklch|lab|lch|color\()/i;
 

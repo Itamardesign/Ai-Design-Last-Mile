@@ -9,20 +9,21 @@ Extracted from the MERKAI-MIND marketing site's inspector so it can be reused in
 
 ## Install
 
-This currently ships as source (no publish step yet). Two ways to consume it:
+```bash
+npm install github:Itamardesign/Ai-Design-Last-Mile
+```
 
-1. **Git submodule / subtree** — pull `packages/design-inspector` into another repo and import
-   directly; your bundler (Vite, webpack, etc.) transpiles the `.tsx`/`.ts` files like any other
-   local source.
-2. **Copy** — for a one-off project, copy the `src/` folder in and adjust the import path.
-
-A real npm publish just needs `tsc -p tsconfig.json` run first (emits `dist/` with `.js` + `.d.ts`).
+`react` and `react-dom` (18 or 19) are peer dependencies and must already be in your project.
+Node 18+ is required to install, because the package builds itself from source on install.
 
 ## Usage
 
+Styles are injected automatically on first render — there is no CSS import to remember. (The
+raw stylesheet is still exported as `@merakimind/design-inspector/design-tools.css` if you'd
+rather bundle it yourself.)
+
 ```tsx
 import { DesignTokensProvider, HandoffInspector } from '@merakimind/design-inspector';
-import '@merakimind/design-inspector/design-tools.css';
 
 export default function App() {
   return (

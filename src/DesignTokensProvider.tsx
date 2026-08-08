@@ -1,8 +1,8 @@
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
-import type { DesignTokens, DesignTokensSource } from './types';
-import { fallbackDesignTokens } from './detect/defaultTokens';
-import { detectTokensFromLiveCss } from './detect/detectFromLiveCss';
-import { auditPageForTokenSuggestions } from './detect/auditForSuggestions';
+import type { DesignTokens, DesignTokensSource } from './types.js';
+import { fallbackDesignTokens } from './detect/defaultTokens.js';
+import { detectTokensFromLiveCss } from './detect/detectFromLiveCss.js';
+import { auditPageForTokenSuggestions } from './detect/auditForSuggestions.js';
 
 type DesignTokensContextValue = {
   tokens: DesignTokens;

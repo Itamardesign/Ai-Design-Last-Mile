@@ -61,11 +61,14 @@ import {
   type CustomDesignToken,
   type DeviceKind,
   type DevicePresetId,
-} from './inspectorConfig';
-import { useDesignTokens } from './DesignTokensProvider';
-import { fallbackDesignTokens } from './detect/defaultTokens';
-import type { ColorToken as BrandColorToken, RadiusToken, SpacingToken } from './types';
-import './design-tools.css';
+} from './inspectorConfig.js';
+import { useDesignTokens } from './DesignTokensProvider.js';
+import { fallbackDesignTokens } from './detect/defaultTokens.js';
+import type { ColorToken as BrandColorToken, RadiusToken, SpacingToken } from './types.js';
+import { ensureDesignToolsStyles } from './injectStyles.js';
+
+// Self-installing styles: no CSS import required from the consumer, and a safe no-op on the server.
+ensureDesignToolsStyles();
 
 /**
  * Module-level (not React state): a handful of top-level helper functions below the component
@@ -1310,7 +1313,7 @@ function DeviceOverlay({ presetId, onPresetChange, snapshot, dock, hidden, editV
     const node = resolveInDocument(frameDoc, snapshot);
     if (!node) {
       setSelectionBox(null);
-      setMetrics({ found: false, width: 0, height: 0, fontSize: 0, padding: '—', issues: ['This element is not rendered at this screen size.'] });
+      setMetrics({ found: false, width: 0, height: 0, fontSize: 0, padding: '—', issues: [{ id: 'hidden', text: 'This element is not rendered at this screen size.' }] });
       return;
     }
     const rect = node.getBoundingClientRect();

@@ -1,4 +1,4 @@
-import type { DesignTokens } from '../types';
+import type { DesignTokens } from '../types.js';
 
 /** Last-resort tokens used only when nothing was provided, statically detected, or found live in the page's CSS. */
 export const fallbackDesignTokens: DesignTokens = {

@@ -1,4 +1,4 @@
-import type { DesignSystemCollection, DesignTokens } from '../types';
+import type { DesignSystemCollection, DesignTokens } from '../types.js';
 
 const SPACING_PROPS = ['margin-top', 'margin-right', 'margin-bottom', 'margin-left', 'padding-top', 'padding-right', 'padding-bottom', 'padding-left', 'gap'];
 const COLOR_PROPS = ['color', 'background-color', 'border-color'];

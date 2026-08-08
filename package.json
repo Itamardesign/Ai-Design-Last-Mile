@@ -18,12 +18,22 @@
   },
   "files": [
     "dist",
+    "src",
+    "scripts",
+    "tsconfig.json",
     "README.md"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Itamardesign/Ai-Design-Last-Mile.git"
+  },
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
-    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
-    "build": "npm run clean && tsc -p tsconfig.json && node scripts/copy-assets.mjs",
-    "prepublishOnly": "npm run build"
+    "clean": "node scripts/clean.mjs",
+    "build": "npm run clean && node scripts/gen-styles.mjs && tsc -p tsconfig.json && node scripts/copy-assets.mjs",
+    "prepare": "node scripts/prepare.mjs"
   },
   "peerDependencies": {
     "react": ">=18",

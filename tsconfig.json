@@ -9,6 +9,7 @@
     "skipLibCheck": true,
     "esModuleInterop": true,
     "declaration": true,
+    "noEmitOnError": true,
     "outDir": "dist",
     "rootDir": "src"
   },
