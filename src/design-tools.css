@@ -1515,3 +1515,77 @@
 /* Big enough to actually judge a colour, and to hit on a laptop trackpad. */
 .hi-color-grid { display: grid; gap: 7px; grid-template-columns: repeat(auto-fill, minmax(34px, 1fr)); }
 .hi-color-grid .hi-swatch { width: 100%; height: 34px; border-radius: 9px; }
+
+/* ===========================================================================
+   Comments and the design/browse switch.
+   =========================================================================== */
+
+/* --- the mode switch: the way back out of a page that ignores clicks ------ */
+.hi-mode-toggle {
+  position: fixed; z-index: 2147483000; bottom: 22px; left: 50%;
+  display: inline-flex; padding: 9px 15px; gap: 9px; align-items: center;
+  transform: translateX(-50%);
+  border: 0; border-radius: 999px; color: #fff; background: #16181f;
+  font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer;
+  box-shadow: 0 12px 30px rgba(10, 12, 24, .3);
+  transition: background-color .18s ease, transform .18s ease;
+}
+.hi-mode-toggle:hover { transform: translateX(-50%) translateY(-1px); }
+.hi-mode-toggle em { padding: 3px 8px; border-radius: 999px; background: rgba(255, 255, 255, .16); font-size: 10.5px; font-style: normal; letter-spacing: .04em; text-transform: uppercase; }
+.hi-mode-dot { width: 8px; height: 8px; border-radius: 50%; }
+.hi-mode-toggle.is-designing .hi-mode-dot { background: #34d399; box-shadow: 0 0 0 4px rgba(52, 211, 153, .22); }
+/* Amber, not green: editing is paused, which is a state worth noticing. */
+.hi-mode-toggle.is-browsing { background: #7c3cff; }
+.hi-mode-toggle.is-browsing .hi-mode-dot { background: #fbbf24; box-shadow: 0 0 0 4px rgba(251, 191, 36, .26); }
+
+/* --- pins over commented elements ---------------------------------------- */
+.hi-comment-pins { position: fixed; z-index: 2147482000; inset: 0; pointer-events: none; }
+.hi-comment-pin {
+  position: absolute; display: inline-flex; padding: 3px 7px 3px 5px; gap: 3px;
+  align-items: center; transform: translate(-6px, -8px);
+  border: 1.5px solid #fff; border-radius: 999px 999px 999px 3px;
+  color: #fff; background: #7c3cff; font: inherit; font-size: 10.5px; font-weight: 700;
+  cursor: pointer; pointer-events: auto;
+  box-shadow: 0 4px 12px rgba(31, 33, 68, .3);
+}
+.hi-comment-pin:hover { background: #6a2ee0; }
+
+/* --- comment mode button in the header ----------------------------------- */
+.hi-comment-mode { position: relative; }
+.hi-comment-mode.is-active { color: var(--hi-accent); background: var(--hi-accent-soft, rgba(139, 92, 246, .14)); }
+.hi-comment-mode > i {
+  position: absolute; top: -3px; right: -3px; min-width: 15px; padding: 0 3px;
+  border-radius: 999px; color: #fff; background: #7c3cff;
+  font-size: 9px; font-style: normal; font-weight: 700; line-height: 15px; text-align: center;
+}
+
+/* --- composer + thread ---------------------------------------------------- */
+.hi-comment-composer { display: grid; gap: 6px; }
+.hi-comment-composer textarea {
+  min-height: 62px; padding: 9px 10px; border: 1px solid var(--hi-border); border-radius: 10px;
+  color: var(--hi-text); background: rgba(255, 255, 255, .7); font: inherit; font-size: 12px;
+  line-height: 1.5; resize: vertical;
+}
+.hi-comment-composer textarea:focus { border-color: var(--hi-accent); outline: 0; box-shadow: 0 0 0 2px rgba(139, 92, 246, .14); }
+.hi-comment-composer-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.hi-comment-composer-actions small { color: var(--hi-muted); font-size: 10px; }
+.hi-comment-composer-actions button {
+  min-height: 30px; padding: 0 15px; border: 0; border-radius: 8px; color: #fff;
+  background: var(--hi-accent, #7c3cff); font: inherit; font-size: 11.5px; font-weight: 600; cursor: pointer;
+}
+.hi-comment-composer-actions button:disabled { opacity: .4; cursor: default; }
+
+.hi-comment-list { display: grid; gap: 6px; margin-top: 9px; }
+.hi-comment-list article { padding: 9px 10px; border: 1px solid var(--hi-border); border-radius: 10px; background: rgba(255, 255, 255, .62); }
+.hi-comment-list p { margin: 0; color: var(--hi-text); font-size: 12px; line-height: 1.5; white-space: pre-wrap; }
+.hi-comment-list footer { display: flex; margin-top: 6px; align-items: center; justify-content: space-between; gap: 8px; }
+.hi-comment-list time { color: var(--hi-muted); font-size: 10px; }
+.hi-comment-list footer button { display: grid; width: 22px; height: 22px; place-items: center; border: 0; border-radius: 6px; color: var(--hi-muted); background: transparent; cursor: pointer; }
+.hi-comment-list footer button:hover { color: #d92d20; background: rgba(217, 45, 32, .1); }
+
+.hi-comment-elsewhere { display: grid; gap: 4px; margin-top: 11px; padding-top: 9px; border-top: 1px solid var(--hi-border); }
+.hi-comment-elsewhere > strong { color: var(--hi-muted); font-size: 10px; letter-spacing: .06em; text-transform: uppercase; }
+.hi-comment-elsewhere button { display: grid; padding: 7px 9px; gap: 2px; border: 1px solid var(--hi-border); border-radius: 9px; background: rgba(255, 255, 255, .5); cursor: pointer; text-align: left; }
+.hi-comment-elsewhere button:hover { border-color: var(--hi-accent); }
+.hi-comment-elsewhere span { color: var(--hi-text); font-size: 11.5px; font-weight: 600; }
+.hi-comment-elsewhere small { overflow: hidden; color: var(--hi-muted); font-size: 10.5px; text-overflow: ellipsis; white-space: nowrap; }

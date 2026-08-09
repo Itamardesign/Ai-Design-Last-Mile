@@ -27,6 +27,7 @@ import {
   LoaderCircle,
   Lock,
   Maximize2,
+  MessageSquare,
   PaintBucket,
   Pipette,
   Monitor,
@@ -45,6 +46,7 @@ import {
   Sparkles,
   Square,
   Tablet,
+  Trash2,
   Type,
   Unlink,
   Unlock,
@@ -272,6 +274,34 @@ function readStoredPreference(key: string): string | null {
     return window.localStorage.getItem(key);
   } catch {
     return null;
+  }
+}
+
+/** One note pinned to one element. Elements can carry several. */
+type PageComment = { id: string; path: string; selector: string; label: string; text: string; createdAt: string };
+
+const COMMENTS_STORAGE_KEY = 'meraki-inspector-comments';
+
+/** Comments are per-page: a note about the pricing table means nothing on the checkout screen. */
+function commentsKey(): string {
+  return `${COMMENTS_STORAGE_KEY}:${isBrowser ? window.location.pathname.replace(/\/+$/, '') || '/' : '/'}`;
+}
+
+function readStoredComments(): PageComment[] {
+  try {
+    const parsed = JSON.parse(readStoredPreference(commentsKey()) ?? '[]');
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeStoredComments(comments: PageComment[]): void {
+  if (!isBrowser) return;
+  try {
+    window.localStorage.setItem(commentsKey(), JSON.stringify(comments));
+  } catch {
+    // Storage can be full or blocked; losing persistence is survivable, crashing is not.
   }
 }
 
@@ -2122,6 +2152,26 @@ function HandoffInspectorPanel() {
   const [restorable, setRestorable] = useState<StoredSession | null>(null);
   const [restoreNote, setRestoreNote] = useState<string | null>(null);
   const [canvasEdit, setCanvasEdit] = useState(() => readStoredPreference('meraki-inspector-canvas-edit') !== 'off');
+  // --- comments -------------------------------------------------------------
+  const [comments, setComments] = useState<PageComment[]>(readStoredComments);
+  const [commentMode, setCommentMode] = useState(false);
+  const [commentDraft, setCommentDraft] = useState('');
+  /**
+   * Comment mode is read by the pointer handlers, which are bound once per open. A ref keeps
+   * them seeing the current value without rebinding every listener on each toggle.
+   */
+  const commentModeRef = useRef(false);
+  useEffect(() => { commentModeRef.current = commentMode; }, [commentMode]);
+
+  /**
+   * Browse mode hands the page back to the user.
+   *
+   * The inspector swallows clicks to select elements, which means links and buttons stop working
+   * and you cannot reach the next page to inspect it. This turns every listener and overlay off
+   * without losing the panel, the selection, or any comments.
+   */
+  const [browseMode, setBrowseMode] = useState(false);
+
   /** Live geometry while a handle is being dragged — the snapshot only catches up once the drag commits. */
   const [canvasRect, setCanvasRect] = useState<ElementSnapshot['rect'] | null>(null);
   const [canvasSize, setCanvasSize] = useState<string | null>(null);
@@ -2185,12 +2235,70 @@ function HandoffInspectorPanel() {
     return detectFontStacksFromPage(document.body);
   }, [open]);
 
+  /**
+   * Screen positions for the comment pins.
+   *
+   * Held as state rather than derived at render because they depend on scroll position and live
+   * layout, neither of which React re-renders for on its own.
+   */
+  const [commentMarkers, setCommentMarkers] = useState<Array<{ path: string; label: string; count: number; top: number; left: number }>>([]);
+
+  const syncCommentMarkers = useCallback(() => {
+    if (typeof document === 'undefined') return;
+    const byPath = new Map<string, PageComment[]>();
+    for (const comment of comments) {
+      const list = byPath.get(comment.path) ?? [];
+      list.push(comment);
+      byPath.set(comment.path, list);
+    }
+    const next: Array<{ path: string; label: string; count: number; top: number; left: number }> = [];
+    for (const [path, list] of byPath) {
+      const element = resolveInDocument(document, { uniquePath: path, selector: list[0].selector });
+      if (!element) continue; // the element may not exist on this render of the page
+      const rect = element.getBoundingClientRect();
+      if (rect.width === 0 && rect.height === 0) continue;
+      next.push({ path, label: list[0].label, count: list.length, top: rect.top, left: rect.left + rect.width });
+    }
+    setCommentMarkers(next);
+  }, [comments]);
+
+  useEffect(() => {
+    if (!open || browseMode) { setCommentMarkers([]); return; }
+    syncCommentMarkers();
+    window.addEventListener('scroll', syncCommentMarkers, true);
+    window.addEventListener('resize', syncCommentMarkers);
+    return () => {
+      window.removeEventListener('scroll', syncCommentMarkers, true);
+      window.removeEventListener('resize', syncCommentMarkers);
+    };
+  }, [open, browseMode, syncCommentMarkers]);
+
+  const addComment = useCallback((text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed || !snapshot) return;
+    setComments((current) => [...current, {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      path: snapshot.uniquePath,
+      selector: snapshot.selector,
+      label: snapshot.family.label,
+      text: trimmed,
+      createdAt: new Date().toISOString(),
+    }]);
+    setCommentDraft('');
+  }, [snapshot]);
+
+  const removeComment = useCallback((id: string) => {
+    setComments((current) => current.filter((comment) => comment.id !== id));
+  }, []);
+
   const refresh = useCallback((element = selectedRef.current || hoverRef.current) => {
     if (element && element.isConnected) setSnapshot(createSnapshot(element));
   }, []);
 
   useEffect(() => {
     if (!open) return;
+    // Browse mode binds nothing at all — the page behaves exactly as it would without the tool.
+    if (browseMode) return;
     const findTarget = (event: PointerEvent) => document.elementsFromPoint(event.clientX, event.clientY).find((node): node is HTMLElement => node instanceof HTMLElement && !node.closest(IGNORED_SELECTOR));
     const onMove = (event: PointerEvent) => {
       if (event.target instanceof Element && event.target.closest(IGNORED_SELECTOR)) return;
@@ -2237,7 +2345,7 @@ function HandoffInspectorPanel() {
       window.removeEventListener('resize', onViewport);
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
-  }, [deviceOpen, locked, open, refresh]);
+  }, [browseMode, deviceOpen, locked, open, refresh]);
 
   useEffect(() => {
     if (open) return;
@@ -2267,6 +2375,8 @@ function HandoffInspectorPanel() {
   useEffect(() => {
     window.localStorage.setItem('meraki-inspector-dock', dock);
   }, [dock]);
+
+  useEffect(() => { writeStoredComments(comments); }, [comments]);
 
   const storeOriginal = (element: HTMLElement) => {
     if (originalsRef.current.has(element)) return;
@@ -2822,6 +2932,8 @@ function HandoffInspectorPanel() {
   const tokenDeclarations = Array.from(new Map(tokenChanges.filter((change) => change.cssVariable).map((change) => [change.cssVariable!.name, change.cssVariable!.value])).entries());
   const tokenCssDiff = tokenDeclarations.length ? `:root {\n${tokenDeclarations.map(([name, value]) => `  ${name}: ${value};`).join('\n')}\n}` : '';
   const cssDiff = [tokenCssDiff, directCssDiff, stateCssDiff].filter(Boolean).join('\n\n');
+  const elementComments = snapshot ? comments.filter((comment) => comment.path === snapshot.uniquePath) : [];
+  const otherComments = snapshot ? comments.filter((comment) => comment.path !== snapshot.uniquePath) : comments;
   const instructions = changes.filter((change) => change.instruction).map((change, index) => `${index + 1}. ${change.instruction}`).join('\n');
   const handoffText = changes.length ? [
     `Design handoff · ${window.location.pathname} · ${new Date().toLocaleString()}`,
@@ -2849,6 +2961,34 @@ function HandoffInspectorPanel() {
     '--hi-success': inspectorVisualTokens.success,
   } as CSSProperties}>
     <button className={`hi-launcher ${open ? 'is-open' : ''}`} onClick={toggleInspector} aria-label={open ? 'Hide inspector' : 'Open inspector'}><ScanSearch size={16} /><span>Inspect</span></button>
+    {/* Deliberately loud: when the page stops responding to clicks, the way back has to be
+        obvious, and when editing is live the user should be able to tell at a glance. */}
+    {open && <button
+      className={`hi-mode-toggle ${browseMode ? 'is-browsing' : 'is-designing'}`}
+      onClick={() => setBrowseMode((current) => !current)}
+      title={browseMode ? 'Editing is paused — click to resume design mode' : 'Pause editing so you can click links and move around the site'}
+    >
+      <span className="hi-mode-dot" />
+      {browseMode ? <><MousePointerClick size={15} />Browsing the site</> : <><Wand2 size={15} />Design mode on</>}
+      <em>{browseMode ? 'Resume' : 'Pause'}</em>
+    </button>}
+    {/* Pins live outside the panel so they sit over the page, next to what they refer to. */}
+    {open && !browseMode && commentMarkers.length > 0 && <div className="hi-comment-pins" aria-hidden="true">
+      {commentMarkers.map((marker) => <button
+        key={marker.path}
+        className="hi-comment-pin"
+        style={{ top: marker.top, left: marker.left }}
+        title={`${marker.count} comment${marker.count > 1 ? 's' : ''} on ${marker.label}`}
+        onClick={() => {
+          const element = resolveInDocument(document, { uniquePath: marker.path, selector: '' });
+          if (!element) return;
+          selectedRef.current = element;
+          hoverRef.current = element;
+          setLocked(true);
+          setSnapshot(createSnapshot(element));
+        }}
+      ><MessageSquare size={12} />{marker.count}</button>)}
+    </div>}
     {open && <>
       {deviceMounted && <DeviceOverlay
         presetId={devicePreset}
@@ -2888,7 +3028,7 @@ function HandoffInspectorPanel() {
               <button className={dock === 'left' ? 'is-active' : ''} aria-pressed={dock === 'left'} onClick={() => setDock('left')} title="Move panel to left"><PanelLeft size={15} /></button>
               <button className={dock === 'right' ? 'is-active' : ''} aria-pressed={dock === 'right'} onClick={() => setDock('right')} title="Move panel to right"><PanelRight size={15} /></button>
             </div>
-            <div className="hi-header-actions">{locked &&<button onClick={unlock} title="Unlock"><Unlock size={15} /></button>}<button onClick={() => setOpen(false)} title="Close"><X size={15} /></button></div>
+            <div className="hi-header-actions"><button className={`hi-comment-mode ${commentMode ? 'is-active' : ''}`} aria-pressed={commentMode} onClick={() => setCommentMode((current) => !current)} title={commentMode ? 'Comment mode on — the Comments section opens for whatever you select' : 'Comment mode — leave notes on elements'}><MessageSquare size={15} />{comments.length > 0 && <i>{comments.length}</i>}</button>{locked &&<button onClick={unlock} title="Unlock"><Unlock size={15} /></button>}<button onClick={() => setOpen(false)} title="Close"><X size={15} /></button></div>
           </div>
         </header>
         <div className={`hi-status ${locked ? 'is-locked' : ''}`}><i />{locked ? <><Lock size={12} /> Selected element</> : <><MousePointer2 size={12} /> Move to preview · click to lock</>}</div>
@@ -2916,6 +3056,49 @@ function HandoffInspectorPanel() {
               </div></div>
               {canvasNote && <div className="hi-restore is-note"><CircleAlert size={16} /><span><small>{canvasNote}</small></span><div><button onClick={() => setCanvasNote(null)}>Dismiss</button></div></div>}
               <div className="hi-reset-row"><button onClick={resetElement} disabled={!currentTargets().some((element) => originalsRef.current.has(element))}><RotateCcw size={13} />Reset selection</button><button onClick={resetAll} disabled={!changes.length}><RotateCcw size={13} />Reset all</button></div>
+              <ToolSection title={`Comments · ${elementComments.length}`} icon={MessageSquare} openWhen={commentMode || elementComments.length > 0}>
+                <div className="hi-comment-composer">
+                  <textarea
+                    value={commentDraft}
+                    placeholder={`Leave a note on ${snapshot.family.label}…`}
+                    aria-label="New comment"
+                    onChange={(event) => setCommentDraft(event.target.value)}
+                    onKeyDown={(event) => {
+                      // Enter sends, Shift+Enter breaks the line — the convention everywhere else.
+                      if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); addComment(commentDraft); }
+                    }}
+                  />
+                  <div className="hi-comment-composer-actions">
+                    <small>Enter to post · Shift + Enter for a new line</small>
+                    <button disabled={!commentDraft.trim()} onClick={() => addComment(commentDraft)}>Post</button>
+                  </div>
+                </div>
+                {elementComments.length > 0 && <div className="hi-comment-list">
+                  {elementComments.map((comment) => <article key={comment.id}>
+                    <p>{comment.text}</p>
+                    <footer>
+                      <time dateTime={comment.createdAt}>{new Date(comment.createdAt).toLocaleString()}</time>
+                      <button title="Delete comment" aria-label="Delete comment" onClick={() => removeComment(comment.id)}><Trash2 size={12} /></button>
+                    </footer>
+                  </article>)}
+                </div>}
+                {otherComments.length > 0 && <div className="hi-comment-elsewhere">
+                  <strong>{otherComments.length} comment{otherComments.length > 1 ? 's' : ''} on other elements</strong>
+                  {otherComments.map((comment) => <button
+                    key={comment.id}
+                    title={`Go to ${comment.label}`}
+                    onClick={() => {
+                      const element = resolveInDocument(document, { uniquePath: comment.path, selector: comment.selector });
+                      if (!element) return;
+                      element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                      selectedRef.current = element;
+                      hoverRef.current = element;
+                      setLocked(true);
+                      setSnapshot(createSnapshot(element));
+                    }}
+                  ><span>{comment.label}</span><small>{comment.text}</small></button>)}
+                </div>}
+              </ToolSection>
               {['text', 'button', 'link', 'input'].includes(snapshot.kind) && <ToolSection title="Content" icon={Type}><label className="hi-control hi-control-stack"><span>{snapshot.kind === 'input' ? 'Value' : 'Text'}</span><DraftTextArea key={snapshot.uniquePath} ariaLabel={snapshot.kind === 'input' ? 'Value' : 'Text'} value={snapshot.rawText} onChange={applyText} /></label>{snapshot.hasMarkup && <p className="hi-empty-note hi-content-warning"><CircleAlert size={13} />This element wraps markup (line breaks, nested spans). Editing the text here replaces all of it with plain text.</p>}{snapshot.kind === 'link' && <label className="hi-control"><span>Link</span><input defaultValue={snapshot.attributes.href || ''} onBlur={(event) => applyAttribute('href', event.target.value)} /></label>}{snapshot.kind === 'input' && <><label className="hi-control"><span>Placeholder</span><input defaultValue={snapshot.attributes.placeholder || ''} onBlur={(event) => applyAttribute('placeholder', event.target.value)} /></label><label className="hi-control"><span>ARIA label</span><input defaultValue={snapshot.attributes['aria-label'] || ''} onBlur={(event) => applyAttribute('aria-label', event.target.value)} /></label></>}</ToolSection>}
               {['text', 'button', 'link', 'input'].includes(snapshot.kind) && <ToolSection title="Typography" icon={Type}>
                 <FontField label="Font" value={snapshot.styles['font-family']} projectFonts={pageFonts} onChange={(value) => applyStyle('font-family', value)} />
