@@ -205,3 +205,13 @@ the inspector shows a switcher in its header. With one collection the switcher i
 
 One note on privacy: the font picker fetches the 10 Google families **only** when you open it,
 so a page that never opens the picker never contacts `fonts.googleapis.com`.
+
+## License
+
+This project is source-available under the PolyForm Perimeter License 1.0.1.
+
+You are free to use, modify, and build with this project.
+
+You may not use this project, or a modified version of it, to offer a product or service that competes with this project.
+
+See the [LICENSE](./LICENSE) file for the full terms.
