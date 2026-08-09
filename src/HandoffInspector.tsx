@@ -277,12 +277,11 @@ function readStoredPreference(key: string): string | null {
   }
 }
 
-type InspectorMode = 'design' | 'comment' | 'review';
+type InspectorMode = 'design' | 'comment';
 
 const MODES: Array<{ id: InspectorMode; label: string; hint: string }> = [
   { id: 'design', label: 'Design', hint: 'Edit styles and drag on the canvas' },
   { id: 'comment', label: 'Comment', hint: 'Click an element to leave a note' },
-  { id: 'review', label: 'Review', hint: 'Use the site normally and check other screen sizes' },
 ];
 
 /** One note pinned to one element. Elements can carry several. */
@@ -1427,8 +1426,7 @@ function CanvasHandles({ size, onStart }: { size: string | null; onStart: (direc
   </>;
 }
 
-function DeviceOverlay({ allowPicking, presetId, onPresetChange, snapshot, dock, hidden, editVersion, canvasEdit, canvasSize, canvasBusyRef, onCanvasResize, onCanvasText, onFrameDocument, onSelectPath, onReplay, onClose, onExit }: {
-  allowPicking: boolean;
+function DeviceOverlay({ presetId, onPresetChange, snapshot, dock, hidden, editVersion, canvasEdit, canvasSize, canvasBusyRef, onCanvasResize, onCanvasText, onFrameDocument, onSelectPath, onReplay, onClose, onExit }: {
   presetId: DevicePresetId;
   onPresetChange: (id: DevicePresetId) => void;
   snapshot: ElementSnapshot | null;
@@ -1456,13 +1454,7 @@ function DeviceOverlay({ allowPicking, presetId, onPresetChange, snapshot, dock,
   const direction = isBrowser && document.documentElement.dir === 'rtl' ? 'rtl' : 'ltr';
   const [freezeReveals, setFreezeReveals] = useState(true);
   const [zoom, setZoom] = useState<'fit' | number>('fit');
-  /**
-   * Picking turns every click in the frame into a selection, which is exactly wrong in review
-   * mode: the point there is to use the site — press its buttons, follow its links — at another
-   * screen size. So the frame only picks when the mode says it should.
-   */
-  const [picking, setPicking] = useState(allowPicking);
-  useEffect(() => { setPicking(allowPicking); }, [allowPicking]);
+  const [picking, setPicking] = useState(true);
   const [reloadKey, setReloadKey] = useState(0);
   const [sweeping, setSweeping] = useState(false);
   const [sweepProgress, setSweepProgress] = useState(0);
@@ -1741,7 +1733,7 @@ function DeviceOverlay({ allowPicking, presetId, onPresetChange, snapshot, dock,
       </select>
       <span className="hi-device-size">{width} × {height}</span>
       <div className="hi-device-actions">
-        {allowPicking && <button className={picking ? 'is-active' : ''} aria-pressed={picking} title="Pick an element inside the device (Ctrl/Cmd + P)" onClick={() => setPicking((current) => !current)}><Crosshair size={15} /></button>}
+        <button className={picking ? 'is-active' : ''} aria-pressed={picking} title="Pick an element inside the device (Ctrl/Cmd + P)" onClick={() => setPicking((current) => !current)}><Crosshair size={15} /></button>
         <button title="Rotate" onClick={() => setOrientation((current) => current === 'portrait' ? 'landscape' : 'portrait')}><RotateCw size={15} /></button>
         <button className={freezeReveals ? 'is-active' : ''} aria-pressed={freezeReveals} title={freezeReveals ? 'Reveal animations are frozen — click to watch them play' : 'Freeze reveal animations so sections stay visible'} onClick={() => setFreezeReveals((current) => !current)}><Sparkles size={15} /></button>
         <button title="Reload the device frame" onClick={() => { setReloadKey((current) => current + 1); setFrameDoc(null); }}><RefreshCw size={15} /></button>
@@ -2203,7 +2195,6 @@ function HandoffInspectorPanel() {
    */
   const [mode, setMode] = useState<InspectorMode>('design');
   const commentMode = mode === 'comment';
-  const browseMode = mode === 'review';
 
   /**
    * Canvas editing is what design mode means, so there is no separate switch for it. The state
@@ -2247,10 +2238,10 @@ function HandoffInspectorPanel() {
   const activeDeviceKind = deviceOpen ? inspectorDevicePresets.find((item) => item.id === devicePreset)?.kind ?? null : null;
   const openDevice = (kind: DeviceKind) => { setDevicePreset(defaultDeviceForKind[kind]); setDeviceOpen(true); setDeviceMounted(true); };
   // There is one mode now, so opening the inspector means landing in the desktop preview ready to edit.
+  // Opening the tool lands in the desktop preview, ready to edit at a real device size.
   const toggleInspector = () => {
     if (open) { setOpen(false); return; }
-    // Land on the real page. Auto-opening a device preview put an iframe between the user and
-    // their site, so every click went to a framed copy instead of the page itself.
+    openDevice('desktop');
     setOpen(true);
   };
   const hasSecondCollection = designTokens.collections.length > 1;
@@ -2313,7 +2304,7 @@ function HandoffInspectorPanel() {
   }, [comments]);
 
   useEffect(() => {
-    if (!open || browseMode) { setCommentMarkers([]); return; }
+    if (!open) { setCommentMarkers([]); return; }
     syncCommentMarkers();
     window.addEventListener('scroll', syncCommentMarkers, true);
     window.addEventListener('resize', syncCommentMarkers);
@@ -2321,7 +2312,7 @@ function HandoffInspectorPanel() {
       window.removeEventListener('scroll', syncCommentMarkers, true);
       window.removeEventListener('resize', syncCommentMarkers);
     };
-  }, [open, browseMode, syncCommentMarkers]);
+  }, [open, syncCommentMarkers]);
 
   const addComment = useCallback((text: string) => {
     const trimmed = text.trim();
@@ -2347,8 +2338,6 @@ function HandoffInspectorPanel() {
 
   useEffect(() => {
     if (!open) return;
-    // Browse mode binds nothing at all — the page behaves exactly as it would without the tool.
-    if (browseMode) return;
     const findTarget = (event: PointerEvent) => document.elementsFromPoint(event.clientX, event.clientY).find((node): node is HTMLElement => node instanceof HTMLElement && !node.closest(IGNORED_SELECTOR));
     const onMove = (event: PointerEvent) => {
       if (event.target instanceof Element && event.target.closest(IGNORED_SELECTOR)) return;
@@ -2395,7 +2384,7 @@ function HandoffInspectorPanel() {
       window.removeEventListener('resize', onViewport);
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
-  }, [browseMode, deviceOpen, locked, open, refresh]);
+  }, [deviceOpen, locked, open, refresh]);
 
   useEffect(() => {
     if (open) return;
@@ -2428,10 +2417,7 @@ function HandoffInspectorPanel() {
 
   useEffect(() => { writeStoredComments(comments); }, [comments]);
 
-  // Leaving review puts the page back the way the other modes expect to find it.
-  useEffect(() => {
-    if (mode !== 'review') setDeviceOpen(false);
-  }, [mode]);
+
 
   const storeOriginal = (element: HTMLElement) => {
     if (originalsRef.current.has(element)) return;
@@ -3038,7 +3024,7 @@ function HandoffInspectorPanel() {
     {!open && <button className="hi-launcher" onClick={toggleInspector} aria-label="Open inspector"><ScanSearch size={16} /><span>Inspect</span></button>}
 
     {/* Pins live outside the panel so they sit over the page, next to what they refer to. */}
-    {open && !browseMode && commentMarkers.length > 0 && <div className="hi-comment-pins" aria-hidden="true">
+    {open && commentMarkers.length > 0 && <div className="hi-comment-pins" aria-hidden="true">
       {commentMarkers.map((marker) => <button
         key={marker.path}
         className="hi-comment-pin"
@@ -3056,7 +3042,6 @@ function HandoffInspectorPanel() {
     </div>}
     {open && <>
       {deviceMounted && <DeviceOverlay
-        allowPicking={mode !== 'review'}
         presetId={devicePreset}
         onPresetChange={setDevicePreset}
         snapshot={snapshot}
@@ -3074,7 +3059,7 @@ function HandoffInspectorPanel() {
         onClose={() => setDeviceOpen(false)}
         onExit={() => setOpen(false)}
       />}
-      {mode !== 'review' && !deviceOpen && overlaySnapshot && overlayRect && <div className={`hi-selection ${locked ? 'is-locked' : ''} ${canvasSize ? 'is-resizing' : ''}`} style={{ top: overlayRect.top, left: overlayRect.left, width: overlayRect.width, height: overlayRect.height }}>
+      {!deviceOpen && overlaySnapshot && overlayRect && <div className={`hi-selection ${locked ? 'is-locked' : ''} ${canvasSize ? 'is-resizing' : ''}`} style={{ top: overlayRect.top, left: overlayRect.left, width: overlayRect.width, height: overlayRect.height }}>
         <span>{overlaySnapshot.family.label} · {round(overlayRect.width)} × {round(overlayRect.height)}</span>
         {locked && !canvasHandlesVisible && <i><Lock size={10} /></i>}
         {/* Offered right where the selection is, so commenting is one click from picking
@@ -3086,7 +3071,7 @@ function HandoffInspectorPanel() {
         ><MessageSquare size={11} />{selectedCommentCount || 'Comment'}</button>}
         {canvasHandlesVisible && <CanvasHandles size={canvasSize} onStart={(direction, event) => startResize(overlaySnapshot.element, direction, event, 1, null)} />}
       </div>}
-      {mode !== 'review' && !deviceOpen && locked && !canvasSize && overlaySnapshot && <div className="hi-measurements">{SIDES.map((side) => overlaySnapshot.siblingDistances[side] !== undefined ? <span key={side} className={`hi-measure hi-measure-${side}`} style={{ top: side === 'top' ? overlaySnapshot.rect.top - 22 : side === 'bottom' ? overlaySnapshot.rect.bottom + 6 : overlaySnapshot.rect.top + overlaySnapshot.rect.height / 2, left: side === 'left' ? overlaySnapshot.rect.left - 42 : side === 'right' ? overlaySnapshot.rect.right + 7 : overlaySnapshot.rect.left + overlaySnapshot.rect.width / 2 }}>{overlaySnapshot.siblingDistances[side]}px</span> : null)}</div>}
+      {!deviceOpen && locked && !canvasSize && overlaySnapshot && <div className="hi-measurements">{SIDES.map((side) => overlaySnapshot.siblingDistances[side] !== undefined ? <span key={side} className={`hi-measure hi-measure-${side}`} style={{ top: side === 'top' ? overlaySnapshot.rect.top - 22 : side === 'bottom' ? overlaySnapshot.rect.bottom + 6 : overlaySnapshot.rect.top + overlaySnapshot.rect.height / 2, left: side === 'left' ? overlaySnapshot.rect.left - 42 : side === 'right' ? overlaySnapshot.rect.right + 7 : overlaySnapshot.rect.left + overlaySnapshot.rect.width / 2 }}>{overlaySnapshot.siblingDistances[side]}px</span> : null)}</div>}
       <aside ref={panelRef} className={`hi-panel hi-panel--${dock}`}>
         <header className="hi-header">
           <div className="hi-product"><span className="hi-logo"><Sparkles size={13} /></span><div><strong>Design Inspector</strong><small>{locked ? 'Selection locked' : 'Preview mode · click to select'}</small></div></div>
@@ -3101,12 +3086,12 @@ function HandoffInspectorPanel() {
               <button className={dock === 'left' ? 'is-active' : ''} aria-pressed={dock === 'left'} onClick={() => setDock('left')} title="Move panel to left"><PanelLeft size={15} /></button>
               <button className={dock === 'right' ? 'is-active' : ''} aria-pressed={dock === 'right'} onClick={() => setDock('right')} title="Move panel to right"><PanelRight size={15} /></button>
             </div>
-            <div className="hi-header-actions">{locked && mode !== 'review' && <button onClick={unlock} title="Unlock"><Unlock size={15} /></button>}<button onClick={() => setOpen(false)} title="Close"><X size={15} /></button></div>
+            <div className="hi-header-actions">{locked && <button onClick={unlock} title="Unlock"><Unlock size={15} /></button>}<button onClick={() => setOpen(false)} title="Close"><X size={15} /></button></div>
           </div>
         </header>
         {/* Only worth saying before anything is selected; afterwards the outline and the
             element name in the cluster both say it, and this line just repeated them. */}
-        {mode !== 'review' && !locked && <div className="hi-status"><i /><MousePointer2 size={12} /> Click any element to {mode === 'comment' ? 'comment on it' : 'edit it'}</div>}
+        {!locked && <div className="hi-status"><i /><MousePointer2 size={12} /> Click any element to {mode === 'comment' ? 'comment on it' : 'edit it'}</div>}
         {restorable && !changes.length && <div className="hi-restore">
           <History size={17} />
           <span><strong>{restorable.changes.length} edit{restorable.changes.length === 1 ? '' : 's'} from your last session</strong><small>Saved {new Date(restorable.savedAt).toLocaleString()} on this page.</small></span>
@@ -3125,13 +3110,7 @@ function HandoffInspectorPanel() {
           >{entry.label}</button>)}
         </div>
         <div className="hi-scroll">
-          {/* Review needs no selection — its whole job is the page itself — so it must not be
-              held behind the "pick an element" empty state, which left no way to reach the
-              device sizes at all. */}
-          {mode === 'review' ? <div className="hi-design">
-              <ToolSection title="Device preview" icon={Monitor} defaultOpen><ResponsiveLauncher activeKind={activeDeviceKind} onOpen={openDevice} /></ToolSection>
-            </div>
-            : !snapshot ? <div className="hi-onboarding"><div><MousePointer2 size={24} /></div><h2>Select something on the canvas</h2><p>Move over the page to preview an element. Click to lock it, then edit it here or straight on the canvas.</p><div><span>ESC</span> unlock or close</div></div>
+          {!snapshot ? <div className="hi-onboarding"><div><MousePointer2 size={24} /></div><h2>Select something on the canvas</h2><p>Move over the page to preview an element. Click to lock it, then edit it here or straight on the canvas.</p><div><span>ESC</span> unlock or close</div></div>
             : <div className="hi-design">
               {mode === 'design' && <><div className="hi-design-cluster"><div className="hi-design-heading"><div><h2>{snapshot.family.label}</h2></div><span className="hi-live-dot">Live</span></div>
               {/* Editing every matching variant at once is only meaningful against a real design
@@ -3225,6 +3204,7 @@ function HandoffInspectorPanel() {
                 <label className="hi-control"><span>Filter</span><input value={snapshot.styles.filter} onChange={(event) => applyStyle('filter', event.target.value)} /></label>
                 <label className="hi-control"><span>Transform</span><input value={snapshot.styles.transform} onChange={(event) => applyStyle('transform', event.target.value)} /></label>
               </ToolSection></>}
+              <ToolSection title="Device preview" icon={Monitor} defaultOpen={false}><ResponsiveLauncher activeKind={activeDeviceKind} onOpen={openDevice} /></ToolSection>
               {mode === 'design' && <>{snapshot.assets.length > 0 && <ToolSection title={`Assets · ${snapshot.assets.length}`} icon={ImageIcon}><div className="hi-design-assets">{snapshot.assets.map((asset) => <article key={asset.id}><div className="hi-asset-head"><img src={asset.src} alt="" /><span><strong>{asset.label}</strong><small>{asset.type} · {asset.id}</small></span><a href={asset.src} download={`${asset.id}.${asset.type === 'svg' ? 'svg' : 'png'}`} title="Download the current asset"><Download size={14} /></a></div><label><span>Replace by URL</span><input placeholder="https://…" onKeyDown={(event) => { if (event.key === 'Enter') applyAsset(asset, event.currentTarget.value, 'URL replacement'); }} /></label><label className="hi-upload"><input type="file" accept="image/*,.svg" onChange={(event) => onAssetFile(asset, event.target.files?.[0])} />Upload image or SVG</label>{asset.type === 'svg' && <div className="hi-icon-library">{ICON_LIBRARY.map((icon) => <button key={icon.label} title={icon.label} onClick={() => applyAsset(asset, icon.svg, `${icon.label} icon`)} dangerouslySetInnerHTML={{ __html: icon.svg }} />)}</div>}</article>)}</div></ToolSection>}
               <ToolSection title="Component states · 6" icon={MousePointer2} defaultOpen={false}>
                 <ComponentStatesEditor snapshot={snapshot} colorTokens={colorTokens} resetSignal={stateResetSignal} onStateChange={recordStateChange} />
