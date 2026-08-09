@@ -771,12 +771,25 @@ function sectionId(title: string) {
   return title.split('·')[0].trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 }
 
-function ToolSection({ title, icon: Icon, children, defaultOpen = true, openWhen = false }: { title: string; icon: typeof Layers3; children: ReactNode; defaultOpen?: boolean; openWhen?: boolean }) {
-  const [open, setOpen] = useState(defaultOpen);
+function ToolSection({ title, icon: Icon, children, defaultOpen = true, openWhen = false, disabled = false, disabledHint, badge }: { title: string; icon: typeof Layers3; children: ReactNode; defaultOpen?: boolean; openWhen?: boolean; disabled?: boolean; disabledHint?: string; badge?: { text: string; tone: 'alert' | 'ok' } }) {
+  const [open, setOpen] = useState(defaultOpen && !disabled);
   useEffect(() => {
     if (openWhen) setOpen(true);
   }, [openWhen]);
-  return <section className="hi-section" data-hi-section={sectionId(title)} data-hi-open={open ? 'true' : 'false'}><button className="hi-section-title" onClick={() => setOpen((current) => !current)}><span><Icon size={14} />{title}</span><ChevronDown size={14} className={open ? 'is-open' : ''} /></button>{open && <div className="hi-section-body">{children}</div>}</section>;
+  // A disabled section stays visible but never opens: the feature should be discoverable, and the
+  // tooltip explains what unlocks it, which a hidden section could not do.
+  const isOpen = open && !disabled;
+  return <section className={`hi-section ${disabled ? 'is-disabled' : ''}`} data-hi-section={sectionId(title)} data-hi-open={isOpen ? 'true' : 'false'}>
+    <button className="hi-section-title" onClick={() => { if (!disabled) setOpen((current) => !current); }} aria-disabled={disabled} title={disabled ? disabledHint : undefined}>
+      <span><Icon size={14} />{title}</span>
+      <span className="hi-section-meta">
+        {/* Carries the state onto the collapsed header, so a problem is visible without opening it. */}
+        {badge && <em className={`hi-section-badge is-${badge.tone}`}>{badge.text}</em>}
+        {disabled ? <Lock size={12} /> : <ChevronDown size={14} className={isOpen ? 'is-open' : ''} />}
+      </span>
+    </button>
+    {isOpen && <div className="hi-section-body">{children}</div>}
+  </section>;
 }
 
 function PropertyRow({ label, value, copy = true }: { label: string; value: string; copy?: boolean }) {
@@ -1680,7 +1693,6 @@ function ResponsiveLauncher({ activeKind, onOpen }: { activeKind: DeviceKind | n
         </button>;
       })}
     </div>
-    <p className="hi-empty-note">Opens the page at real device size over the canvas. Edits you make in this panel apply live inside it, and you can click any element in the device to select it here.</p>
   </div>;
 }
 
@@ -2086,6 +2098,20 @@ function HandoffInspectorPanel() {
    * other project every option applied a font that did not exist there. Sampling the live page
    * means the choices are always the fonts the site actually loaded.
    */
+  /**
+   * Detected tokens are a good guess, not a system. Features that only make sense against a real
+   * one — editing every matching component variant, binding and auditing tokens — stay locked
+   * until the host actually supplies tokens, rather than pretending a heuristic palette is a
+   * source of truth.
+   */
+  const designSystemConnected = designTokensSource === 'provided' || designTokensSource === 'detected-static';
+
+  const accessibilityBadge = useMemo(() => {
+    if (!snapshot) return undefined;
+    const failing = getAccessibilityFindings(snapshot).filter((finding) => finding.status !== 'pass').length;
+    return failing ? { text: `${failing} issue${failing > 1 ? 's' : ''}`, tone: 'alert' as const } : { text: 'Pass', tone: 'ok' as const };
+  }, [snapshot]);
+
   const pageFonts = useMemo(() => {
     if (!open || typeof document === 'undefined') return [];
     // Keeps the authored stack so the fallback survives, e.g. `Georgia, serif`.
@@ -2813,20 +2839,37 @@ function HandoffInspectorPanel() {
         <div className="hi-scroll">
           {!snapshot ? <div className="hi-onboarding"><div><MousePointer2 size={24} /></div><h2>Select something on the canvas</h2><p>Move over the page to preview an element. Click to lock it, then edit it here or straight on the canvas.</p><div><span>ESC</span> unlock or close</div></div>
             : <div className="hi-design">
-              <div className="hi-design-heading"><div><span>DESIGN MODE</span><h2>{snapshot.family.label}</h2><p>Live preview edits. Source files stay untouched.</p></div><span className="hi-live-dot">Live</span></div>
-              <div className="hi-scope"><button className={scope === 'free' ? 'is-active' : ''} onClick={() => setScope('free')}>Free change<small>Selected part only</small></button><button className={scope === 'component' ? 'is-active' : ''} onClick={() => setScope('component')}>Component change<small>{snapshot.family.matchCount} matching variants</small></button></div>
-              <div className="hi-canvas-switch">
-                <button className={canvasEdit ? 'is-active' : ''} aria-pressed={canvasEdit} onClick={() => { if (canvasEdit) finishTextEdit(true); setCanvasEdit((current) => !current); }}>
-                  <Maximize2 size={13} />Direct canvas editing
-                </button>
-                <small>Drag the handles to resize · double-click text to retype it in place. Shift keeps the ratio, Alt snaps to {CANVAS_SNAP_STEP}px, Esc cancels.</small>
+              <div className="hi-design-heading is-compact"><div><span>Design mode</span><h2>{snapshot.family.label}</h2></div><span className="hi-live-dot">Live</span></div>
+              {/* Editing every matching variant at once is only meaningful against a real design
+                  system — without one there is nothing that defines what a "component" is, so the
+                  control is shown but locked, with the reason on hover. */}
+              <div className={`hi-scope is-compact ${designSystemConnected ? '' : 'is-locked'}`} title={designSystemConnected ? undefined : DESIGN_SYSTEM_REQUIRED}>
+                <button className={scope === 'free' ? 'is-active' : ''} aria-disabled={!designSystemConnected} onClick={() => designSystemConnected && setScope('free')}>Single</button>
+                <button className={scope === 'component' ? 'is-active' : ''} aria-disabled={!designSystemConnected} onClick={() => designSystemConnected && setScope('component')}>All variants</button>
+                {!designSystemConnected && <Lock size={11} />}
+              </div>
+              <div className="hi-canvas-switch is-compact" title={`Drag the handles to resize · double-click text to retype. Shift keeps the ratio, Alt snaps to ${CANVAS_SNAP_STEP}px, Esc cancels.`}>
+                <span><Maximize2 size={12} />Canvas editing</span>
+                <button role="switch" className={`hi-switch ${canvasEdit ? 'is-on' : ''}`} aria-checked={canvasEdit} aria-label="Direct canvas editing" onClick={() => { if (canvasEdit) finishTextEdit(true); setCanvasEdit((current) => !current); }}><i /></button>
               </div>
               {canvasNote && <div className="hi-restore is-note"><CircleAlert size={16} /><span><small>{canvasNote}</small></span><div><button onClick={() => setCanvasNote(null)}>Dismiss</button></div></div>}
-              <div className="hi-reset-row"><button onClick={resetElement} disabled={!currentTargets().some((element) => originalsRef.current.has(element))}><RotateCcw size={13} />Reset selection</button><button onClick={resetAll} disabled={!changes.length}><RotateCcw size={13} />Reset all</button></div>
-              <ToolSection title="Device preview" icon={Monitor}><ResponsiveLauncher activeKind={activeDeviceKind} onOpen={openDevice} /></ToolSection>
-              <ToolSection title="Token binding" icon={Link2} defaultOpen={false}><TokenBindingPanel snapshot={snapshot} colorTokens={colorTokens} onBind={applyTokenBinding} /></ToolSection>
-              <ToolSection title="Page token audit" icon={ScanSearch} defaultOpen={false}><PageTokenAudit colorTokens={colorTokens} onSelect={selectElement} /></ToolSection>
+              <div className="hi-reset-row is-sticky"><button onClick={resetElement} disabled={!currentTargets().some((element) => originalsRef.current.has(element))}><RotateCcw size={13} />Reset selection</button><button onClick={resetAll} disabled={!changes.length}><RotateCcw size={13} />Reset all</button></div>
               {['text', 'button', 'link', 'input'].includes(snapshot.kind) && <ToolSection title="Content" icon={Type}><label className="hi-control hi-control-stack"><span>{snapshot.kind === 'input' ? 'Value' : 'Text'}</span><DraftTextArea key={snapshot.uniquePath} ariaLabel={snapshot.kind === 'input' ? 'Value' : 'Text'} value={snapshot.rawText} onChange={applyText} /></label>{snapshot.hasMarkup && <p className="hi-empty-note hi-content-warning"><CircleAlert size={13} />This element wraps markup (line breaks, nested spans). Editing the text here replaces all of it with plain text.</p>}{snapshot.kind === 'link' && <label className="hi-control"><span>Link</span><input defaultValue={snapshot.attributes.href || ''} onBlur={(event) => applyAttribute('href', event.target.value)} /></label>}{snapshot.kind === 'input' && <><label className="hi-control"><span>Placeholder</span><input defaultValue={snapshot.attributes.placeholder || ''} onBlur={(event) => applyAttribute('placeholder', event.target.value)} /></label><label className="hi-control"><span>ARIA label</span><input defaultValue={snapshot.attributes['aria-label'] || ''} onBlur={(event) => applyAttribute('aria-label', event.target.value)} /></label></>}</ToolSection>}
+              {['text', 'button', 'link', 'input'].includes(snapshot.kind) && <ToolSection title="Typography" icon={Type}>
+                <FontField label="Font" value={snapshot.styles['font-family']} projectFonts={pageFonts} onChange={(value) => applyStyle('font-family', value)} />
+                <div className="hi-control-pair"><label className="hi-control hi-compact-control"><span>Size</span><select value={snapshot.styles['font-size']} onChange={(event) => applyStyle('font-size', event.target.value)}>{FONT_SIZES.map((size) => <option key={size}>{size}</option>)}</select></label><label className="hi-control hi-compact-control"><span>Weight</span><select value={snapshot.styles['font-weight']} onChange={(event) => applyStyle('font-weight', event.target.value)}>{['300', '400', '500', '600', '700', '800', '900'].map((weight) => <option key={weight}>{weight}</option>)}</select></label></div>
+                <div className="hi-control-pair"><NumberField label="Line" value={snapshot.styles['line-height']} onChange={(value) => applyStyle('line-height', value)} /><NumberField label="Track" value={snapshot.styles['letter-spacing']} step={0.1} onChange={(value) => applyStyle('letter-spacing', value)} /></div>
+                <div className="hi-segmented" aria-label="Text alignment">{TEXT_ALIGNMENTS.map(({ value, label, Icon }) => <button key={value} title={label} aria-label={label} className={snapshot.styles['text-align'] === value ? 'is-active' : ''} onClick={() => applyStyle('text-align', value)}><Icon size={14} /></button>)}</div>
+                <div className="hi-type-presets">{typePresets.map((recipe) => <button key={recipe.label} onClick={() => recipe.css.split(';').filter(Boolean).forEach((part) => { const [property, ...value] = part.split(':'); applyStyle(property.trim(), value.join(':').trim()); })}>{recipe.label}</button>)}</div>
+              </ToolSection>}
+              <ToolSection title="Fill & stroke" icon={Palette}>
+                <TokenColorField label="Fill" value={snapshot.styles.background} tokens={colorTokens} onChange={(value) => applyStyle('background-color', value)} />
+                {['text', 'button', 'link', 'input'].includes(snapshot.kind) && <TokenColorField label="Text" value={snapshot.styles.color} tokens={colorTokens} onChange={(value) => applyStyle('color', value)} />}
+                <TokenColorField label="Stroke" value={liveStyle?.borderColor ?? snapshot.styles.border} tokens={colorTokens} onChange={(value) => applyStyle('border-color', value)} />
+                <div className="hi-control-pair"><NumberField label="Stroke" value={liveStyle?.borderWidth ?? 0} min={0} onChange={(value) => applyStyle('border-width', value)} /><label className="hi-control hi-compact-control"><span>Style</span><select value={liveStyle?.borderStyle ?? 'solid'} onChange={(event) => applyStyle('border-style', event.target.value)}><option>solid</option><option>dashed</option><option>dotted</option><option>double</option><option>none</option></select></label></div>
+                <NumberField label="Corner radius" value={snapshot.styles['border-radius']} min={0} onChange={(value) => applyStyle('border-radius', value)} />
+                <NumberField label="Opacity" value={cssNumber(snapshot.styles.opacity, 1) * 100} min={0} max={100} suffix="%" onChange={(value) => applyStyle('opacity', String(Number(value) / 100))} />
+              </ToolSection>
               <ToolSection title="Layout" icon={Layers3}>
                 <label className="hi-control"><span>Display</span><select value={snapshot.styles.display} onChange={(event) => applyStyle('display', event.target.value)}><option>block</option><option>inline</option><option>inline-block</option><option>flex</option><option>grid</option><option>none</option></select></label>
                 <div className="hi-control-pair"><NumberField label="W" value={snapshot.rect.width} onChange={(value) => applyStyle('width', value)} /><NumberField label="H" value={snapshot.rect.height} onChange={(value) => applyStyle('height', value)} /></div>
@@ -2836,26 +2879,12 @@ function HandoffInspectorPanel() {
                 <BoxSidesField label="Margin" property="margin" element={snapshot.element} onChange={applyStyle} />
                 <div className="hi-reorder"><button onClick={() => reorder(-1)}><ArrowLeft size={13} /><ArrowUp size={13} />Earlier</button><button onClick={() => reorder(1)}>Later<ArrowDown size={13} /><ArrowRight size={13} /></button></div>
               </ToolSection>
-              <ToolSection title="Fill & stroke" icon={Palette}>
-                <TokenColorField label="Fill" value={snapshot.styles.background} tokens={colorTokens} onChange={(value) => applyStyle('background-color', value)} />
-                {['text', 'button', 'link', 'input'].includes(snapshot.kind) && <TokenColorField label="Text" value={snapshot.styles.color} tokens={colorTokens} onChange={(value) => applyStyle('color', value)} />}
-                <TokenColorField label="Stroke" value={liveStyle?.borderColor ?? snapshot.styles.border} tokens={colorTokens} onChange={(value) => applyStyle('border-color', value)} />
-                <div className="hi-control-pair"><NumberField label="Stroke" value={liveStyle?.borderWidth ?? 0} min={0} onChange={(value) => applyStyle('border-width', value)} /><label className="hi-control hi-compact-control"><span>Style</span><select value={liveStyle?.borderStyle ?? 'solid'} onChange={(event) => applyStyle('border-style', event.target.value)}><option>solid</option><option>dashed</option><option>dotted</option><option>double</option><option>none</option></select></label></div>
-                <NumberField label="Corner radius" value={snapshot.styles['border-radius']} min={0} onChange={(value) => applyStyle('border-radius', value)} />
-                <NumberField label="Opacity" value={cssNumber(snapshot.styles.opacity, 1) * 100} min={0} max={100} suffix="%" onChange={(value) => applyStyle('opacity', String(Number(value) / 100))} />
-              </ToolSection>
-              {['text', 'button', 'link', 'input'].includes(snapshot.kind) && <ToolSection title="Typography" icon={Type}>
-                <FontField label="Font" value={snapshot.styles['font-family']} projectFonts={pageFonts} onChange={(value) => applyStyle('font-family', value)} />
-                <div className="hi-control-pair"><label className="hi-control hi-compact-control"><span>Size</span><select value={snapshot.styles['font-size']} onChange={(event) => applyStyle('font-size', event.target.value)}>{FONT_SIZES.map((size) => <option key={size}>{size}</option>)}</select></label><label className="hi-control hi-compact-control"><span>Weight</span><select value={snapshot.styles['font-weight']} onChange={(event) => applyStyle('font-weight', event.target.value)}>{['300', '400', '500', '600', '700', '800', '900'].map((weight) => <option key={weight}>{weight}</option>)}</select></label></div>
-                <div className="hi-control-pair"><NumberField label="Line" value={snapshot.styles['line-height']} onChange={(value) => applyStyle('line-height', value)} /><NumberField label="Track" value={snapshot.styles['letter-spacing']} step={0.1} onChange={(value) => applyStyle('letter-spacing', value)} /></div>
-                <div className="hi-segmented" aria-label="Text alignment">{TEXT_ALIGNMENTS.map(({ value, label, Icon }) => <button key={value} title={label} aria-label={label} className={snapshot.styles['text-align'] === value ? 'is-active' : ''} onClick={() => applyStyle('text-align', value)}><Icon size={14} /></button>)}</div>
-                <div className="hi-type-presets">{typePresets.map((recipe) => <button key={recipe.label} onClick={() => recipe.css.split(';').filter(Boolean).forEach((part) => { const [property, ...value] = part.split(':'); applyStyle(property.trim(), value.join(':').trim()); })}>{recipe.label}</button>)}</div>
-              </ToolSection>}
               <ToolSection title="Effects" icon={Sparkles} defaultOpen={false}>
                 <label className="hi-control"><span>Shadow</span><select value={snapshot.styles['box-shadow']} onChange={(event) => applyStyle('box-shadow', event.target.value)}><option value="none">None</option><option value="0 1px 2px rgba(0,0,0,.08)">Subtle</option><option value="0 8px 24px rgba(23,18,87,.12)">Elevated</option><option value="0 20px 50px rgba(23,18,87,.18)">Floating</option><option value={snapshot.styles['box-shadow']}>Current / custom</option></select></label>
                 <label className="hi-control"><span>Filter</span><input value={snapshot.styles.filter} onChange={(event) => applyStyle('filter', event.target.value)} /></label>
                 <label className="hi-control"><span>Transform</span><input value={snapshot.styles.transform} onChange={(event) => applyStyle('transform', event.target.value)} /></label>
               </ToolSection>
+              <ToolSection title="Device preview" icon={Monitor}><ResponsiveLauncher activeKind={activeDeviceKind} onOpen={openDevice} /></ToolSection>
               {snapshot.assets.length > 0 && <ToolSection title={`Assets · ${snapshot.assets.length}`} icon={ImageIcon}><div className="hi-design-assets">{snapshot.assets.map((asset) => <article key={asset.id}><div className="hi-asset-head"><img src={asset.src} alt="" /><span><strong>{asset.label}</strong><small>{asset.type} · {asset.id}</small></span><a href={asset.src} download={`${asset.id}.${asset.type === 'svg' ? 'svg' : 'png'}`} title="Download the current asset"><Download size={14} /></a></div><label><span>Replace by URL</span><input placeholder="https://…" onKeyDown={(event) => { if (event.key === 'Enter') applyAsset(asset, event.currentTarget.value, 'URL replacement'); }} /></label><label className="hi-upload"><input type="file" accept="image/*,.svg" onChange={(event) => onAssetFile(asset, event.target.files?.[0])} />Upload image or SVG</label>{asset.type === 'svg' && <div className="hi-icon-library">{ICON_LIBRARY.map((icon) => <button key={icon.label} title={icon.label} onClick={() => applyAsset(asset, icon.svg, `${icon.label} icon`)} dangerouslySetInnerHTML={{ __html: icon.svg }} />)}</div>}</article>)}</div></ToolSection>}
               <ToolSection title="Component states · 6" icon={MousePointer2} defaultOpen={false}>
                 <ComponentStatesEditor snapshot={snapshot} colorTokens={colorTokens} resetSignal={stateResetSignal} onStateChange={recordStateChange} />
@@ -2863,9 +2892,11 @@ function HandoffInspectorPanel() {
                 {/* What the stylesheet already declares, so an override is not written on top of a rule that agrees with it. */}
                 {snapshot.stateRules.length ? snapshot.stateRules.map((rule, index) => <div className="hi-state-rule" key={`${rule.selector}-${index}`}><span>{rule.state}</span><code>{rule.selector} {'{'}{rule.declarations.map((item) => `\n  ${item.property}: ${item.value};`).join('')}\n{'}'}</code><CopyButton value={`${rule.selector} {\n${rule.declarations.map((item) => `  ${item.property}: ${item.value};`).join('\n')}\n}`} /></div>) : <p className="hi-empty-note">No readable pseudo-state rules matched this element.</p>}
               </ToolSection>
-              <ToolSection title="Accessibility check" icon={ShieldCheck}><AccessibilityPanel snapshot={snapshot} /></ToolSection>
+              <ToolSection title="Accessibility check" icon={ShieldCheck} badge={accessibilityBadge}><AccessibilityPanel snapshot={snapshot} /></ToolSection>
               <MeasurementDetails snapshot={snapshot} />
-              <ToolSection title={`Designer changes · ${changes.length}`} icon={Code2} defaultOpen={changes.length > 0} openWhen={changes.length > 0}>{changes.length ? <>
+              <ToolSection title="Token binding" icon={Link2} defaultOpen={false} disabled={!designSystemConnected} disabledHint={DESIGN_SYSTEM_REQUIRED}><TokenBindingPanel snapshot={snapshot} colorTokens={colorTokens} onBind={applyTokenBinding} /></ToolSection>
+              <ToolSection title="Page token audit" icon={ScanSearch} defaultOpen={false} disabled={!designSystemConnected} disabledHint={DESIGN_SYSTEM_REQUIRED}><PageTokenAudit colorTokens={colorTokens} onSelect={selectElement} /></ToolSection>
+              <ToolSection title={`Designer changes · ${changes.length}`} icon={Code2} defaultOpen openWhen={changes.length > 0}>{changes.length ? <>
                 <div className="hi-handoff-actions">
                   <CopyButton value={handoffText} label="Copy everything" />
                   {cssDiff && <CopyButton value={cssDiff} label="Copy CSS" />}
@@ -2885,6 +2916,9 @@ function HandoffInspectorPanel() {
     </>}
   </div>;
 }
+
+/** Shown wherever a feature needs a real design system behind it, rather than detected values. */
+const DESIGN_SYSTEM_REQUIRED = 'Connect a design system to use this feature — pass tokens to DesignTokensProvider.';
 
 /** Query-string flag that opts a page into the inspector. */
 export const DESIGN_MODE_PARAM = 'designmode';

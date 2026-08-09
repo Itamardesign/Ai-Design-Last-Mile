@@ -1354,3 +1354,109 @@
 .hi-swatch-custom input[type="color"] { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
 
 .hi-swatch-value { margin-left: 2px; color: var(--hi-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+
+/* ===========================================================================
+   Figma-leaning pass on the editing sections.
+   The reference is Figma's right-hand inspector: dense rows, a quiet label
+   column, controls that only show their chrome on hover or focus, and icons
+   doing the work that words were doing before.
+   =========================================================================== */
+
+/* --- compact header ------------------------------------------------------- */
+.hi-design-heading.is-compact { min-height: 0; padding: 10px 14px 8px; align-items: center; }
+.hi-design-heading.is-compact > div { display: flex; align-items: baseline; gap: 8px; }
+.hi-design-heading.is-compact span { color: var(--hi-muted); font-size: 9.5px; letter-spacing: .09em; text-transform: uppercase; }
+.hi-design-heading.is-compact h2 { margin: 0; font-size: 15px; line-height: 1.2; }
+
+/* --- single / all-variants toggle, locked without a design system --------- */
+.hi-scope.is-compact {
+  display: flex; margin: 0 14px 8px; padding: 3px; gap: 3px; align-items: center;
+  border: 1px solid var(--hi-border); border-radius: 9px; background: rgba(255,255,255,.6);
+}
+.hi-scope.is-compact button {
+  flex: 1; min-height: 26px; padding: 0 8px; border: 0; border-radius: 6px;
+  color: var(--hi-muted); background: transparent; font-size: 11px; cursor: pointer;
+}
+.hi-scope.is-compact button.is-active { color: var(--hi-text); background: #fff; box-shadow: 0 1px 3px rgba(31,33,68,.14); }
+.hi-scope.is-compact.is-locked { opacity: .5; }
+.hi-scope.is-compact.is-locked button { cursor: not-allowed; }
+.hi-scope.is-compact > svg { flex: none; margin-right: 4px; color: var(--hi-muted); }
+
+/* --- canvas editing switch ------------------------------------------------ */
+.hi-canvas-switch.is-compact { display: flex; min-height: 0; margin: 0 14px 8px; padding: 0; align-items: center; justify-content: space-between; gap: 10px; border: 0; background: none; }
+.hi-canvas-switch.is-compact > span { display: inline-flex; align-items: center; gap: 6px; color: var(--hi-muted); font-size: 11.5px; }
+.hi-switch { position: relative; width: 30px; height: 17px; padding: 0; border: 0; border-radius: 999px; background: var(--hi-border-strong); cursor: pointer; transition: background-color .16s ease; }
+.hi-switch i { position: absolute; top: 2px; left: 2px; width: 13px; height: 13px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.28); transition: transform .16s ease; }
+.hi-switch.is-on { background: var(--hi-accent); }
+.hi-switch.is-on i { transform: translateX(13px); }
+
+/* --- reset row pinned to the top of the scroll area ----------------------- */
+.hi-reset-row.is-sticky {
+  position: sticky; z-index: 12; top: 0; margin: 0 0 8px; border-radius: 0;
+  border-bottom: 1px solid var(--hi-border);
+  background: color-mix(in srgb, var(--hi-panel) 92%, transparent);
+  backdrop-filter: blur(8px);
+}
+
+/* --- section headers: disabled + status badge ---------------------------- */
+.hi-section.is-disabled .hi-section-title { cursor: not-allowed; opacity: .45; }
+.hi-section-meta { display: inline-flex; align-items: center; gap: 7px; }
+.hi-section-badge {
+  padding: 2px 7px; border-radius: 999px; font-size: 9.5px; font-style: normal;
+  font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+}
+/* Reads as a problem from the collapsed header, without opening the section. */
+.hi-section-badge.is-alert { color: #b42318; background: #fee4e2; box-shadow: inset 0 0 0 1px rgba(180,35,24,.18); }
+.hi-section-badge.is-ok { color: #067647; background: #dcfae6; box-shadow: inset 0 0 0 1px rgba(6,118,71,.16); }
+.hi-section[data-hi-section="accessibility-check"]:has(.hi-section-badge.is-alert) .hi-section-title { color: #b42318; }
+
+/* --- denser control rows in the editing sections ------------------------- */
+.hi-section-body .hi-control { min-height: 34px; grid-template-columns: 76px minmax(0,1fr); gap: 8px; }
+.hi-section-body .hi-control > span,
+.hi-section-body .hi-token-field > span,
+.hi-section-body .hi-box-sides-control > span { font-size: 11px; letter-spacing: .01em; }
+.hi-section-body .hi-control input:not([type="color"]):not([type="range"]),
+.hi-section-body .hi-control select,
+.hi-section-body .hi-number-field {
+  min-height: 30px; border-radius: 7px; font-size: 12px;
+  background: rgba(255,255,255,.55); box-shadow: none;
+}
+.hi-section-body .hi-control input:hover,
+.hi-section-body .hi-control select:hover,
+.hi-section-body .hi-number-field:hover { background: #fff; border-color: var(--hi-border-strong); }
+.hi-section-body .hi-control input:focus,
+.hi-section-body .hi-control select:focus { border-color: var(--hi-accent); box-shadow: 0 0 0 2px rgba(139,92,246,.14); }
+.hi-section-body .hi-font-trigger { min-height: 32px; border-radius: 7px; box-shadow: none; background: rgba(255,255,255,.55); }
+.hi-section-body .hi-token-field { min-height: 32px; }
+
+/* Segmented icon controls (alignment and friends) read as one unit. */
+.hi-section-body .hi-segmented { display: flex; padding: 2px; gap: 2px; border: 1px solid var(--hi-border); border-radius: 8px; background: rgba(255,255,255,.55); }
+.hi-section-body .hi-segmented button { flex: 1; min-height: 26px; border: 0; border-radius: 6px; color: var(--hi-muted); background: transparent; cursor: pointer; }
+.hi-section-body .hi-segmented button:hover { color: var(--hi-text); background: rgba(139,92,246,.09); }
+.hi-section-body .hi-segmented button.is-active { color: var(--hi-accent); background: #fff; box-shadow: 0 1px 3px rgba(31,33,68,.13); }
+
+/* Type presets as chips rather than a wall of buttons. */
+.hi-type-presets { display: flex; flex-wrap: wrap; gap: 5px; padding-top: 2px; }
+.hi-type-presets button {
+  min-height: 26px; padding: 0 10px; border: 1px solid var(--hi-border); border-radius: 999px;
+  color: var(--hi-muted); background: rgba(255,255,255,.6); font-size: 11px; cursor: pointer;
+  transition: color .15s ease, border-color .15s ease, background-color .15s ease;
+}
+.hi-type-presets button:hover { color: var(--hi-accent); border-color: var(--hi-accent); background: #fff; }
+
+/* --- accessibility check: quieter when passing, loud when not ------------ */
+.hi-a11y-score { display: flex; align-items: center; gap: 10px; padding: 11px 12px; border-radius: 11px; }
+.hi-a11y-score.is-clear { color: #067647; background: rgba(220,250,230,.62); box-shadow: inset 0 0 0 1px rgba(6,118,71,.14); }
+.hi-a11y-score.has-issues { color: #b42318; background: rgba(254,228,226,.72); box-shadow: inset 0 0 0 1px rgba(180,35,24,.2); }
+.hi-a11y-score strong { display: block; font-size: 13px; }
+.hi-a11y-score small { color: inherit; opacity: .78; font-size: 11px; }
+.hi-a11y-list { display: grid; gap: 4px; margin-top: 8px; }
+.hi-a11y-list > div { display: flex; align-items: flex-start; gap: 8px; padding: 8px 10px; border-radius: 9px; background: rgba(255,255,255,.5); }
+.hi-a11y-list > div strong { display: block; font-size: 11.5px; }
+.hi-a11y-list > div small { color: var(--hi-muted); font-size: 10.5px; }
+.hi-a11y-list > div.is-pass svg { color: #12b76a; }
+/* Failures get their own surface — scanning the list should surface them first. */
+.hi-a11y-list > div.is-error,
+.hi-a11y-list > div.is-warn { background: rgba(254,228,226,.6); box-shadow: inset 0 0 0 1px rgba(180,35,24,.16); }
+.hi-a11y-list > div.is-error svg,
+.hi-a11y-list > div.is-warn svg { color: #d92d20; }
