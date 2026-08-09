@@ -1589,3 +1589,22 @@
 .hi-comment-elsewhere button:hover { border-color: var(--hi-accent); }
 .hi-comment-elsewhere span { color: var(--hi-text); font-size: 11.5px; font-weight: 600; }
 .hi-comment-elsewhere small { overflow: hidden; color: var(--hi-muted); font-size: 10.5px; text-overflow: ellipsis; white-space: nowrap; }
+
+/* The comment affordance rides on the selection outline, opposite the size label. */
+.hi-selection-comment {
+  position: absolute; top: -11px; right: 0; display: inline-flex; padding: 2px 8px 2px 6px;
+  gap: 4px; align-items: center; border: 1.5px solid #fff; border-radius: 999px;
+  color: #fff; background: #7c3cff; font: inherit; font-size: 10px; font-weight: 700;
+  cursor: pointer; pointer-events: auto; box-shadow: 0 3px 10px rgba(31, 33, 68, .28);
+}
+.hi-selection-comment:hover { background: #6a2ee0; }
+
+.hi-heading-actions { display: inline-flex; flex: none; align-items: center; gap: 7px; }
+.hi-heading-comment {
+  display: inline-flex; min-height: 26px; padding: 0 9px; gap: 5px; align-items: center;
+  border: 1px solid var(--hi-border); border-radius: 999px; color: var(--hi-muted);
+  background: rgba(255, 255, 255, .7); font: inherit; font-size: 11px; font-weight: 600;
+  cursor: pointer; transition: color .15s ease, border-color .15s ease;
+}
+.hi-heading-comment:hover { color: var(--hi-accent); border-color: var(--hi-accent); }
+.hi-heading-comment.has-comments { color: #fff; border-color: transparent; background: #7c3cff; }

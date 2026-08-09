@@ -2171,6 +2171,16 @@ function HandoffInspectorPanel() {
    * without losing the panel, the selection, or any comments.
    */
   const [browseMode, setBrowseMode] = useState(false);
+  /** Bumped to ask the Comments section to open and put the caret in the composer. */
+  const [focusComposer, setFocusComposer] = useState(0);
+  const composerRef = useRef<HTMLTextAreaElement | null>(null);
+
+  // Put the caret in the composer when the on-page Comment chip asks for it.
+  useEffect(() => {
+    if (!focusComposer) return;
+    const id = window.setTimeout(() => composerRef.current?.focus(), 60);
+    return () => window.clearTimeout(id);
+  }, [focusComposer, snapshot]);
 
   /** Live geometry while a handle is being dragged — the snapshot only catches up once the drag commits. */
   const [canvasRect, setCanvasRect] = useState<ElementSnapshot['rect'] | null>(null);
@@ -2934,12 +2944,32 @@ function HandoffInspectorPanel() {
   const cssDiff = [tokenCssDiff, directCssDiff, stateCssDiff].filter(Boolean).join('\n\n');
   const elementComments = snapshot ? comments.filter((comment) => comment.path === snapshot.uniquePath) : [];
   const otherComments = snapshot ? comments.filter((comment) => comment.path !== snapshot.uniquePath) : comments;
+  const selectedCommentCount = elementComments.length;
   const instructions = changes.filter((change) => change.instruction).map((change, index) => `${index + 1}. ${change.instruction}`).join('\n');
-  const handoffText = changes.length ? [
+  /**
+   * Comments grouped by the element they sit on, named the way the panel names it, so a
+   * developer reading the handoff knows which thing each note is about without the page open.
+   */
+  const commentsReport = (() => {
+    if (!comments.length) return '';
+    const byPath = new Map<string, PageComment[]>();
+    for (const comment of comments) {
+      const list = byPath.get(comment.path) ?? [];
+      list.push(comment);
+      byPath.set(comment.path, list);
+    }
+    return Array.from(byPath.values()).map((list) => {
+      const head = `${list[0].label} · ${list[0].selector}`;
+      return `${head}\n${list.map((comment) => `  - ${comment.text}  (${new Date(comment.createdAt).toLocaleString()})`).join('\n')}`;
+    }).join('\n\n');
+  })();
+
+  const handoffText = (changes.length || comments.length) ? [
     `Design handoff · ${window.location.pathname} · ${new Date().toLocaleString()}`,
-    `${changes.length} change${changes.length === 1 ? '' : 's'}`,
+    [changes.length && `${changes.length} change${changes.length === 1 ? '' : 's'}`, comments.length && `${comments.length} comment${comments.length === 1 ? '' : 's'}`].filter(Boolean).join(' · '),
     instructions && `\nINSTRUCTIONS\n${instructions}`,
-    `\nCHANGES\n${changes.map((change) => `- ${change.selector} · ${change.property}: ${change.before || '—'} → ${change.after}`).join('\n')}`,
+    changes.length && `\nCHANGES\n${changes.map((change) => `- ${change.selector} · ${change.property}: ${change.before || '—'} → ${change.after}`).join('\n')}`,
+    commentsReport && `\nCOMMENTS\n${commentsReport}`,
     cssDiff && `\nCSS\n${cssDiff}`,
   ].filter(Boolean).join('\n') : '';
   const liveStyle = snapshot ? getComputedStyle(snapshot.element) : null;
@@ -3011,6 +3041,13 @@ function HandoffInspectorPanel() {
       {!deviceOpen && overlaySnapshot && overlayRect && <div className={`hi-selection ${locked ? 'is-locked' : ''} ${canvasSize ? 'is-resizing' : ''}`} style={{ top: overlayRect.top, left: overlayRect.left, width: overlayRect.width, height: overlayRect.height }}>
         <span>{overlaySnapshot.family.label} · {round(overlayRect.width)} × {round(overlayRect.height)}</span>
         {locked && !canvasHandlesVisible && <i><Lock size={10} /></i>}
+        {/* Offered right where the selection is, so commenting is one click from picking
+            rather than a hunt down the panel for the right section. */}
+        {locked && <button
+          className="hi-selection-comment"
+          title={selectedCommentCount ? `${selectedCommentCount} comment${selectedCommentCount > 1 ? 's' : ''} — open the thread` : 'Comment on this element'}
+          onClick={(event) => { event.stopPropagation(); setFocusComposer((count) => count + 1); }}
+        ><MessageSquare size={11} />{selectedCommentCount || 'Comment'}</button>}
         {canvasHandlesVisible && <CanvasHandles size={canvasSize} onStart={(direction, event) => startResize(overlaySnapshot.element, direction, event, 1, null)} />}
       </div>}
       {!deviceOpen && locked && !canvasSize && overlaySnapshot && <div className="hi-measurements">{SIDES.map((side) => overlaySnapshot.siblingDistances[side] !== undefined ? <span key={side} className={`hi-measure hi-measure-${side}`} style={{ top: side === 'top' ? overlaySnapshot.rect.top - 22 : side === 'bottom' ? overlaySnapshot.rect.bottom + 6 : overlaySnapshot.rect.top + overlaySnapshot.rect.height / 2, left: side === 'left' ? overlaySnapshot.rect.left - 42 : side === 'right' ? overlaySnapshot.rect.right + 7 : overlaySnapshot.rect.left + overlaySnapshot.rect.width / 2 }}>{overlaySnapshot.siblingDistances[side]}px</span> : null)}</div>}
@@ -3041,7 +3078,7 @@ function HandoffInspectorPanel() {
         <div className="hi-scroll">
           {!snapshot ? <div className="hi-onboarding"><div><MousePointer2 size={24} /></div><h2>Select something on the canvas</h2><p>Move over the page to preview an element. Click to lock it, then edit it here or straight on the canvas.</p><div><span>ESC</span> unlock or close</div></div>
             : <div className="hi-design">
-              <div className="hi-design-cluster"><div className="hi-design-heading"><div><span>Design mode</span><h2>{snapshot.family.label}</h2></div><span className="hi-live-dot">Live</span></div>
+              <div className="hi-design-cluster"><div className="hi-design-heading"><div><span>Design mode</span><h2>{snapshot.family.label}</h2></div><div className="hi-heading-actions">{/* Always reachable: the on-page chip is hidden while the device preview covers the page. */}<button className={`hi-heading-comment ${selectedCommentCount ? 'has-comments' : ''}`} title={selectedCommentCount ? `${selectedCommentCount} comment${selectedCommentCount > 1 ? 's' : ''} on this element` : 'Comment on this element'} onClick={() => setFocusComposer((count) => count + 1)}><MessageSquare size={13} />{selectedCommentCount || 'Comment'}</button><span className="hi-live-dot">Live</span></div></div>
               {/* Editing every matching variant at once is only meaningful against a real design
                   system — without one there is nothing that defines what a "component" is, so the
                   control is shown but locked, with the reason on hover. */}
@@ -3056,9 +3093,10 @@ function HandoffInspectorPanel() {
               </div></div>
               {canvasNote && <div className="hi-restore is-note"><CircleAlert size={16} /><span><small>{canvasNote}</small></span><div><button onClick={() => setCanvasNote(null)}>Dismiss</button></div></div>}
               <div className="hi-reset-row"><button onClick={resetElement} disabled={!currentTargets().some((element) => originalsRef.current.has(element))}><RotateCcw size={13} />Reset selection</button><button onClick={resetAll} disabled={!changes.length}><RotateCcw size={13} />Reset all</button></div>
-              <ToolSection title={`Comments · ${elementComments.length}`} icon={MessageSquare} openWhen={commentMode || elementComments.length > 0}>
+              <ToolSection title={`Comments · ${elementComments.length}`} icon={MessageSquare} openWhen={commentMode || focusComposer > 0 || elementComments.length > 0}>
                 <div className="hi-comment-composer">
                   <textarea
+                    ref={composerRef}
                     value={commentDraft}
                     placeholder={`Leave a note on ${snapshot.family.label}…`}
                     aria-label="New comment"
@@ -3148,11 +3186,12 @@ function HandoffInspectorPanel() {
               <MeasurementDetails snapshot={snapshot} />
               <ToolSection title="Token binding" icon={Link2} defaultOpen={false} disabled={!designSystemConnected} disabledHint={DESIGN_SYSTEM_REQUIRED}><TokenBindingPanel snapshot={snapshot} colorTokens={colorTokens} onBind={applyTokenBinding} /></ToolSection>
               <ToolSection title="Page token audit" icon={ScanSearch} defaultOpen={false} disabled={!designSystemConnected} disabledHint={DESIGN_SYSTEM_REQUIRED}><PageTokenAudit colorTokens={colorTokens} onSelect={selectElement} /></ToolSection>
-              <ToolSection title={`Designer changes · ${changes.length}`} icon={Code2} defaultOpen openWhen={changes.length > 0}>{changes.length ? <>
+              <ToolSection title={`Designer changes · ${changes.length + comments.length}`} icon={Code2} defaultOpen openWhen={changes.length + comments.length > 0}>{(changes.length || comments.length) ? <>
                 <div className="hi-handoff-actions">
                   <CopyButton value={handoffText} label="Copy everything" />
                   {cssDiff && <CopyButton value={cssDiff} label="Copy CSS" />}
                   {instructions && <CopyButton value={instructions} label="Copy instructions" />}
+                  {commentsReport && <CopyButton value={commentsReport} label="Copy comments" />}
                 </div>
                 {designChanges.length < changes.length && <p className="hi-empty-note">Showing all {changes.length} edits on this page. {designChanges.length} of them {designChanges.length === 1 ? 'is' : 'are'} on the current selection.</p>}
                 <div className="hi-change-log">{changes.map((change, index) => <div key={`${change.selector}-${change.property}-${index}`} className={`${change.instruction ? 'has-instruction' : ''} ${designChanges.includes(change) ? 'is-current' : ''}`}>
