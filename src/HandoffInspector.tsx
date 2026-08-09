@@ -21,14 +21,13 @@ import {
   FileCode2,
   Gauge,
   History,
-  Languages,
   Image as ImageIcon,
   Layers3,
   Link2,
   LoaderCircle,
   Lock,
   Maximize2,
-  Minimize2,
+  Pipette,
   Monitor,
   MousePointerClick,
   MousePointer2,
@@ -67,6 +66,7 @@ import { fallbackDesignTokens } from './detect/defaultTokens.js';
 import type { ColorToken as BrandColorToken, RadiusToken, SpacingToken } from './types.js';
 import { ensureDesignToolsStyles } from './injectStyles.js';
 import { detectFontStacksFromPage, primaryFontFamily } from './detect/detectFromPage.js';
+import { buildFontGroups, ensureGoogleFontsLoaded, type FontOption } from './fontCatalog.js';
 
 /**
  * Module-level (not React state): a handful of top-level helper functions below the component
@@ -878,10 +878,98 @@ function BoxSidesField({ label, property, element, onChange }: { label: string; 
   return <div className="hi-box-sides-control"><span>{label}</span><div>{SIDES.map((side) => <label key={side} title={`${property}-${side}`}><small>{side[0].toUpperCase()}</small><DraftNumberInput ariaLabel={`${label} ${side}`} value={style.getPropertyValue(`${property}-${side}`)} onCommit={(value) => onChange(`${property}-${side}`, value)} /><em>px</em></label>)}</div></div>;
 }
 
+/**
+ * Font picker that previews each face in itself.
+ *
+ * A native `<select>` cannot do this reliably — `font-family` on `<option>` is ignored by most
+ * browsers — and picking type from a list of names alone is guesswork. Grouping matters as much
+ * as previewing: the fonts already on the site are a different kind of choice from a Google face
+ * the project would still have to install, and the list says so rather than mixing them.
+ */
+function FontField({ label, value, projectFonts, onChange }: { label: string; value: string; projectFonts: FontOption[]; onChange: (value: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const groups = useMemo(() => buildFontGroups(projectFonts), [projectFonts]);
+  const current = primaryFontFamily(value) || 'Inherited';
+
+  useEffect(() => {
+    if (!open) return;
+    // Only reaches the network once the user actually opens the list.
+    ensureGoogleFontsLoaded();
+    const onPointerDown = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.stopPropagation(); setOpen(false); } };
+    document.addEventListener('pointerdown', onPointerDown, true);
+    document.addEventListener('keydown', onKey, true);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown, true);
+      document.removeEventListener('keydown', onKey, true);
+    };
+  }, [open]);
+
+  return <div className="hi-control hi-font-field" ref={rootRef}>
+    <span>{label}</span>
+    <div className="hi-font-picker">
+      <button type="button" className="hi-font-trigger" aria-expanded={open} aria-haspopup="listbox" onClick={() => setOpen((state) => !state)}>
+        <span className="hi-font-current" style={{ fontFamily: value || undefined }}>{current}</span>
+        <ChevronDown size={13} />
+      </button>
+      {open && <div className="hi-font-menu" role="listbox">
+        {groups.map((group) => <section key={group.id}>
+          <header><strong>{group.label}</strong><small>{group.hint}</small></header>
+          {group.fonts.map((font) => {
+            const active = primaryFontFamily(value).toLowerCase() === font.label.toLowerCase();
+            return <button
+              type="button"
+              key={`${group.id}-${font.label}`}
+              role="option"
+              aria-selected={active}
+              className={active ? 'is-active' : ''}
+              onClick={() => { onChange(font.stack); setOpen(false); }}
+            >
+              <span className="hi-font-name">{font.label}</span>
+              {/* The preview is the point: it renders in the face being offered, not the panel's. */}
+              <span className="hi-font-sample" style={{ fontFamily: font.stack }}>Ag 123</span>
+            </button>;
+          })}
+        </section>)}
+      </div>}
+    </div>
+  </div>;
+}
+
 function TokenColorField({ label, value, tokens, onChange }: { label: string; value: string; tokens: readonly BrandColorToken[]; onChange: (value: string) => void }) {
   const hex = toColorInput(value);
   const matched = tokens.find((token) => token.value.toLowerCase() === hex.toLowerCase());
-  return <div className="hi-token-field"><span>{label}</span><div className="hi-token-picker"><i style={{ background: hex }} /><select aria-label={`${label} design token`} value={matched?.value ?? ''} onChange={(event) => event.target.value && onChange(event.target.value)}><option value="">Custom · {toHex(value)}</option>{tokens.map((token) => <option key={token.label} value={token.value}>{token.label} · {token.value}</option>)}</select><input type="color" value={hex} onChange={(event) => onChange(event.target.value)} aria-label={`${label} custom color`} /></div></div>;
+
+  // Swatches rather than a dropdown: a palette is something you scan, not read. Names still
+  // travel with each swatch as a tooltip, so the token behind a colour stays discoverable.
+  return <div className="hi-token-field hi-swatch-field">
+    <span>{label}</span>
+    <div className="hi-swatches">
+      {tokens.map((token) => {
+        const active = token.value.toLowerCase() === hex.toLowerCase();
+        return <button
+          type="button"
+          key={`${token.label}-${token.value}`}
+          className={`hi-swatch ${active ? 'is-active' : ''}`}
+          style={{ background: token.value }}
+          title={`${token.label} · ${token.value}${token.usage ? ` · ${token.usage}` : ''}`}
+          aria-label={`${token.label} ${token.value}`}
+          aria-pressed={active}
+          onClick={() => onChange(token.value)}
+        />;
+      })}
+      {/* Always available: the palette is a starting point, not a cage. */}
+      <label className="hi-swatch hi-swatch-custom" title={`Pick any colour · currently ${toHex(value)}`}>
+        <span style={{ background: hex }} />
+        <Pipette size={11} />
+        <input type="color" value={hex} onChange={(event) => onChange(event.target.value)} aria-label={`${label} custom colour`} />
+      </label>
+      <output className="hi-swatch-value">{matched ? matched.label : toHex(value)}</output>
+    </div>
+  </div>;
 }
 
 const DEVICE_KIND_ICON: Record<DeviceKind, typeof Monitor> = { mobile: Smartphone, tablet: Tablet, desktop: Monitor };
@@ -1243,9 +1331,10 @@ function DeviceOverlay({ presetId, onPresetChange, snapshot, dock, hidden, editV
 }) {
   const preset = inspectorDevicePresets.find((item) => item.id === presetId) ?? inspectorDevicePresets[1];
   const [orientation, setOrientation] = useState<'portrait' | 'landscape'>('portrait');
-  // Start from the direction the reader is actually browsing in. Forcing LTR would render a Hebrew
-  // page in a left-to-right layout, which is a worse lie than not previewing it at all.
-  const [direction, setDirection] = useState<'ltr' | 'rtl'>(() => (isBrowser && document.documentElement.dir === 'rtl' ? 'rtl' : 'ltr'));
+  // Mirrors whatever direction the host page is actually in, so a Hebrew or Arabic site previews
+  // right-to-left. The manual LTR/RTL toggle that used to sit in the toolbar is gone; following
+  // the page is the behaviour that was worth keeping.
+  const direction = isBrowser && document.documentElement.dir === 'rtl' ? 'rtl' : 'ltr';
   const [freezeReveals, setFreezeReveals] = useState(true);
   const [zoom, setZoom] = useState<'fit' | number>('fit');
   const [picking, setPicking] = useState(true);
@@ -1526,14 +1615,12 @@ function DeviceOverlay({ presetId, onPresetChange, snapshot, dock, hidden, editV
       <div className="hi-device-actions">
         <button className={picking ? 'is-active' : ''} aria-pressed={picking} title="Pick an element inside the device (Ctrl/Cmd + P)" onClick={() => setPicking((current) => !current)}><Crosshair size={15} /></button>
         <button title="Rotate" onClick={() => setOrientation((current) => current === 'portrait' ? 'landscape' : 'portrait')}><RotateCw size={15} /></button>
-        <button className={direction === 'rtl' ? 'is-active' : ''} aria-pressed={direction === 'rtl'} title={direction === 'rtl' ? 'Back to left-to-right' : 'Preview right-to-left (Hebrew)'} onClick={() => setDirection((current) => current === 'rtl' ? 'ltr' : 'rtl')}><Languages size={15} /></button>
         <button className={freezeReveals ? 'is-active' : ''} aria-pressed={freezeReveals} title={freezeReveals ? 'Reveal animations are frozen — click to watch them play' : 'Freeze reveal animations so sections stay visible'} onClick={() => setFreezeReveals((current) => !current)}><Sparkles size={15} /></button>
         <button title="Reload the device frame" onClick={() => { setReloadKey((current) => current + 1); setFrameDoc(null); }}><RefreshCw size={15} /></button>
         <div className="hi-device-zoom" role="group" aria-label="Zoom">
           <button className={zoom === 'fit' ? 'is-active' : ''} onClick={() => setZoom('fit')}>Fit</button>
           {ZOOM_STEPS.map((step) => <button key={step} className={zoom === step ? 'is-active' : ''} onClick={() => setZoom(step)}>{step * 100}%</button>)}
         </div>
-        <button className="hi-device-minimise" title="Back to the page, keep the panel open" onClick={onClose}><Minimize2 size={15} /></button>
         <button className="hi-device-close" title="Close the design tool (Esc)" onClick={onExit}><X size={16} /></button>
       </div>
     </div>
@@ -2001,8 +2088,8 @@ function HandoffInspectorPanel() {
    */
   const pageFonts = useMemo(() => {
     if (!open || typeof document === 'undefined') return [];
-    // Keeps the authored stack as the value so the fallback survives, e.g. `Georgia, serif`.
-    return detectFontStacksFromPage(document.body).map((font) => ({ label: font.label, value: font.stack }));
+    // Keeps the authored stack so the fallback survives, e.g. `Georgia, serif`.
+    return detectFontStacksFromPage(document.body);
   }, [open]);
 
   const refresh = useCallback((element = selectedRef.current || hoverRef.current) => {
@@ -2758,7 +2845,7 @@ function HandoffInspectorPanel() {
                 <NumberField label="Opacity" value={cssNumber(snapshot.styles.opacity, 1) * 100} min={0} max={100} suffix="%" onChange={(value) => applyStyle('opacity', String(Number(value) / 100))} />
               </ToolSection>
               {['text', 'button', 'link', 'input'].includes(snapshot.kind) && <ToolSection title="Typography" icon={Type}>
-                <label className="hi-control"><span>Font</span><select value={snapshot.styles['font-family']} onChange={(event) => applyStyle('font-family', event.target.value)}>{!pageFonts.some((font) => font.value === snapshot.styles['font-family']) && <option value={snapshot.styles['font-family']}>Current · {primaryFontFamily(snapshot.styles['font-family'])}</option>}{pageFonts.map((font) => <option key={font.value} value={font.value}>{font.label}</option>)}</select></label>
+                <FontField label="Font" value={snapshot.styles['font-family']} projectFonts={pageFonts} onChange={(value) => applyStyle('font-family', value)} />
                 <div className="hi-control-pair"><label className="hi-control hi-compact-control"><span>Size</span><select value={snapshot.styles['font-size']} onChange={(event) => applyStyle('font-size', event.target.value)}>{FONT_SIZES.map((size) => <option key={size}>{size}</option>)}</select></label><label className="hi-control hi-compact-control"><span>Weight</span><select value={snapshot.styles['font-weight']} onChange={(event) => applyStyle('font-weight', event.target.value)}>{['300', '400', '500', '600', '700', '800', '900'].map((weight) => <option key={weight}>{weight}</option>)}</select></label></div>
                 <div className="hi-control-pair"><NumberField label="Line" value={snapshot.styles['line-height']} onChange={(value) => applyStyle('line-height', value)} /><NumberField label="Track" value={snapshot.styles['letter-spacing']} step={0.1} onChange={(value) => applyStyle('letter-spacing', value)} /></div>
                 <div className="hi-segmented" aria-label="Text alignment">{TEXT_ALIGNMENTS.map(({ value, label, Icon }) => <button key={value} title={label} aria-label={label} className={snapshot.styles['text-align'] === value ? 'is-active' : ''} onClick={() => applyStyle('text-align', value)}><Icon size={14} /></button>)}</div>
