@@ -1457,3 +1457,11 @@
 }
 .hi-reset-row button:hover:not(:disabled) { border-color: var(--hi-accent); color: var(--hi-accent); }
 .hi-reset-row button:disabled { opacity: .4; cursor: default; }
+
+/* Sits outside the scrolling body so it stays at the foot of the panel. */
+.hi-credit {
+  flex: none; padding: 10px 14px 12px; border-top: 1px solid var(--hi-border);
+  color: var(--hi-muted); font-size: 10.5px; text-align: center;
+}
+.hi-credit a { color: var(--hi-accent, #7c3cff); font-weight: 600; text-decoration: none; }
+.hi-credit a:hover { text-decoration: underline; }

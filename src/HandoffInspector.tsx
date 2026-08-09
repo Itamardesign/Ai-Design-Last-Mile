@@ -2821,7 +2821,7 @@ function HandoffInspectorPanel() {
               <button className={dock === 'left' ? 'is-active' : ''} aria-pressed={dock === 'left'} onClick={() => setDock('left')} title="Move panel to left"><PanelLeft size={15} /></button>
               <button className={dock === 'right' ? 'is-active' : ''} aria-pressed={dock === 'right'} onClick={() => setDock('right')} title="Move panel to right"><PanelRight size={15} /></button>
             </div>
-            <div className="hi-header-actions">{deviceOpen && <button className="is-active" onClick={() => setDeviceOpen(false)} title="Close device preview"><Smartphone size={15} /></button>}{locked &&<button onClick={unlock} title="Unlock"><Unlock size={15} /></button>}<button onClick={() => setOpen(false)} title="Close"><X size={15} /></button></div>
+            <div className="hi-header-actions">{locked &&<button onClick={unlock} title="Unlock"><Unlock size={15} /></button>}<button onClick={() => setOpen(false)} title="Close"><X size={15} /></button></div>
           </div>
         </header>
         <div className={`hi-status ${locked ? 'is-locked' : ''}`}><i />{locked ? <><Lock size={12} /> Selected element</> : <><MousePointer2 size={12} /> Move to preview · click to lock</>}</div>
@@ -2907,6 +2907,10 @@ function HandoffInspectorPanel() {
               </> : <p className="hi-empty-note">Edits will appear here as a handoff-ready change log.</p>}</ToolSection>
             </div>}
         </div>
+        <footer className="hi-credit">
+          Design editor built by{' '}
+          <a href="https://itamar-katan-protfolio.vercel.app/" target="_blank" rel="noopener noreferrer">Itamar Katan</a>
+        </footer>
       </aside>
     </>}
   </div>;
