@@ -1495,7 +1495,10 @@ function DeviceOverlay({ allowPicking, presetId, onPresetChange, snapshot, dock,
 
   const previewUrl = (() => {
     const url = new URL(window.location.href);
-    ['inspect', 'design', 'system', 'responsiveSelector', 'responsiveBreakpoint'].forEach((parameter) => url.searchParams.delete(parameter));
+    // The preview must load the product, not another copy of this tool. Leaving the opt-in flag
+    // on booted a second inspector inside the iframe, and its capture listeners swallowed the
+    // typing, clicks and navigation that review mode exists to exercise.
+    [DESIGN_MODE_PARAM, 'inspect', 'design', 'system', 'responsiveSelector', 'responsiveBreakpoint'].forEach((parameter) => url.searchParams.delete(parameter));
     return url.toString();
   })();
 
@@ -1755,7 +1758,7 @@ function DeviceOverlay({ allowPicking, presetId, onPresetChange, snapshot, dock,
         <div className={`hi-device-shell hi-device-shell--${preset.chrome}`} style={{ width: shellWidth, height: shellHeight, transform: `scale(${scale})`, padding: bezel, borderRadius: preset.radius + bezel }}>
           {preset.chrome === 'browser' && <div className="hi-device-chrome" style={{ height: chromeBar }}><i /><i /><i /><span>{window.location.host}{window.location.pathname}</span></div>}
           <div className="hi-device-viewport" style={{ width, height, borderRadius: preset.radius }}>
-            <iframe key={reloadKey} ref={frameRef} title={`${preset.label} live preview`} src={previewUrl} onLoad={handleLoad} style={{ width, height }} />
+            <iframe key={reloadKey} ref={frameRef} name={DESIGN_PREVIEW_FRAME_NAME} title={`${preset.label} live preview`} src={previewUrl} onLoad={handleLoad} style={{ width, height }} />
             {selectionBox && <span className="hi-device-marker is-selected" style={{ top: selectionBox.top, left: selectionBox.left, width: selectionBox.width, height: selectionBox.height }}>
               {canvasEdit && snapshot && <CanvasHandles size={canvasSize} onStart={(direction, event) => onCanvasResize(direction, event, scale, sync)} />}
             </span>}
@@ -1791,7 +1794,7 @@ function DeviceOverlay({ allowPicking, presetId, onPresetChange, snapshot, dock,
       </div>}
     </div>
 
-    {sweeping && <iframe ref={sweepRef} className="hi-sweep-frame" title="Breakpoint sweep" src={previewUrl} onLoad={runSweep} style={{ width: SWEEP_WIDTHS[0], height }} />}
+    {sweeping && <iframe ref={sweepRef} name={DESIGN_PREVIEW_FRAME_NAME} className="hi-sweep-frame" title="Breakpoint sweep" src={previewUrl} onLoad={runSweep} style={{ width: SWEEP_WIDTHS[0], height }} />}
   </div>;
 }
 
@@ -2246,7 +2249,8 @@ function HandoffInspectorPanel() {
   // There is one mode now, so opening the inspector means landing in the desktop preview ready to edit.
   const toggleInspector = () => {
     if (open) { setOpen(false); return; }
-    openDevice('desktop');
+    // Land on the real page. Auto-opening a device preview put an iframe between the user and
+    // their site, so every click went to a framed copy instead of the page itself.
     setOpen(true);
   };
   const hasSecondCollection = designTokens.collections.length > 1;
@@ -3121,7 +3125,13 @@ function HandoffInspectorPanel() {
           >{entry.label}</button>)}
         </div>
         <div className="hi-scroll">
-          {!snapshot ? <div className="hi-onboarding"><div><MousePointer2 size={24} /></div><h2>Select something on the canvas</h2><p>Move over the page to preview an element. Click to lock it, then edit it here or straight on the canvas.</p><div><span>ESC</span> unlock or close</div></div>
+          {/* Review needs no selection — its whole job is the page itself — so it must not be
+              held behind the "pick an element" empty state, which left no way to reach the
+              device sizes at all. */}
+          {mode === 'review' ? <div className="hi-design">
+              <ToolSection title="Device preview" icon={Monitor} defaultOpen><ResponsiveLauncher activeKind={activeDeviceKind} onOpen={openDevice} /></ToolSection>
+            </div>
+            : !snapshot ? <div className="hi-onboarding"><div><MousePointer2 size={24} /></div><h2>Select something on the canvas</h2><p>Move over the page to preview an element. Click to lock it, then edit it here or straight on the canvas.</p><div><span>ESC</span> unlock or close</div></div>
             : <div className="hi-design">
               {mode === 'design' && <><div className="hi-design-cluster"><div className="hi-design-heading"><div><h2>{snapshot.family.label}</h2></div><span className="hi-live-dot">Live</span></div>
               {/* Editing every matching variant at once is only meaningful against a real design
@@ -3134,7 +3144,7 @@ function HandoffInspectorPanel() {
               </div></div>
               {canvasNote && <div className="hi-restore is-note"><CircleAlert size={16} /><span><small>{canvasNote}</small></span><div><button onClick={() => setCanvasNote(null)}>Dismiss</button></div></div>}
               <div className="hi-reset-row"><button onClick={resetElement} disabled={!currentTargets().some((element) => originalsRef.current.has(element))}><RotateCcw size={13} />Reset selection</button><button onClick={resetAll} disabled={!changes.length}><RotateCcw size={13} />Reset all</button></div></>}
-              {mode !== 'review' && <ToolSection title={`Comments · ${elementComments.length}`} icon={MessageSquare} openWhen={commentMode || focusComposer > 0 || elementComments.length > 0}>
+              {<ToolSection title={`Comments · ${elementComments.length}`} icon={MessageSquare} openWhen={commentMode || focusComposer > 0 || elementComments.length > 0}>
                 <div className="hi-comment-composer">
                   <textarea
                     ref={composerRef}
@@ -3215,7 +3225,6 @@ function HandoffInspectorPanel() {
                 <label className="hi-control"><span>Filter</span><input value={snapshot.styles.filter} onChange={(event) => applyStyle('filter', event.target.value)} /></label>
                 <label className="hi-control"><span>Transform</span><input value={snapshot.styles.transform} onChange={(event) => applyStyle('transform', event.target.value)} /></label>
               </ToolSection></>}
-              {mode === 'review' && <ToolSection title="Device preview" icon={Monitor}><ResponsiveLauncher activeKind={activeDeviceKind} onOpen={openDevice} /></ToolSection>}
               {mode === 'design' && <>{snapshot.assets.length > 0 && <ToolSection title={`Assets · ${snapshot.assets.length}`} icon={ImageIcon}><div className="hi-design-assets">{snapshot.assets.map((asset) => <article key={asset.id}><div className="hi-asset-head"><img src={asset.src} alt="" /><span><strong>{asset.label}</strong><small>{asset.type} · {asset.id}</small></span><a href={asset.src} download={`${asset.id}.${asset.type === 'svg' ? 'svg' : 'png'}`} title="Download the current asset"><Download size={14} /></a></div><label><span>Replace by URL</span><input placeholder="https://…" onKeyDown={(event) => { if (event.key === 'Enter') applyAsset(asset, event.currentTarget.value, 'URL replacement'); }} /></label><label className="hi-upload"><input type="file" accept="image/*,.svg" onChange={(event) => onAssetFile(asset, event.target.files?.[0])} />Upload image or SVG</label>{asset.type === 'svg' && <div className="hi-icon-library">{ICON_LIBRARY.map((icon) => <button key={icon.label} title={icon.label} onClick={() => applyAsset(asset, icon.svg, `${icon.label} icon`)} dangerouslySetInnerHTML={{ __html: icon.svg }} />)}</div>}</article>)}</div></ToolSection>}
               <ToolSection title="Component states · 6" icon={MousePointer2} defaultOpen={false}>
                 <ComponentStatesEditor snapshot={snapshot} colorTokens={colorTokens} resetSignal={stateResetSignal} onStateChange={recordStateChange} />
@@ -3227,7 +3236,7 @@ function HandoffInspectorPanel() {
               <MeasurementDetails snapshot={snapshot} />
               <ToolSection title="Token binding" icon={Link2} defaultOpen={false} disabled={!designSystemConnected} disabledHint={DESIGN_SYSTEM_REQUIRED}><TokenBindingPanel snapshot={snapshot} colorTokens={colorTokens} onBind={applyTokenBinding} /></ToolSection>
               <ToolSection title="Page token audit" icon={ScanSearch} defaultOpen={false} disabled={!designSystemConnected} disabledHint={DESIGN_SYSTEM_REQUIRED}><PageTokenAudit colorTokens={colorTokens} onSelect={selectElement} /></ToolSection></>}
-              {mode !== 'review' && <ToolSection title={mode === 'comment' ? `Handoff · ${comments.length} note${comments.length === 1 ? '' : 's'}` : `Designer changes · ${changes.length + comments.length}`} icon={Code2} defaultOpen openWhen={changes.length + comments.length > 0}>{(changes.length || comments.length) ? <>
+              {<ToolSection title={mode === 'comment' ? `Handoff · ${comments.length} note${comments.length === 1 ? '' : 's'}` : `Designer changes · ${changes.length + comments.length}`} icon={Code2} defaultOpen openWhen={changes.length + comments.length > 0}>{(changes.length || comments.length) ? <>
                 <div className="hi-handoff-actions">
                   <CopyButton value={handoffText} label="Copy everything" />
                   {cssDiff && <CopyButton value={cssDiff} label="Copy changed CSS" />}
@@ -3255,6 +3264,16 @@ function HandoffInspectorPanel() {
 
 /** Shown wherever a feature needs a real design system behind it, rather than detected values. */
 const DESIGN_SYSTEM_REQUIRED = 'Connect a design system to use this feature — pass tokens to DesignTokensProvider.';
+
+/**
+ * Marks the inspector's own preview frames.
+ *
+ * Stripping the URL flag stops a nested inspector only for hosts that opt in through the URL;
+ * anyone gating with `enabled` would still boot a second copy inside the preview, which then
+ * eats the very clicks and keystrokes the preview exists to test. The frame names itself, and
+ * the component refuses to mount when it sees that name.
+ */
+const DESIGN_PREVIEW_FRAME_NAME = 'merakimind-design-preview';
 
 /** Query-string flag that opts a page into the inspector. */
 export const DESIGN_MODE_PARAM = 'designmode';
@@ -3290,6 +3309,12 @@ export type HandoffInspectorProps = {
  */
 export default function HandoffInspector({ enabled }: HandoffInspectorProps = {}) {
   const [urlEnabled, setUrlEnabled] = useState(false);
+  const [insidePreview, setInsidePreview] = useState(false);
+
+  // Read after mount for the same reason as the URL flag: the server has no window to ask.
+  useEffect(() => {
+    setInsidePreview(typeof window !== 'undefined' && window.name === DESIGN_PREVIEW_FRAME_NAME);
+  }, []);
 
   useEffect(() => {
     if (enabled !== undefined) return;
@@ -3300,6 +3325,7 @@ export default function HandoffInspector({ enabled }: HandoffInspectorProps = {}
     return () => window.removeEventListener('popstate', read);
   }, [enabled]);
 
+  if (insidePreview) return null;
   if (!(enabled ?? urlEnabled)) return null;
   return <HandoffInspectorPanel />;
 }
