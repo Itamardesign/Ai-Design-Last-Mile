@@ -1495,7 +1495,10 @@ function DeviceOverlay({ allowPicking, presetId, onPresetChange, snapshot, dock,
 
   const previewUrl = (() => {
     const url = new URL(window.location.href);
-    ['inspect', 'design', 'system', 'responsiveSelector', 'responsiveBreakpoint'].forEach((parameter) => url.searchParams.delete(parameter));
+    // The preview is the product, not another copy of the design tool. Keeping the opt-in flag
+    // here mounted a nested inspector inside the iframe; its capture listeners then swallowed
+    // the form input, buttons and navigation that Review mode exists to exercise.
+    [DESIGN_MODE_PARAM, 'inspect', 'design', 'system', 'responsiveSelector', 'responsiveBreakpoint'].forEach((parameter) => url.searchParams.delete(parameter));
     return url.toString();
   })();
 
@@ -2243,10 +2246,10 @@ function HandoffInspectorPanel() {
   scopeRef.current = scope;
   const activeDeviceKind = deviceOpen ? inspectorDevicePresets.find((item) => item.id === devicePreset)?.kind ?? null : null;
   const openDevice = (kind: DeviceKind) => { setDevicePreset(defaultDeviceForKind[kind]); setDeviceOpen(true); setDeviceMounted(true); };
-  // There is one mode now, so opening the inspector means landing in the desktop preview ready to edit.
+  // Device preview is an explicit Review action, so opening the tool never places an iframe
+  // between the designer and the canvas before they choose a review size.
   const toggleInspector = () => {
     if (open) { setOpen(false); return; }
-    openDevice('desktop');
     setOpen(true);
   };
   const hasSecondCollection = designTokens.collections.length > 1;
@@ -3085,7 +3088,7 @@ function HandoffInspectorPanel() {
       {mode !== 'review' && !deviceOpen && locked && !canvasSize && overlaySnapshot && <div className="hi-measurements">{SIDES.map((side) => overlaySnapshot.siblingDistances[side] !== undefined ? <span key={side} className={`hi-measure hi-measure-${side}`} style={{ top: side === 'top' ? overlaySnapshot.rect.top - 22 : side === 'bottom' ? overlaySnapshot.rect.bottom + 6 : overlaySnapshot.rect.top + overlaySnapshot.rect.height / 2, left: side === 'left' ? overlaySnapshot.rect.left - 42 : side === 'right' ? overlaySnapshot.rect.right + 7 : overlaySnapshot.rect.left + overlaySnapshot.rect.width / 2 }}>{overlaySnapshot.siblingDistances[side]}px</span> : null)}</div>}
       <aside ref={panelRef} className={`hi-panel hi-panel--${dock}`}>
         <header className="hi-header">
-          <div className="hi-product"><span className="hi-logo"><Sparkles size={13} /></span><div><strong>Design Inspector</strong><small>{locked ? 'Selection locked' : 'Preview mode · click to select'}</small></div></div>
+          <div className="hi-product"><span className="hi-logo"><Sparkles size={13} /></span><div><strong>Design Inspector</strong><small>{mode === 'review' ? 'Interactive review · page controls are live' : locked ? 'Selection locked' : 'Preview mode · click to select'}</small></div></div>
           <div className="hi-header-tools">
             {hasSecondCollection && (
               <div className="hi-dock-switch" role="group" aria-label="Design system collection">
@@ -3121,7 +3124,20 @@ function HandoffInspectorPanel() {
           >{entry.label}</button>)}
         </div>
         <div className="hi-scroll">
-          {!snapshot ? <div className="hi-onboarding"><div><MousePointer2 size={24} /></div><h2>Select something on the canvas</h2><p>Move over the page to preview an element. Click to lock it, then edit it here or straight on the canvas.</p><div><span>ESC</span> unlock or close</div></div>
+          {mode === 'review' ? <div className="hi-design hi-review-home">
+              <div className="hi-design-cluster">
+                <div className="hi-design-heading"><div><h2>Interactive review</h2></div><span className="hi-live-dot">Interactive</span></div>
+                <p className="hi-review-intro">Use the page normally. Typing, controls, links, and navigation stay live while design edits remain unchanged.</p>
+              </div>
+              <ToolSection title="Device preview" icon={Monitor} defaultOpen><ResponsiveLauncher activeKind={activeDeviceKind} onOpen={openDevice} /></ToolSection>
+              {snapshot && <ToolSection title="Review target" icon={ScanSearch} defaultOpen={false}>
+                <p className="hi-empty-note"><strong>{snapshot.family.label}</strong><br />Your last selection is retained for when you return to Design or Comment mode.</p>
+              </ToolSection>}
+              {(changes.length > 0 || comments.length > 0) && <ToolSection title="Session history" icon={History} defaultOpen={false}>
+                <p className="hi-empty-note">{changes.length} design change{changes.length === 1 ? '' : 's'} and {comments.length} comment{comments.length === 1 ? '' : 's'} are retained. Review mode does not modify them.</p>
+              </ToolSection>}
+            </div>
+            : !snapshot ? <div className="hi-onboarding"><div><MousePointer2 size={24} /></div><h2>Select something on the canvas</h2><p>Move over the page to preview an element. Click to lock it, then edit it here or straight on the canvas.</p><div><span>ESC</span> unlock or close</div></div>
             : <div className="hi-design">
               {mode === 'design' && <><div className="hi-design-cluster"><div className="hi-design-heading"><div><h2>{snapshot.family.label}</h2></div><span className="hi-live-dot">Live</span></div>
               {/* Editing every matching variant at once is only meaningful against a real design
@@ -3134,7 +3150,7 @@ function HandoffInspectorPanel() {
               </div></div>
               {canvasNote && <div className="hi-restore is-note"><CircleAlert size={16} /><span><small>{canvasNote}</small></span><div><button onClick={() => setCanvasNote(null)}>Dismiss</button></div></div>}
               <div className="hi-reset-row"><button onClick={resetElement} disabled={!currentTargets().some((element) => originalsRef.current.has(element))}><RotateCcw size={13} />Reset selection</button><button onClick={resetAll} disabled={!changes.length}><RotateCcw size={13} />Reset all</button></div></>}
-              {mode !== 'review' && <ToolSection title={`Comments · ${elementComments.length}`} icon={MessageSquare} openWhen={commentMode || focusComposer > 0 || elementComments.length > 0}>
+              <ToolSection title={`Comments · ${elementComments.length}`} icon={MessageSquare} openWhen={commentMode || focusComposer > 0 || elementComments.length > 0}>
                 <div className="hi-comment-composer">
                   <textarea
                     ref={composerRef}
@@ -3177,7 +3193,7 @@ function HandoffInspectorPanel() {
                     }}
                   ><span>{comment.label}</span><small>{comment.text}</small></button>)}
                 </div>}
-              </ToolSection>}
+              </ToolSection>
               {mode === 'design' && <>{['text', 'button', 'link', 'input'].includes(snapshot.kind) && <ToolSection title="Content" icon={Type}><label className="hi-control hi-control-stack"><span>{snapshot.kind === 'input' ? 'Value' : 'Text'}</span><DraftTextArea key={snapshot.uniquePath} ariaLabel={snapshot.kind === 'input' ? 'Value' : 'Text'} value={snapshot.rawText} onChange={applyText} /></label>{snapshot.hasMarkup && <p className="hi-empty-note hi-content-warning"><CircleAlert size={13} />This element wraps markup (line breaks, nested spans). Editing the text here replaces all of it with plain text.</p>}{snapshot.kind === 'link' && <label className="hi-control"><span>Link</span><input defaultValue={snapshot.attributes.href || ''} onBlur={(event) => applyAttribute('href', event.target.value)} /></label>}{snapshot.kind === 'input' && <><label className="hi-control"><span>Placeholder</span><input defaultValue={snapshot.attributes.placeholder || ''} onBlur={(event) => applyAttribute('placeholder', event.target.value)} /></label><label className="hi-control"><span>ARIA label</span><input defaultValue={snapshot.attributes['aria-label'] || ''} onBlur={(event) => applyAttribute('aria-label', event.target.value)} /></label></>}</ToolSection>}
               {['text', 'button', 'link', 'input'].includes(snapshot.kind) && <ToolSection title="Typography" icon={Type}>
                 <FontField label="Font" value={snapshot.styles['font-family']} projectFonts={pageFonts} onChange={(value) => applyStyle('font-family', value)} />
@@ -3215,7 +3231,6 @@ function HandoffInspectorPanel() {
                 <label className="hi-control"><span>Filter</span><input value={snapshot.styles.filter} onChange={(event) => applyStyle('filter', event.target.value)} /></label>
                 <label className="hi-control"><span>Transform</span><input value={snapshot.styles.transform} onChange={(event) => applyStyle('transform', event.target.value)} /></label>
               </ToolSection></>}
-              {mode === 'review' && <ToolSection title="Device preview" icon={Monitor}><ResponsiveLauncher activeKind={activeDeviceKind} onOpen={openDevice} /></ToolSection>}
               {mode === 'design' && <>{snapshot.assets.length > 0 && <ToolSection title={`Assets · ${snapshot.assets.length}`} icon={ImageIcon}><div className="hi-design-assets">{snapshot.assets.map((asset) => <article key={asset.id}><div className="hi-asset-head"><img src={asset.src} alt="" /><span><strong>{asset.label}</strong><small>{asset.type} · {asset.id}</small></span><a href={asset.src} download={`${asset.id}.${asset.type === 'svg' ? 'svg' : 'png'}`} title="Download the current asset"><Download size={14} /></a></div><label><span>Replace by URL</span><input placeholder="https://…" onKeyDown={(event) => { if (event.key === 'Enter') applyAsset(asset, event.currentTarget.value, 'URL replacement'); }} /></label><label className="hi-upload"><input type="file" accept="image/*,.svg" onChange={(event) => onAssetFile(asset, event.target.files?.[0])} />Upload image or SVG</label>{asset.type === 'svg' && <div className="hi-icon-library">{ICON_LIBRARY.map((icon) => <button key={icon.label} title={icon.label} onClick={() => applyAsset(asset, icon.svg, `${icon.label} icon`)} dangerouslySetInnerHTML={{ __html: icon.svg }} />)}</div>}</article>)}</div></ToolSection>}
               <ToolSection title="Component states · 6" icon={MousePointer2} defaultOpen={false}>
                 <ComponentStatesEditor snapshot={snapshot} colorTokens={colorTokens} resetSignal={stateResetSignal} onStateChange={recordStateChange} />
@@ -3227,7 +3242,7 @@ function HandoffInspectorPanel() {
               <MeasurementDetails snapshot={snapshot} />
               <ToolSection title="Token binding" icon={Link2} defaultOpen={false} disabled={!designSystemConnected} disabledHint={DESIGN_SYSTEM_REQUIRED}><TokenBindingPanel snapshot={snapshot} colorTokens={colorTokens} onBind={applyTokenBinding} /></ToolSection>
               <ToolSection title="Page token audit" icon={ScanSearch} defaultOpen={false} disabled={!designSystemConnected} disabledHint={DESIGN_SYSTEM_REQUIRED}><PageTokenAudit colorTokens={colorTokens} onSelect={selectElement} /></ToolSection></>}
-              {mode !== 'review' && <ToolSection title={mode === 'comment' ? `Handoff · ${comments.length} note${comments.length === 1 ? '' : 's'}` : `Designer changes · ${changes.length + comments.length}`} icon={Code2} defaultOpen openWhen={changes.length + comments.length > 0}>{(changes.length || comments.length) ? <>
+              <ToolSection title={mode === 'comment' ? `Handoff · ${comments.length} note${comments.length === 1 ? '' : 's'}` : `Designer changes · ${changes.length + comments.length}`} icon={Code2} defaultOpen openWhen={changes.length + comments.length > 0}>{(changes.length || comments.length) ? <>
                 <div className="hi-handoff-actions">
                   <CopyButton value={handoffText} label="Copy everything" />
                   {cssDiff && <CopyButton value={cssDiff} label="Copy changed CSS" />}
@@ -3241,7 +3256,7 @@ function HandoffInspectorPanel() {
                   {change.instruction && <p className="hi-change-instruction"><Wand2 size={12} /><span>{change.instruction}</span></p>}
                 </div>)}</div>
                 {cssDiff && <div className="hi-code"><CopyButton value={cssDiff} label="Copy CSS" /><pre>{cssDiff}</pre></div>}
-              </> : <p className="hi-empty-note">Edits will appear here as a handoff-ready change log.</p>}</ToolSection>}
+              </> : <p className="hi-empty-note">Edits will appear here as a handoff-ready change log.</p>}</ToolSection>
             </div>}
         </div>
         <footer className="hi-credit">
@@ -3300,6 +3315,8 @@ export default function HandoffInspector({ enabled }: HandoffInspectorProps = {}
     return () => window.removeEventListener('popstate', read);
   }, [enabled]);
 
-  if (!(enabled ?? urlEnabled)) return null;
+  // Device Review renders this same app in an iframe. Never mount the tool in that copy, even if
+  // the host passed `enabled`, or its global capture listeners will disable normal interaction.
+  if ((isBrowser && window.self !== window.top) || !(enabled ?? urlEnabled)) return null;
   return <HandoffInspectorPanel />;
 }

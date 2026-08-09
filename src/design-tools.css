@@ -1608,6 +1608,7 @@
 }
 .hi-mode-switch button:hover { color: var(--hi-text); }
 .hi-mode-switch button.is-active { color: var(--hi-accent); background: #fff; box-shadow: 0 1px 3px rgba(31, 33, 68, .16); }
+.hi-review-intro { margin: 9px 0 0; color: var(--hi-muted); font-size: 11.5px; line-height: 1.55; }
 
 /* Sub-groups inside the merged Inspect section. */
 .hi-inspect-group + .hi-inspect-group { margin-top: 13px; padding-top: 11px; border-top: 1px solid var(--hi-border); }
