@@ -3001,7 +3001,9 @@ function HandoffInspectorPanel() {
     '--hi-selected-soft': inspectorVisualTokens.selectedSoft,
     '--hi-success': inspectorVisualTokens.success,
   } as CSSProperties}>
-    <button className={`hi-launcher ${open ? 'is-open' : ''}`} onClick={toggleInspector} aria-label={open ? 'Hide inspector' : 'Open inspector'}><ScanSearch size={16} /><span>Inspect</span></button>
+    {/* Only the way in. Closing is the header's X — two controls for one job, both on screen
+        at once, is what made the corner busy. */}
+    {!open && <button className="hi-launcher" onClick={toggleInspector} aria-label="Open inspector"><ScanSearch size={16} /><span>Inspect</span></button>}
     {/* One job at a time, and always visible: the page behaves differently in each mode, so
         which one is active can never be a guess. */}
     {open && <div className="hi-mode-switch" role="group" aria-label="Inspector mode">
@@ -3076,10 +3078,12 @@ function HandoffInspectorPanel() {
               <button className={dock === 'left' ? 'is-active' : ''} aria-pressed={dock === 'left'} onClick={() => setDock('left')} title="Move panel to left"><PanelLeft size={15} /></button>
               <button className={dock === 'right' ? 'is-active' : ''} aria-pressed={dock === 'right'} onClick={() => setDock('right')} title="Move panel to right"><PanelRight size={15} /></button>
             </div>
-            <div className="hi-header-actions">{locked &&<button onClick={unlock} title="Unlock"><Unlock size={15} /></button>}<button onClick={() => setOpen(false)} title="Close"><X size={15} /></button></div>
+            <div className="hi-header-actions">{locked && mode !== 'review' && <button onClick={unlock} title="Unlock"><Unlock size={15} /></button>}<button onClick={() => setOpen(false)} title="Close"><X size={15} /></button></div>
           </div>
         </header>
-        <div className={`hi-status ${locked ? 'is-locked' : ''}`}><i />{locked ? <><Lock size={12} /> Selected element</> : <><MousePointer2 size={12} /> Move to preview · click to lock</>}</div>
+        {/* Only worth saying before anything is selected; afterwards the outline and the
+            element name in the cluster both say it, and this line just repeated them. */}
+        {mode !== 'review' && !locked && <div className="hi-status"><i /><MousePointer2 size={12} /> Click any element to {mode === 'comment' ? 'comment on it' : 'edit it'}</div>}
         {restorable && !changes.length && <div className="hi-restore">
           <History size={17} />
           <span><strong>{restorable.changes.length} edit{restorable.changes.length === 1 ? '' : 's'} from your last session</strong><small>Saved {new Date(restorable.savedAt).toLocaleString()} on this page.</small></span>
@@ -3089,7 +3093,7 @@ function HandoffInspectorPanel() {
         <div className="hi-scroll">
           {!snapshot ? <div className="hi-onboarding"><div><MousePointer2 size={24} /></div><h2>Select something on the canvas</h2><p>Move over the page to preview an element. Click to lock it, then edit it here or straight on the canvas.</p><div><span>ESC</span> unlock or close</div></div>
             : <div className="hi-design">
-              {mode === 'design' && <><div className="hi-design-cluster"><div className="hi-design-heading"><div><span>Design mode</span><h2>{snapshot.family.label}</h2></div><span className="hi-live-dot">Live</span></div>
+              {mode === 'design' && <><div className="hi-design-cluster"><div className="hi-design-heading"><div><h2>{snapshot.family.label}</h2></div><span className="hi-live-dot">Live</span></div>
               {/* Editing every matching variant at once is only meaningful against a real design
                   system — without one there is nothing that defines what a "component" is, so the
                   control is shown but locked, with the reason on hover. */}
