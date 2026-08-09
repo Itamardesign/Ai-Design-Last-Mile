@@ -1611,3 +1611,11 @@
 }
 .hi-mode-switch button:hover { color: #fff; }
 .hi-mode-switch button.is-active { color: #16181f; background: #fff; }
+
+/* Sub-groups inside the merged Inspect section. */
+.hi-inspect-group + .hi-inspect-group { margin-top: 13px; padding-top: 11px; border-top: 1px solid var(--hi-border); }
+.hi-inspect-group h4 {
+  margin: 0 0 7px; color: var(--hi-muted); font-size: 10px; font-weight: 700;
+  letter-spacing: .07em; text-transform: uppercase;
+}
+.hi-inspect-group h4 em { font-size: 9.5px; font-weight: 500; font-style: normal; letter-spacing: .02em; text-transform: none; }

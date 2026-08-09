@@ -2121,12 +2121,31 @@ function BoxModel({ snapshot }: { snapshot: ElementSnapshot }) {
  */
 function MeasurementDetails({ snapshot }: { snapshot: ElementSnapshot }) {
   const technical = JSON.stringify({ tag: snapshot.tag, kind: snapshot.kind, selector: snapshot.selector, domPath: snapshot.domPath, parent: snapshot.parentSelector, childCount: snapshot.childCount, rect: snapshot.rect, styles: snapshot.styles, attributes: snapshot.attributes, currentStates: snapshot.currentStates }, null, 2);
-  return <>
-    <ToolSection title="Layer & box model" icon={Layers3} defaultOpen={false}><div className="hi-key-grid"><PropertyRow label="Size" value={`${round(snapshot.rect.width)} × ${round(snapshot.rect.height)} px`} /><PropertyRow label="Display" value={snapshot.styles.display} /><PropertyRow label="Position" value={snapshot.styles.position} /><PropertyRow label="Radius" value={snapshot.styles['border-radius']} /><PropertyRow label="Border" value={snapshot.styles.border} /><PropertyRow label="Padding" value={snapshot.styles.padding} /><PropertyRow label="Gap" value={snapshot.styles.gap} /></div><BoxModel snapshot={snapshot} /></ToolSection>
-    <ToolSection title="Distances" icon={ScanSearch} defaultOpen={false}><div className="hi-distance-group"><span>Parent edges</span><div>{SIDES.map((side) => <button key={side} onClick={() => navigator.clipboard.writeText(`${snapshot.parentDistances[side]}px`)}><small>{side}</small><strong>{snapshot.parentDistances[side]} px</strong></button>)}</div></div><div className="hi-distance-group"><span>Nearest siblings</span><div>{SIDES.map((side) => <button key={side} disabled={snapshot.siblingDistances[side] === undefined} onClick={() => navigator.clipboard.writeText(`${snapshot.siblingDistances[side]}px`)}><small>{side}</small><strong>{snapshot.siblingDistances[side] === undefined ? '—' : `${snapshot.siblingDistances[side]} px`}</strong></button>)}</div></div></ToolSection>
-    <ToolSection title="CSS handoff" icon={Code2} defaultOpen={false}><div className="hi-code"><CopyButton value={snapshot.cssSnippet} label="Copy CSS" /><pre dir="ltr">{snapshot.cssSnippet}</pre></div><ul className="hi-limitations"><li>Computed styles do not retain every CSS variable name.</li><li>JavaScript states appear only when reflected in DOM or attributes.</li><li>Cross-origin style rules may be inaccessible.</li><li>Complex animations are summarized, not simulated.</li></ul></ToolSection>
-    <ToolSection title="Selection details" icon={Component} defaultOpen={false}><PropertyRow label="Selector" value={snapshot.selector} /><PropertyRow label="DOM path" value={snapshot.domPath} /><PropertyRow label="Parent" value={snapshot.parentSelector} /><PropertyRow label="Children" value={String(snapshot.childCount)} /><div className="hi-code"><CopyButton value={technical} label="Copy JSON" /><pre dir="ltr">{technical}</pre></div></ToolSection>
-  </>;
+  /**
+   * One section, not four.
+   *
+   * Size, distances, computed CSS and the DOM path all answer the same question — what is this
+   * element — and split across four collapsed accordions the answer was never anywhere in
+   * particular. Grouped under labelled sub-headings they read as one reference instead.
+   */
+  return <ToolSection title="Inspect element" icon={Component} defaultOpen={false}>
+    <div className="hi-inspect-group">
+      <h4>Box model</h4>
+      <div className="hi-key-grid"><PropertyRow label="Size" value={`${round(snapshot.rect.width)} × ${round(snapshot.rect.height)} px`} /><PropertyRow label="Display" value={snapshot.styles.display} /><PropertyRow label="Position" value={snapshot.styles.position} /><PropertyRow label="Radius" value={snapshot.styles['border-radius']} /><PropertyRow label="Border" value={snapshot.styles.border} /><PropertyRow label="Padding" value={snapshot.styles.padding} /><PropertyRow label="Gap" value={snapshot.styles.gap} /></div><BoxModel snapshot={snapshot} />
+    </div>
+    <div className="hi-inspect-group">
+      <h4>Distances</h4>
+      <div className="hi-distance-group"><span>Parent edges</span><div>{SIDES.map((side) => <button key={side} onClick={() => navigator.clipboard.writeText(`${snapshot.parentDistances[side]}px`)}><small>{side}</small><strong>{snapshot.parentDistances[side]} px</strong></button>)}</div></div><div className="hi-distance-group"><span>Nearest siblings</span><div>{SIDES.map((side) => <button key={side} disabled={snapshot.siblingDistances[side] === undefined} onClick={() => navigator.clipboard.writeText(`${snapshot.siblingDistances[side]}px`)}><small>{side}</small><strong>{snapshot.siblingDistances[side] === undefined ? '—' : `${snapshot.siblingDistances[side]} px`}</strong></button>)}</div></div>
+    </div>
+    <div className="hi-inspect-group">
+      <h4>Computed CSS <em>(the whole element, not just your edits)</em></h4>
+      <div className="hi-code"><CopyButton value={snapshot.cssSnippet} label="Copy all CSS" /><pre dir="ltr">{snapshot.cssSnippet}</pre></div><ul className="hi-limitations"><li>Computed styles do not retain every CSS variable name.</li><li>JavaScript states appear only when reflected in DOM or attributes.</li><li>Cross-origin style rules may be inaccessible.</li><li>Complex animations are summarized, not simulated.</li></ul>
+    </div>
+    <div className="hi-inspect-group">
+      <h4>Identity</h4>
+      <PropertyRow label="Selector" value={snapshot.selector} /><PropertyRow label="DOM path" value={snapshot.domPath} /><PropertyRow label="Parent" value={snapshot.parentSelector} /><PropertyRow label="Children" value={String(snapshot.childCount)} /><div className="hi-code"><CopyButton value={technical} label="Copy JSON" /><pre dir="ltr">{technical}</pre></div>
+    </div>
+  </ToolSection>;
 }
 
 function HandoffInspectorPanel() {
@@ -2159,7 +2178,6 @@ function HandoffInspectorPanel() {
   const [editVersion, setEditVersion] = useState(0);
   const [restorable, setRestorable] = useState<StoredSession | null>(null);
   const [restoreNote, setRestoreNote] = useState<string | null>(null);
-  const [canvasEdit, setCanvasEdit] = useState(() => readStoredPreference('meraki-inspector-canvas-edit') !== 'off');
   // --- comments -------------------------------------------------------------
   const [comments, setComments] = useState<PageComment[]>(readStoredComments);
   const [commentDraft, setCommentDraft] = useState('');
@@ -2176,6 +2194,12 @@ function HandoffInspectorPanel() {
   const [mode, setMode] = useState<InspectorMode>('design');
   const commentMode = mode === 'comment';
   const browseMode = mode === 'review';
+
+  /**
+   * Canvas editing is what design mode means, so there is no separate switch for it. The state
+   * remains because leaving comment or review has to put the handles back.
+   */
+  const canvasEdit = mode === 'design';
   /** Bumped to ask the Comments section to open and put the caret in the composer. */
   const [focusComposer, setFocusComposer] = useState(0);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
@@ -2816,9 +2840,6 @@ function HandoffInspectorPanel() {
     applyTextTo(targetsFor(element), value);
   };
 
-  useEffect(() => {
-    window.localStorage.setItem('meraki-inspector-canvas-edit', canvasEdit ? 'on' : 'off');
-  }, [canvasEdit]);
 
   // The live drag box is only true for the snapshot it was measured against.
   useEffect(() => { setCanvasRect(null); }, [snapshot]);
@@ -3101,10 +3122,6 @@ function HandoffInspectorPanel() {
                 <button className={scope === 'free' ? 'is-active' : ''} aria-disabled={!designSystemConnected} onClick={() => designSystemConnected && setScope('free')}>Single</button>
                 <button className={scope === 'component' ? 'is-active' : ''} aria-disabled={!designSystemConnected} onClick={() => designSystemConnected && setScope('component')}>All variants</button>
                 {!designSystemConnected && <Lock size={11} />}
-              </div>
-              <div className="hi-canvas-switch" title={`Drag the handles to resize · double-click text to retype. Shift keeps the ratio, Alt snaps to ${CANVAS_SNAP_STEP}px, Esc cancels.`}>
-                <span><Maximize2 size={12} />Canvas editing</span>
-                <button role="switch" className={`hi-switch ${canvasEdit ? 'is-on' : ''}`} aria-checked={canvasEdit} aria-label="Direct canvas editing" onClick={() => { if (canvasEdit) finishTextEdit(true); setCanvasEdit((current) => !current); }}><i /></button>
               </div></div>
               {canvasNote && <div className="hi-restore is-note"><CircleAlert size={16} /><span><small>{canvasNote}</small></span><div><button onClick={() => setCanvasNote(null)}>Dismiss</button></div></div>}
               <div className="hi-reset-row"><button onClick={resetElement} disabled={!currentTargets().some((element) => originalsRef.current.has(element))}><RotateCcw size={13} />Reset selection</button><button onClick={resetAll} disabled={!changes.length}><RotateCcw size={13} />Reset all</button></div></>}
@@ -3201,10 +3218,10 @@ function HandoffInspectorPanel() {
               <MeasurementDetails snapshot={snapshot} />
               <ToolSection title="Token binding" icon={Link2} defaultOpen={false} disabled={!designSystemConnected} disabledHint={DESIGN_SYSTEM_REQUIRED}><TokenBindingPanel snapshot={snapshot} colorTokens={colorTokens} onBind={applyTokenBinding} /></ToolSection>
               <ToolSection title="Page token audit" icon={ScanSearch} defaultOpen={false} disabled={!designSystemConnected} disabledHint={DESIGN_SYSTEM_REQUIRED}><PageTokenAudit colorTokens={colorTokens} onSelect={selectElement} /></ToolSection></>}
-              {mode !== 'review' && <ToolSection title={`Designer changes · ${changes.length + comments.length}`} icon={Code2} defaultOpen openWhen={changes.length + comments.length > 0}>{(changes.length || comments.length) ? <>
+              {mode !== 'review' && <ToolSection title={mode === 'comment' ? `Handoff · ${comments.length} note${comments.length === 1 ? '' : 's'}` : `Designer changes · ${changes.length + comments.length}`} icon={Code2} defaultOpen openWhen={changes.length + comments.length > 0}>{(changes.length || comments.length) ? <>
                 <div className="hi-handoff-actions">
                   <CopyButton value={handoffText} label="Copy everything" />
-                  {cssDiff && <CopyButton value={cssDiff} label="Copy CSS" />}
+                  {cssDiff && <CopyButton value={cssDiff} label="Copy changed CSS" />}
                   {instructions && <CopyButton value={instructions} label="Copy instructions" />}
                   {commentsReport && <CopyButton value={commentsReport} label="Copy comments" />}
                 </div>
