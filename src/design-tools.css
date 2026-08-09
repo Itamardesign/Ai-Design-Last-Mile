@@ -1520,24 +1520,6 @@
    Comments and the design/browse switch.
    =========================================================================== */
 
-/* --- the mode switch: the way back out of a page that ignores clicks ------ */
-.hi-mode-toggle {
-  position: fixed; z-index: 2147483000; bottom: 22px; left: 50%;
-  display: inline-flex; padding: 9px 15px; gap: 9px; align-items: center;
-  transform: translateX(-50%);
-  border: 0; border-radius: 999px; color: #fff; background: #16181f;
-  font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer;
-  box-shadow: 0 12px 30px rgba(10, 12, 24, .3);
-  transition: background-color .18s ease, transform .18s ease;
-}
-.hi-mode-toggle:hover { transform: translateX(-50%) translateY(-1px); }
-.hi-mode-toggle em { padding: 3px 8px; border-radius: 999px; background: rgba(255, 255, 255, .16); font-size: 10.5px; font-style: normal; letter-spacing: .04em; text-transform: uppercase; }
-.hi-mode-dot { width: 8px; height: 8px; border-radius: 50%; }
-.hi-mode-toggle.is-designing .hi-mode-dot { background: #34d399; box-shadow: 0 0 0 4px rgba(52, 211, 153, .22); }
-/* Amber, not green: editing is paused, which is a state worth noticing. */
-.hi-mode-toggle.is-browsing { background: #7c3cff; }
-.hi-mode-toggle.is-browsing .hi-mode-dot { background: #fbbf24; box-shadow: 0 0 0 4px rgba(251, 191, 36, .26); }
-
 /* --- pins over commented elements ---------------------------------------- */
 .hi-comment-pins { position: fixed; z-index: 2147482000; inset: 0; pointer-events: none; }
 .hi-comment-pin {
@@ -1608,3 +1590,24 @@
 }
 .hi-heading-comment:hover { color: var(--hi-accent); border-color: var(--hi-accent); }
 .hi-heading-comment.has-comments { color: #fff; border-color: transparent; background: #7c3cff; }
+
+/* ===========================================================================
+   Mode switch — design / comment / review.
+   Fixed and centred at the foot of the viewport: each mode changes how the
+   page itself behaves, so the active one must never be a guess.
+   =========================================================================== */
+.hi-mode-switch {
+  position: fixed; z-index: 2147483000; bottom: 22px; left: 50%;
+  display: inline-flex; padding: 4px; gap: 3px;
+  transform: translateX(-50%);
+  border-radius: 999px; background: #16181f;
+  box-shadow: 0 14px 34px rgba(10, 12, 24, .34);
+}
+.hi-mode-switch button {
+  min-height: 32px; padding: 0 17px; border: 0; border-radius: 999px;
+  color: rgba(255, 255, 255, .62); background: transparent;
+  font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer;
+  transition: color .16s ease, background-color .16s ease;
+}
+.hi-mode-switch button:hover { color: #fff; }
+.hi-mode-switch button.is-active { color: #16181f; background: #fff; }

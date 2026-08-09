@@ -277,6 +277,14 @@ function readStoredPreference(key: string): string | null {
   }
 }
 
+type InspectorMode = 'design' | 'comment' | 'review';
+
+const MODES: Array<{ id: InspectorMode; label: string; hint: string }> = [
+  { id: 'design', label: 'Design', hint: 'Edit styles and drag on the canvas' },
+  { id: 'comment', label: 'Comment', hint: 'Click an element to leave a note' },
+  { id: 'review', label: 'Review', hint: 'Use the site normally and check other screen sizes' },
+];
+
 /** One note pinned to one element. Elements can carry several. */
 type PageComment = { id: string; path: string; selector: string; label: string; text: string; createdAt: string };
 
@@ -2154,23 +2162,20 @@ function HandoffInspectorPanel() {
   const [canvasEdit, setCanvasEdit] = useState(() => readStoredPreference('meraki-inspector-canvas-edit') !== 'off');
   // --- comments -------------------------------------------------------------
   const [comments, setComments] = useState<PageComment[]>(readStoredComments);
-  const [commentMode, setCommentMode] = useState(false);
   const [commentDraft, setCommentDraft] = useState('');
-  /**
-   * Comment mode is read by the pointer handlers, which are bound once per open. A ref keeps
-   * them seeing the current value without rebinding every listener on each toggle.
-   */
-  const commentModeRef = useRef(false);
-  useEffect(() => { commentModeRef.current = commentMode; }, [commentMode]);
 
   /**
-   * Browse mode hands the page back to the user.
+   * The tool does one job at a time.
    *
-   * The inspector swallows clicks to select elements, which means links and buttons stop working
-   * and you cannot reach the next page to inspect it. This turns every listener and overlay off
-   * without losing the panel, the selection, or any comments.
+   * Design, comment and review want different things from the same page — one needs to swallow
+   * clicks to edit, one only needs to know which element a note is about, and one needs the page
+   * to behave normally so it can be navigated and resized. Running them together is what made
+   * the panel long and the page unpredictable, so the mode is explicit and exclusive, and the
+   * panel shows only the sections that mode can act on.
    */
-  const [browseMode, setBrowseMode] = useState(false);
+  const [mode, setMode] = useState<InspectorMode>('design');
+  const commentMode = mode === 'comment';
+  const browseMode = mode === 'review';
   /** Bumped to ask the Comments section to open and put the caret in the composer. */
   const [focusComposer, setFocusComposer] = useState(0);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
@@ -2387,6 +2392,11 @@ function HandoffInspectorPanel() {
   }, [dock]);
 
   useEffect(() => { writeStoredComments(comments); }, [comments]);
+
+  // Leaving review puts the page back the way the other modes expect to find it.
+  useEffect(() => {
+    if (mode !== 'review') setDeviceOpen(false);
+  }, [mode]);
 
   const storeOriginal = (element: HTMLElement) => {
     if (originalsRef.current.has(element)) return;
@@ -2928,7 +2938,8 @@ function HandoffInspectorPanel() {
   // selected node leaves the document its rect is a lie, so stop drawing on top of whatever replaced it.
   const overlaySnapshot = snapshot?.element.isConnected ? snapshot : null;
   const overlayRect = canvasRect ?? overlaySnapshot?.rect ?? null;
-  const canvasHandlesVisible = canvasEdit && locked && !deviceOpen && Boolean(overlaySnapshot);
+  // Resize handles are a design-mode tool; in comment mode the outline only says what a note is about.
+  const canvasHandlesVisible = mode === 'design' && canvasEdit && locked && !deviceOpen && Boolean(overlaySnapshot);
   const designChanges = changes.filter((change) => {
     if (!snapshot) return false;
     return scope === 'component' ? snapshot.family.elements.includes(change.element) : change.element === snapshot.element;
@@ -2991,17 +3002,17 @@ function HandoffInspectorPanel() {
     '--hi-success': inspectorVisualTokens.success,
   } as CSSProperties}>
     <button className={`hi-launcher ${open ? 'is-open' : ''}`} onClick={toggleInspector} aria-label={open ? 'Hide inspector' : 'Open inspector'}><ScanSearch size={16} /><span>Inspect</span></button>
-    {/* Deliberately loud: when the page stops responding to clicks, the way back has to be
-        obvious, and when editing is live the user should be able to tell at a glance. */}
-    {open && <button
-      className={`hi-mode-toggle ${browseMode ? 'is-browsing' : 'is-designing'}`}
-      onClick={() => setBrowseMode((current) => !current)}
-      title={browseMode ? 'Editing is paused — click to resume design mode' : 'Pause editing so you can click links and move around the site'}
-    >
-      <span className="hi-mode-dot" />
-      {browseMode ? <><MousePointerClick size={15} />Browsing the site</> : <><Wand2 size={15} />Design mode on</>}
-      <em>{browseMode ? 'Resume' : 'Pause'}</em>
-    </button>}
+    {/* One job at a time, and always visible: the page behaves differently in each mode, so
+        which one is active can never be a guess. */}
+    {open && <div className="hi-mode-switch" role="group" aria-label="Inspector mode">
+      {MODES.map((entry) => <button
+        key={entry.id}
+        className={mode === entry.id ? 'is-active' : ''}
+        aria-pressed={mode === entry.id}
+        title={entry.hint}
+        onClick={() => setMode(entry.id)}
+      >{entry.label}</button>)}
+    </div>}
     {/* Pins live outside the panel so they sit over the page, next to what they refer to. */}
     {open && !browseMode && commentMarkers.length > 0 && <div className="hi-comment-pins" aria-hidden="true">
       {commentMarkers.map((marker) => <button
@@ -3038,7 +3049,7 @@ function HandoffInspectorPanel() {
         onClose={() => setDeviceOpen(false)}
         onExit={() => setOpen(false)}
       />}
-      {!deviceOpen && overlaySnapshot && overlayRect && <div className={`hi-selection ${locked ? 'is-locked' : ''} ${canvasSize ? 'is-resizing' : ''}`} style={{ top: overlayRect.top, left: overlayRect.left, width: overlayRect.width, height: overlayRect.height }}>
+      {mode !== 'review' && !deviceOpen && overlaySnapshot && overlayRect && <div className={`hi-selection ${locked ? 'is-locked' : ''} ${canvasSize ? 'is-resizing' : ''}`} style={{ top: overlayRect.top, left: overlayRect.left, width: overlayRect.width, height: overlayRect.height }}>
         <span>{overlaySnapshot.family.label} · {round(overlayRect.width)} × {round(overlayRect.height)}</span>
         {locked && !canvasHandlesVisible && <i><Lock size={10} /></i>}
         {/* Offered right where the selection is, so commenting is one click from picking
@@ -3050,7 +3061,7 @@ function HandoffInspectorPanel() {
         ><MessageSquare size={11} />{selectedCommentCount || 'Comment'}</button>}
         {canvasHandlesVisible && <CanvasHandles size={canvasSize} onStart={(direction, event) => startResize(overlaySnapshot.element, direction, event, 1, null)} />}
       </div>}
-      {!deviceOpen && locked && !canvasSize && overlaySnapshot && <div className="hi-measurements">{SIDES.map((side) => overlaySnapshot.siblingDistances[side] !== undefined ? <span key={side} className={`hi-measure hi-measure-${side}`} style={{ top: side === 'top' ? overlaySnapshot.rect.top - 22 : side === 'bottom' ? overlaySnapshot.rect.bottom + 6 : overlaySnapshot.rect.top + overlaySnapshot.rect.height / 2, left: side === 'left' ? overlaySnapshot.rect.left - 42 : side === 'right' ? overlaySnapshot.rect.right + 7 : overlaySnapshot.rect.left + overlaySnapshot.rect.width / 2 }}>{overlaySnapshot.siblingDistances[side]}px</span> : null)}</div>}
+      {mode !== 'review' && !deviceOpen && locked && !canvasSize && overlaySnapshot && <div className="hi-measurements">{SIDES.map((side) => overlaySnapshot.siblingDistances[side] !== undefined ? <span key={side} className={`hi-measure hi-measure-${side}`} style={{ top: side === 'top' ? overlaySnapshot.rect.top - 22 : side === 'bottom' ? overlaySnapshot.rect.bottom + 6 : overlaySnapshot.rect.top + overlaySnapshot.rect.height / 2, left: side === 'left' ? overlaySnapshot.rect.left - 42 : side === 'right' ? overlaySnapshot.rect.right + 7 : overlaySnapshot.rect.left + overlaySnapshot.rect.width / 2 }}>{overlaySnapshot.siblingDistances[side]}px</span> : null)}</div>}
       <aside ref={panelRef} className={`hi-panel hi-panel--${dock}`}>
         <header className="hi-header">
           <div className="hi-product"><span className="hi-logo"><Sparkles size={13} /></span><div><strong>Design Inspector</strong><small>{locked ? 'Selection locked' : 'Preview mode · click to select'}</small></div></div>
@@ -3065,7 +3076,7 @@ function HandoffInspectorPanel() {
               <button className={dock === 'left' ? 'is-active' : ''} aria-pressed={dock === 'left'} onClick={() => setDock('left')} title="Move panel to left"><PanelLeft size={15} /></button>
               <button className={dock === 'right' ? 'is-active' : ''} aria-pressed={dock === 'right'} onClick={() => setDock('right')} title="Move panel to right"><PanelRight size={15} /></button>
             </div>
-            <div className="hi-header-actions"><button className={`hi-comment-mode ${commentMode ? 'is-active' : ''}`} aria-pressed={commentMode} onClick={() => setCommentMode((current) => !current)} title={commentMode ? 'Comment mode on — the Comments section opens for whatever you select' : 'Comment mode — leave notes on elements'}><MessageSquare size={15} />{comments.length > 0 && <i>{comments.length}</i>}</button>{locked &&<button onClick={unlock} title="Unlock"><Unlock size={15} /></button>}<button onClick={() => setOpen(false)} title="Close"><X size={15} /></button></div>
+            <div className="hi-header-actions">{locked &&<button onClick={unlock} title="Unlock"><Unlock size={15} /></button>}<button onClick={() => setOpen(false)} title="Close"><X size={15} /></button></div>
           </div>
         </header>
         <div className={`hi-status ${locked ? 'is-locked' : ''}`}><i />{locked ? <><Lock size={12} /> Selected element</> : <><MousePointer2 size={12} /> Move to preview · click to lock</>}</div>
@@ -3078,7 +3089,7 @@ function HandoffInspectorPanel() {
         <div className="hi-scroll">
           {!snapshot ? <div className="hi-onboarding"><div><MousePointer2 size={24} /></div><h2>Select something on the canvas</h2><p>Move over the page to preview an element. Click to lock it, then edit it here or straight on the canvas.</p><div><span>ESC</span> unlock or close</div></div>
             : <div className="hi-design">
-              <div className="hi-design-cluster"><div className="hi-design-heading"><div><span>Design mode</span><h2>{snapshot.family.label}</h2></div><div className="hi-heading-actions">{/* Always reachable: the on-page chip is hidden while the device preview covers the page. */}<button className={`hi-heading-comment ${selectedCommentCount ? 'has-comments' : ''}`} title={selectedCommentCount ? `${selectedCommentCount} comment${selectedCommentCount > 1 ? 's' : ''} on this element` : 'Comment on this element'} onClick={() => setFocusComposer((count) => count + 1)}><MessageSquare size={13} />{selectedCommentCount || 'Comment'}</button><span className="hi-live-dot">Live</span></div></div>
+              {mode === 'design' && <><div className="hi-design-cluster"><div className="hi-design-heading"><div><span>Design mode</span><h2>{snapshot.family.label}</h2></div><span className="hi-live-dot">Live</span></div>
               {/* Editing every matching variant at once is only meaningful against a real design
                   system — without one there is nothing that defines what a "component" is, so the
                   control is shown but locked, with the reason on hover. */}
@@ -3092,8 +3103,8 @@ function HandoffInspectorPanel() {
                 <button role="switch" className={`hi-switch ${canvasEdit ? 'is-on' : ''}`} aria-checked={canvasEdit} aria-label="Direct canvas editing" onClick={() => { if (canvasEdit) finishTextEdit(true); setCanvasEdit((current) => !current); }}><i /></button>
               </div></div>
               {canvasNote && <div className="hi-restore is-note"><CircleAlert size={16} /><span><small>{canvasNote}</small></span><div><button onClick={() => setCanvasNote(null)}>Dismiss</button></div></div>}
-              <div className="hi-reset-row"><button onClick={resetElement} disabled={!currentTargets().some((element) => originalsRef.current.has(element))}><RotateCcw size={13} />Reset selection</button><button onClick={resetAll} disabled={!changes.length}><RotateCcw size={13} />Reset all</button></div>
-              <ToolSection title={`Comments · ${elementComments.length}`} icon={MessageSquare} openWhen={commentMode || focusComposer > 0 || elementComments.length > 0}>
+              <div className="hi-reset-row"><button onClick={resetElement} disabled={!currentTargets().some((element) => originalsRef.current.has(element))}><RotateCcw size={13} />Reset selection</button><button onClick={resetAll} disabled={!changes.length}><RotateCcw size={13} />Reset all</button></div></>}
+              {mode !== 'review' && <ToolSection title={`Comments · ${elementComments.length}`} icon={MessageSquare} openWhen={commentMode || focusComposer > 0 || elementComments.length > 0}>
                 <div className="hi-comment-composer">
                   <textarea
                     ref={composerRef}
@@ -3136,8 +3147,8 @@ function HandoffInspectorPanel() {
                     }}
                   ><span>{comment.label}</span><small>{comment.text}</small></button>)}
                 </div>}
-              </ToolSection>
-              {['text', 'button', 'link', 'input'].includes(snapshot.kind) && <ToolSection title="Content" icon={Type}><label className="hi-control hi-control-stack"><span>{snapshot.kind === 'input' ? 'Value' : 'Text'}</span><DraftTextArea key={snapshot.uniquePath} ariaLabel={snapshot.kind === 'input' ? 'Value' : 'Text'} value={snapshot.rawText} onChange={applyText} /></label>{snapshot.hasMarkup && <p className="hi-empty-note hi-content-warning"><CircleAlert size={13} />This element wraps markup (line breaks, nested spans). Editing the text here replaces all of it with plain text.</p>}{snapshot.kind === 'link' && <label className="hi-control"><span>Link</span><input defaultValue={snapshot.attributes.href || ''} onBlur={(event) => applyAttribute('href', event.target.value)} /></label>}{snapshot.kind === 'input' && <><label className="hi-control"><span>Placeholder</span><input defaultValue={snapshot.attributes.placeholder || ''} onBlur={(event) => applyAttribute('placeholder', event.target.value)} /></label><label className="hi-control"><span>ARIA label</span><input defaultValue={snapshot.attributes['aria-label'] || ''} onBlur={(event) => applyAttribute('aria-label', event.target.value)} /></label></>}</ToolSection>}
+              </ToolSection>}
+              {mode === 'design' && <>{['text', 'button', 'link', 'input'].includes(snapshot.kind) && <ToolSection title="Content" icon={Type}><label className="hi-control hi-control-stack"><span>{snapshot.kind === 'input' ? 'Value' : 'Text'}</span><DraftTextArea key={snapshot.uniquePath} ariaLabel={snapshot.kind === 'input' ? 'Value' : 'Text'} value={snapshot.rawText} onChange={applyText} /></label>{snapshot.hasMarkup && <p className="hi-empty-note hi-content-warning"><CircleAlert size={13} />This element wraps markup (line breaks, nested spans). Editing the text here replaces all of it with plain text.</p>}{snapshot.kind === 'link' && <label className="hi-control"><span>Link</span><input defaultValue={snapshot.attributes.href || ''} onBlur={(event) => applyAttribute('href', event.target.value)} /></label>}{snapshot.kind === 'input' && <><label className="hi-control"><span>Placeholder</span><input defaultValue={snapshot.attributes.placeholder || ''} onBlur={(event) => applyAttribute('placeholder', event.target.value)} /></label><label className="hi-control"><span>ARIA label</span><input defaultValue={snapshot.attributes['aria-label'] || ''} onBlur={(event) => applyAttribute('aria-label', event.target.value)} /></label></>}</ToolSection>}
               {['text', 'button', 'link', 'input'].includes(snapshot.kind) && <ToolSection title="Typography" icon={Type}>
                 <FontField label="Font" value={snapshot.styles['font-family']} projectFonts={pageFonts} onChange={(value) => applyStyle('font-family', value)} />
                 <div className="hi-control-pair"><label className="hi-control hi-compact-control"><span>Size</span><select value={snapshot.styles['font-size']} onChange={(event) => applyStyle('font-size', event.target.value)}>{FONT_SIZES.map((size) => <option key={size}>{size}</option>)}</select></label><label className="hi-control hi-compact-control"><span>Weight</span><select value={snapshot.styles['font-weight']} onChange={(event) => applyStyle('font-weight', event.target.value)}>{['300', '400', '500', '600', '700', '800', '900'].map((weight) => <option key={weight}>{weight}</option>)}</select></label></div>
@@ -3173,9 +3184,9 @@ function HandoffInspectorPanel() {
                 <label className="hi-control"><span>Shadow</span><select value={snapshot.styles['box-shadow']} onChange={(event) => applyStyle('box-shadow', event.target.value)}><option value="none">None</option><option value="0 1px 2px rgba(0,0,0,.08)">Subtle</option><option value="0 8px 24px rgba(23,18,87,.12)">Elevated</option><option value="0 20px 50px rgba(23,18,87,.18)">Floating</option><option value={snapshot.styles['box-shadow']}>Current / custom</option></select></label>
                 <label className="hi-control"><span>Filter</span><input value={snapshot.styles.filter} onChange={(event) => applyStyle('filter', event.target.value)} /></label>
                 <label className="hi-control"><span>Transform</span><input value={snapshot.styles.transform} onChange={(event) => applyStyle('transform', event.target.value)} /></label>
-              </ToolSection>
-              <ToolSection title="Device preview" icon={Monitor}><ResponsiveLauncher activeKind={activeDeviceKind} onOpen={openDevice} /></ToolSection>
-              {snapshot.assets.length > 0 && <ToolSection title={`Assets · ${snapshot.assets.length}`} icon={ImageIcon}><div className="hi-design-assets">{snapshot.assets.map((asset) => <article key={asset.id}><div className="hi-asset-head"><img src={asset.src} alt="" /><span><strong>{asset.label}</strong><small>{asset.type} · {asset.id}</small></span><a href={asset.src} download={`${asset.id}.${asset.type === 'svg' ? 'svg' : 'png'}`} title="Download the current asset"><Download size={14} /></a></div><label><span>Replace by URL</span><input placeholder="https://…" onKeyDown={(event) => { if (event.key === 'Enter') applyAsset(asset, event.currentTarget.value, 'URL replacement'); }} /></label><label className="hi-upload"><input type="file" accept="image/*,.svg" onChange={(event) => onAssetFile(asset, event.target.files?.[0])} />Upload image or SVG</label>{asset.type === 'svg' && <div className="hi-icon-library">{ICON_LIBRARY.map((icon) => <button key={icon.label} title={icon.label} onClick={() => applyAsset(asset, icon.svg, `${icon.label} icon`)} dangerouslySetInnerHTML={{ __html: icon.svg }} />)}</div>}</article>)}</div></ToolSection>}
+              </ToolSection></>}
+              {mode === 'review' && <ToolSection title="Device preview" icon={Monitor}><ResponsiveLauncher activeKind={activeDeviceKind} onOpen={openDevice} /></ToolSection>}
+              {mode === 'design' && <>{snapshot.assets.length > 0 && <ToolSection title={`Assets · ${snapshot.assets.length}`} icon={ImageIcon}><div className="hi-design-assets">{snapshot.assets.map((asset) => <article key={asset.id}><div className="hi-asset-head"><img src={asset.src} alt="" /><span><strong>{asset.label}</strong><small>{asset.type} · {asset.id}</small></span><a href={asset.src} download={`${asset.id}.${asset.type === 'svg' ? 'svg' : 'png'}`} title="Download the current asset"><Download size={14} /></a></div><label><span>Replace by URL</span><input placeholder="https://…" onKeyDown={(event) => { if (event.key === 'Enter') applyAsset(asset, event.currentTarget.value, 'URL replacement'); }} /></label><label className="hi-upload"><input type="file" accept="image/*,.svg" onChange={(event) => onAssetFile(asset, event.target.files?.[0])} />Upload image or SVG</label>{asset.type === 'svg' && <div className="hi-icon-library">{ICON_LIBRARY.map((icon) => <button key={icon.label} title={icon.label} onClick={() => applyAsset(asset, icon.svg, `${icon.label} icon`)} dangerouslySetInnerHTML={{ __html: icon.svg }} />)}</div>}</article>)}</div></ToolSection>}
               <ToolSection title="Component states · 6" icon={MousePointer2} defaultOpen={false}>
                 <ComponentStatesEditor snapshot={snapshot} colorTokens={colorTokens} resetSignal={stateResetSignal} onStateChange={recordStateChange} />
                 {snapshot.currentStates.length > 0 && <div className="hi-state-chips">{snapshot.currentStates.map((state) => <span key={state}>{state}</span>)}</div>}
@@ -3185,8 +3196,8 @@ function HandoffInspectorPanel() {
               <ToolSection title="Accessibility check" icon={ShieldCheck} badge={accessibilityBadge}><AccessibilityPanel snapshot={snapshot} /></ToolSection>
               <MeasurementDetails snapshot={snapshot} />
               <ToolSection title="Token binding" icon={Link2} defaultOpen={false} disabled={!designSystemConnected} disabledHint={DESIGN_SYSTEM_REQUIRED}><TokenBindingPanel snapshot={snapshot} colorTokens={colorTokens} onBind={applyTokenBinding} /></ToolSection>
-              <ToolSection title="Page token audit" icon={ScanSearch} defaultOpen={false} disabled={!designSystemConnected} disabledHint={DESIGN_SYSTEM_REQUIRED}><PageTokenAudit colorTokens={colorTokens} onSelect={selectElement} /></ToolSection>
-              <ToolSection title={`Designer changes · ${changes.length + comments.length}`} icon={Code2} defaultOpen openWhen={changes.length + comments.length > 0}>{(changes.length || comments.length) ? <>
+              <ToolSection title="Page token audit" icon={ScanSearch} defaultOpen={false} disabled={!designSystemConnected} disabledHint={DESIGN_SYSTEM_REQUIRED}><PageTokenAudit colorTokens={colorTokens} onSelect={selectElement} /></ToolSection></>}
+              {mode !== 'review' && <ToolSection title={`Designer changes · ${changes.length + comments.length}`} icon={Code2} defaultOpen openWhen={changes.length + comments.length > 0}>{(changes.length || comments.length) ? <>
                 <div className="hi-handoff-actions">
                   <CopyButton value={handoffText} label="Copy everything" />
                   {cssDiff && <CopyButton value={cssDiff} label="Copy CSS" />}
@@ -3200,7 +3211,7 @@ function HandoffInspectorPanel() {
                   {change.instruction && <p className="hi-change-instruction"><Wand2 size={12} /><span>{change.instruction}</span></p>}
                 </div>)}</div>
                 {cssDiff && <div className="hi-code"><CopyButton value={cssDiff} label="Copy CSS" /><pre>{cssDiff}</pre></div>}
-              </> : <p className="hi-empty-note">Edits will appear here as a handoff-ready change log.</p>}</ToolSection>
+              </> : <p className="hi-empty-note">Edits will appear here as a handoff-ready change log.</p>}</ToolSection>}
             </div>}
         </div>
         <footer className="hi-credit">
