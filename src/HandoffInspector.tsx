@@ -1427,7 +1427,8 @@ function CanvasHandles({ size, onStart }: { size: string | null; onStart: (direc
   </>;
 }
 
-function DeviceOverlay({ presetId, onPresetChange, snapshot, dock, hidden, editVersion, canvasEdit, canvasSize, canvasBusyRef, onCanvasResize, onCanvasText, onFrameDocument, onSelectPath, onReplay, onClose, onExit }: {
+function DeviceOverlay({ allowPicking, presetId, onPresetChange, snapshot, dock, hidden, editVersion, canvasEdit, canvasSize, canvasBusyRef, onCanvasResize, onCanvasText, onFrameDocument, onSelectPath, onReplay, onClose, onExit }: {
+  allowPicking: boolean;
   presetId: DevicePresetId;
   onPresetChange: (id: DevicePresetId) => void;
   snapshot: ElementSnapshot | null;
@@ -1455,7 +1456,13 @@ function DeviceOverlay({ presetId, onPresetChange, snapshot, dock, hidden, editV
   const direction = isBrowser && document.documentElement.dir === 'rtl' ? 'rtl' : 'ltr';
   const [freezeReveals, setFreezeReveals] = useState(true);
   const [zoom, setZoom] = useState<'fit' | number>('fit');
-  const [picking, setPicking] = useState(true);
+  /**
+   * Picking turns every click in the frame into a selection, which is exactly wrong in review
+   * mode: the point there is to use the site — press its buttons, follow its links — at another
+   * screen size. So the frame only picks when the mode says it should.
+   */
+  const [picking, setPicking] = useState(allowPicking);
+  useEffect(() => { setPicking(allowPicking); }, [allowPicking]);
   const [reloadKey, setReloadKey] = useState(0);
   const [sweeping, setSweeping] = useState(false);
   const [sweepProgress, setSweepProgress] = useState(0);
@@ -1731,7 +1738,7 @@ function DeviceOverlay({ presetId, onPresetChange, snapshot, dock, hidden, editV
       </select>
       <span className="hi-device-size">{width} × {height}</span>
       <div className="hi-device-actions">
-        <button className={picking ? 'is-active' : ''} aria-pressed={picking} title="Pick an element inside the device (Ctrl/Cmd + P)" onClick={() => setPicking((current) => !current)}><Crosshair size={15} /></button>
+        {allowPicking && <button className={picking ? 'is-active' : ''} aria-pressed={picking} title="Pick an element inside the device (Ctrl/Cmd + P)" onClick={() => setPicking((current) => !current)}><Crosshair size={15} /></button>}
         <button title="Rotate" onClick={() => setOrientation((current) => current === 'portrait' ? 'landscape' : 'portrait')}><RotateCw size={15} /></button>
         <button className={freezeReveals ? 'is-active' : ''} aria-pressed={freezeReveals} title={freezeReveals ? 'Reveal animations are frozen — click to watch them play' : 'Freeze reveal animations so sections stay visible'} onClick={() => setFreezeReveals((current) => !current)}><Sparkles size={15} /></button>
         <button title="Reload the device frame" onClick={() => { setReloadKey((current) => current + 1); setFrameDoc(null); }}><RefreshCw size={15} /></button>
@@ -3025,17 +3032,7 @@ function HandoffInspectorPanel() {
     {/* Only the way in. Closing is the header's X — two controls for one job, both on screen
         at once, is what made the corner busy. */}
     {!open && <button className="hi-launcher" onClick={toggleInspector} aria-label="Open inspector"><ScanSearch size={16} /><span>Inspect</span></button>}
-    {/* One job at a time, and always visible: the page behaves differently in each mode, so
-        which one is active can never be a guess. */}
-    {open && <div className="hi-mode-switch" role="group" aria-label="Inspector mode">
-      {MODES.map((entry) => <button
-        key={entry.id}
-        className={mode === entry.id ? 'is-active' : ''}
-        aria-pressed={mode === entry.id}
-        title={entry.hint}
-        onClick={() => setMode(entry.id)}
-      >{entry.label}</button>)}
-    </div>}
+
     {/* Pins live outside the panel so they sit over the page, next to what they refer to. */}
     {open && !browseMode && commentMarkers.length > 0 && <div className="hi-comment-pins" aria-hidden="true">
       {commentMarkers.map((marker) => <button
@@ -3055,6 +3052,7 @@ function HandoffInspectorPanel() {
     </div>}
     {open && <>
       {deviceMounted && <DeviceOverlay
+        allowPicking={mode !== 'review'}
         presetId={devicePreset}
         onPresetChange={setDevicePreset}
         snapshot={snapshot}
@@ -3111,6 +3109,17 @@ function HandoffInspectorPanel() {
           <div><button className="is-primary" onClick={() => restoreSession(restorable)}>Restore</button><button onClick={discardSession}>Discard</button></div>
         </div>}
         {restoreNote && <div className="hi-restore is-note"><CircleAlert size={16} /><span><small>{restoreNote}</small></span><div><button onClick={() => setRestoreNote(null)}>Dismiss</button></div></div>}
+        {/* Docked under the header rather than floating over the page: the page behaves
+            differently in each mode, so this belongs with the tool, in one predictable place. */}
+        <div className="hi-mode-switch" role="group" aria-label="Inspector mode">
+          {MODES.map((entry) => <button
+            key={entry.id}
+            className={mode === entry.id ? 'is-active' : ''}
+            aria-pressed={mode === entry.id}
+            title={entry.hint}
+            onClick={() => setMode(entry.id)}
+          >{entry.label}</button>)}
+        </div>
         <div className="hi-scroll">
           {!snapshot ? <div className="hi-onboarding"><div><MousePointer2 size={24} /></div><h2>Select something on the canvas</h2><p>Move over the page to preview an element. Click to lock it, then edit it here or straight on the canvas.</p><div><span>ESC</span> unlock or close</div></div>
             : <div className="hi-design">

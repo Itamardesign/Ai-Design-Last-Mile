@@ -1597,23 +1597,17 @@
    page itself behaves, so the active one must never be a guess.
    =========================================================================== */
 .hi-mode-switch {
-  /* Above every other layer inside .hi-root — the device overlay and its chrome sit at
-     2147483630 and were painting straight over this, which is the one control that must never
-     be hidden: it is how you leave the mode you are in. */
-  position: fixed; z-index: 2147483647; bottom: 22px; left: 50%;
-  display: inline-flex; padding: 4px; gap: 3px;
-  transform: translateX(-50%);
-  border-radius: 999px; background: #16181f;
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, .14), 0 16px 38px rgba(10, 12, 24, .48);
+  display: grid; margin: 10px 14px 12px; padding: 4px; gap: 3px; grid-template-columns: repeat(3, 1fr);
+  border: 1px solid var(--hi-border); border-radius: 11px; background: rgba(240, 242, 248, .8);
 }
 .hi-mode-switch button {
-  min-height: 32px; padding: 0 17px; border: 0; border-radius: 999px;
-  color: rgba(255, 255, 255, .62); background: transparent;
+  min-height: 32px; padding: 0 10px; border: 0; border-radius: 8px;
+  color: var(--hi-muted); background: transparent;
   font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer;
-  transition: color .16s ease, background-color .16s ease;
+  transition: color .16s ease, background-color .16s ease, box-shadow .16s ease;
 }
-.hi-mode-switch button:hover { color: #fff; }
-.hi-mode-switch button.is-active { color: #16181f; background: #fff; }
+.hi-mode-switch button:hover { color: var(--hi-text); }
+.hi-mode-switch button.is-active { color: var(--hi-accent); background: #fff; box-shadow: 0 1px 3px rgba(31, 33, 68, .16); }
 
 /* Sub-groups inside the merged Inspect section. */
 .hi-inspect-group + .hi-inspect-group { margin-top: 13px; padding-top: 11px; border-top: 1px solid var(--hi-border); }
