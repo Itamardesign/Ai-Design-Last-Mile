@@ -1465,3 +1465,53 @@
 }
 .hi-credit a { color: var(--hi-accent, #7c3cff); font-weight: 600; text-decoration: none; }
 .hi-credit a:hover { text-decoration: underline; }
+
+/* ===========================================================================
+   Colour: tabs pick the destination, one palette does the work.
+   =========================================================================== */
+.hi-color-tabs { display: grid; gap: 9px; }
+
+.hi-color-tablist {
+  display: flex; padding: 3px; gap: 2px;
+  border: 1px solid var(--hi-border); border-radius: 10px; background: rgba(240, 242, 248, .7);
+}
+.hi-color-tablist button {
+  display: inline-flex; flex: 1; min-height: 30px; padding: 0 8px; gap: 6px;
+  align-items: center; justify-content: center;
+  border: 0; border-radius: 8px; color: var(--hi-muted); background: transparent;
+  font: inherit; font-size: 11.5px; font-weight: 560; cursor: pointer;
+  transition: color .15s ease, background-color .15s ease;
+}
+.hi-color-tablist button:hover { color: var(--hi-text); }
+.hi-color-tablist button.is-active { color: var(--hi-text); background: #fff; box-shadow: 0 1px 3px rgba(31, 33, 68, .16); }
+/* Each tab carries its own current colour, so switching is not a memory test. */
+.hi-color-tablist button > i {
+  width: 9px; height: 9px; flex: none; border-radius: 3px;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .18);
+}
+
+.hi-color-body { display: grid; gap: 9px; }
+
+.hi-color-current {
+  display: flex; padding: 7px 9px; gap: 10px; align-items: center;
+  border: 1px solid var(--hi-border); border-radius: 10px; background: rgba(255, 255, 255, .6);
+}
+.hi-color-current > span {
+  width: 30px; height: 30px; flex: none; border-radius: 8px;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .16);
+}
+.hi-color-current > div { display: grid; flex: 1; min-width: 0; gap: 1px; }
+.hi-color-current strong { overflow: hidden; color: var(--hi-text); font-size: 12.5px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.hi-color-current small { color: var(--hi-muted); font-size: 10.5px; font-variant-numeric: tabular-nums; }
+
+.hi-color-custom {
+  position: relative; display: grid; width: 30px; height: 30px; flex: none; place-items: center;
+  border: 1px solid var(--hi-border); border-radius: 8px; color: var(--hi-muted);
+  background: #fff; cursor: pointer; transition: color .15s ease, border-color .15s ease;
+}
+.hi-color-custom:hover { color: var(--hi-accent); border-color: var(--hi-accent); }
+.hi-color-custom input[type="color"] { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+
+/* Big enough to actually judge a colour, and to hit on a laptop trackpad. */
+.hi-color-grid { display: grid; gap: 7px; grid-template-columns: repeat(auto-fill, minmax(34px, 1fr)); }
+.hi-color-grid .hi-swatch { width: 100%; height: 34px; border-radius: 9px; }

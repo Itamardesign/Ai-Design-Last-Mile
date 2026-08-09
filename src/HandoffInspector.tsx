@@ -27,6 +27,7 @@ import {
   LoaderCircle,
   Lock,
   Maximize2,
+  PaintBucket,
   Pipette,
   Monitor,
   MousePointerClick,
@@ -42,6 +43,7 @@ import {
   ShieldCheck,
   Smartphone,
   Sparkles,
+  Square,
   Tablet,
   Type,
   Unlink,
@@ -948,6 +950,71 @@ function FontField({ label, value, projectFonts, onChange }: { label: string; va
           })}
         </section>)}
       </div>}
+    </div>
+  </div>;
+}
+
+/**
+ * One palette, with tabs choosing which property it paints.
+ *
+ * Fill, text and stroke were each rendering the full palette, so the same twenty swatches
+ * appeared three times over — sixty targets for what is really one set of colours and a choice
+ * of destination. Tabs make the destination the small decision it is and leave a single palette
+ * on screen, which also buys the room to draw the swatches large enough to judge.
+ */
+function ColorTabsField({ channels, tokens }: { channels: Array<{ id: string; label: string; icon: typeof Palette; value: string; onChange: (value: string) => void }>; tokens: readonly BrandColorToken[] }) {
+  const [activeId, setActiveId] = useState(channels[0]?.id);
+  const active = channels.find((channel) => channel.id === activeId) ?? channels[0];
+  if (!active) return null;
+
+  const hex = toColorInput(active.value);
+  const matched = tokens.find((token) => token.value.toLowerCase() === hex.toLowerCase());
+
+  return <div className="hi-color-tabs">
+    <div className="hi-color-tablist" role="tablist">
+      {channels.map((channel) => {
+        const Icon = channel.icon;
+        const on = channel.id === active.id;
+        return <button
+          key={channel.id}
+          role="tab"
+          aria-selected={on}
+          className={on ? 'is-active' : ''}
+          onClick={() => setActiveId(channel.id)}
+        >
+          <Icon size={13} />
+          {channel.label}
+          {/* The dot keeps every channel's current colour visible while only one palette shows. */}
+          <i style={{ background: toColorInput(channel.value) }} />
+        </button>;
+      })}
+    </div>
+
+    <div className="hi-color-body">
+      <div className="hi-color-current">
+        <span style={{ background: hex }} />
+        <div><strong>{matched ? matched.label : toHex(active.value)}</strong>{matched && <small>{matched.value}</small>}</div>
+        <label className="hi-color-custom" title="Pick any colour">
+          <Pipette size={13} />
+          <input type="color" value={hex} onChange={(event) => active.onChange(event.target.value)} aria-label={`${active.label} custom colour`} />
+        </label>
+      </div>
+
+      <div className="hi-color-grid">
+        {tokens.map((token) => {
+          const on = token.value.toLowerCase() === hex.toLowerCase();
+          return <button
+            type="button"
+            key={`${token.label}-${token.value}`}
+            className={`hi-swatch ${on ? 'is-active' : ''}`}
+            style={{ background: token.value }}
+            title={`${token.label} · ${token.value}${token.usage ? ` · ${token.usage}` : ''}`}
+            aria-label={`${token.label} ${token.value}`}
+            aria-pressed={on}
+            onClick={() => active.onChange(token.value)}
+          />;
+        })}
+      </div>
     </div>
   </div>;
 }
@@ -2858,9 +2925,16 @@ function HandoffInspectorPanel() {
                 <div className="hi-type-presets">{typePresets.map((recipe) => <button key={recipe.label} onClick={() => recipe.css.split(';').filter(Boolean).forEach((part) => { const [property, ...value] = part.split(':'); applyStyle(property.trim(), value.join(':').trim()); })}>{recipe.label}</button>)}</div>
               </ToolSection>}
               <ToolSection title="Fill & stroke" icon={Palette}>
-                <TokenColorField label="Fill" value={snapshot.styles.background} tokens={colorTokens} onChange={(value) => applyStyle('background-color', value)} />
-                {['text', 'button', 'link', 'input'].includes(snapshot.kind) && <TokenColorField label="Text" value={snapshot.styles.color} tokens={colorTokens} onChange={(value) => applyStyle('color', value)} />}
-                <TokenColorField label="Stroke" value={liveStyle?.borderColor ?? snapshot.styles.border} tokens={colorTokens} onChange={(value) => applyStyle('border-color', value)} />
+                <ColorTabsField
+                  tokens={colorTokens}
+                  channels={[
+                    { id: 'fill', label: 'Fill', icon: PaintBucket, value: snapshot.styles.background, onChange: (value) => applyStyle('background-color', value) },
+                    ...(['text', 'button', 'link', 'input'].includes(snapshot.kind)
+                      ? [{ id: 'text', label: 'Text', icon: Type, value: snapshot.styles.color, onChange: (value: string) => applyStyle('color', value) }]
+                      : []),
+                    { id: 'stroke', label: 'Stroke', icon: Square, value: liveStyle?.borderColor ?? snapshot.styles.border, onChange: (value) => applyStyle('border-color', value) },
+                  ]}
+                />
                 <div className="hi-control-pair"><NumberField label="Stroke" value={liveStyle?.borderWidth ?? 0} min={0} onChange={(value) => applyStyle('border-width', value)} /><label className="hi-control hi-compact-control"><span>Style</span><select value={liveStyle?.borderStyle ?? 'solid'} onChange={(event) => applyStyle('border-style', event.target.value)}><option>solid</option><option>dashed</option><option>dotted</option><option>double</option><option>none</option></select></label></div>
                 <NumberField label="Corner radius" value={snapshot.styles['border-radius']} min={0} onChange={(value) => applyStyle('border-radius', value)} />
                 <NumberField label="Opacity" value={cssNumber(snapshot.styles.opacity, 1) * 100} min={0} max={100} suffix="%" onChange={(value) => applyStyle('opacity', String(Number(value) / 100))} />
