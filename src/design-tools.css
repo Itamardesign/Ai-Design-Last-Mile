@@ -1597,11 +1597,14 @@
    page itself behaves, so the active one must never be a guess.
    =========================================================================== */
 .hi-mode-switch {
-  position: fixed; z-index: 2147483000; bottom: 22px; left: 50%;
+  /* Above every other layer inside .hi-root — the device overlay and its chrome sit at
+     2147483630 and were painting straight over this, which is the one control that must never
+     be hidden: it is how you leave the mode you are in. */
+  position: fixed; z-index: 2147483647; bottom: 22px; left: 50%;
   display: inline-flex; padding: 4px; gap: 3px;
   transform: translateX(-50%);
   border-radius: 999px; background: #16181f;
-  box-shadow: 0 14px 34px rgba(10, 12, 24, .34);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, .14), 0 16px 38px rgba(10, 12, 24, .48);
 }
 .hi-mode-switch button {
   min-height: 32px; padding: 0 17px; border: 0; border-radius: 999px;
