@@ -51,7 +51,7 @@
     "typescript": "~5.8.2"
   },
   "keywords": ["design-system", "devtools", "inspector", "handoff", "react"],
-  "license": "MIT",
+  "license": "SEE LICENSE IN LICENSE",
   "publishConfig": {
     "access": "public"
   }
