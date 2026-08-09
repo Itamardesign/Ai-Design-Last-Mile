@@ -2029,7 +2029,7 @@ function HandoffInspectorPanel() {
   // stylesheet injection.
   ensureDesignToolsStyles();
 
-  const { tokens: designTokens, source: designTokensSource, generateFromPage: generateDesignSystemFromPage } = useDesignTokens();
+  const { tokens: designTokens, source: designTokensSource } = useDesignTokens();
   const brandColorTokens = designTokens.collections[0]?.colors ?? [];
   const aiGuideColorTokens = designTokens.collections[1]?.colors ?? brandColorTokens;
   const typographyRecipes = designTokens.collections[0]?.typography ?? [];
@@ -2817,11 +2817,6 @@ function HandoffInspectorPanel() {
                 <button className={secondaryCollectionActive ? 'is-active' : ''} aria-pressed={secondaryCollectionActive} onClick={() => setSecondaryCollectionActive(true)} title={designTokens.collections[1]?.name}>{designTokens.collections[1]?.name ?? 'Secondary'}</button>
               </div>
             )}
-            {(designTokensSource === 'fallback-default' || designTokensSource === 'detected-live-css') && (
-              <button className="hi-header-actions" onClick={generateDesignSystemFromPage} title="No design system was provided — generate a draft from the colors, spacing and type sizes actually used on this page">
-                <Wand2 size={13} /> Generate design system
-              </button>
-            )}
             <div className="hi-dock-switch" role="group" aria-label="Panel side">
               <button className={dock === 'left' ? 'is-active' : ''} aria-pressed={dock === 'left'} onClick={() => setDock('left')} title="Move panel to left"><PanelLeft size={15} /></button>
               <button className={dock === 'right' ? 'is-active' : ''} aria-pressed={dock === 'right'} onClick={() => setDock('right')} title="Move panel to right"><PanelRight size={15} /></button>
@@ -2839,21 +2834,21 @@ function HandoffInspectorPanel() {
         <div className="hi-scroll">
           {!snapshot ? <div className="hi-onboarding"><div><MousePointer2 size={24} /></div><h2>Select something on the canvas</h2><p>Move over the page to preview an element. Click to lock it, then edit it here or straight on the canvas.</p><div><span>ESC</span> unlock or close</div></div>
             : <div className="hi-design">
-              <div className="hi-design-heading is-compact"><div><span>Design mode</span><h2>{snapshot.family.label}</h2></div><span className="hi-live-dot">Live</span></div>
+              <div className="hi-design-cluster"><div className="hi-design-heading"><div><span>Design mode</span><h2>{snapshot.family.label}</h2></div><span className="hi-live-dot">Live</span></div>
               {/* Editing every matching variant at once is only meaningful against a real design
                   system — without one there is nothing that defines what a "component" is, so the
                   control is shown but locked, with the reason on hover. */}
-              <div className={`hi-scope is-compact ${designSystemConnected ? '' : 'is-locked'}`} title={designSystemConnected ? undefined : DESIGN_SYSTEM_REQUIRED}>
+              <div className={`hi-scope ${designSystemConnected ? '' : 'is-locked'}`} title={designSystemConnected ? undefined : DESIGN_SYSTEM_REQUIRED}>
                 <button className={scope === 'free' ? 'is-active' : ''} aria-disabled={!designSystemConnected} onClick={() => designSystemConnected && setScope('free')}>Single</button>
                 <button className={scope === 'component' ? 'is-active' : ''} aria-disabled={!designSystemConnected} onClick={() => designSystemConnected && setScope('component')}>All variants</button>
                 {!designSystemConnected && <Lock size={11} />}
               </div>
-              <div className="hi-canvas-switch is-compact" title={`Drag the handles to resize · double-click text to retype. Shift keeps the ratio, Alt snaps to ${CANVAS_SNAP_STEP}px, Esc cancels.`}>
+              <div className="hi-canvas-switch" title={`Drag the handles to resize · double-click text to retype. Shift keeps the ratio, Alt snaps to ${CANVAS_SNAP_STEP}px, Esc cancels.`}>
                 <span><Maximize2 size={12} />Canvas editing</span>
                 <button role="switch" className={`hi-switch ${canvasEdit ? 'is-on' : ''}`} aria-checked={canvasEdit} aria-label="Direct canvas editing" onClick={() => { if (canvasEdit) finishTextEdit(true); setCanvasEdit((current) => !current); }}><i /></button>
-              </div>
+              </div></div>
               {canvasNote && <div className="hi-restore is-note"><CircleAlert size={16} /><span><small>{canvasNote}</small></span><div><button onClick={() => setCanvasNote(null)}>Dismiss</button></div></div>}
-              <div className="hi-reset-row is-sticky"><button onClick={resetElement} disabled={!currentTargets().some((element) => originalsRef.current.has(element))}><RotateCcw size={13} />Reset selection</button><button onClick={resetAll} disabled={!changes.length}><RotateCcw size={13} />Reset all</button></div>
+              <div className="hi-reset-row"><button onClick={resetElement} disabled={!currentTargets().some((element) => originalsRef.current.has(element))}><RotateCcw size={13} />Reset selection</button><button onClick={resetAll} disabled={!changes.length}><RotateCcw size={13} />Reset all</button></div>
               {['text', 'button', 'link', 'input'].includes(snapshot.kind) && <ToolSection title="Content" icon={Type}><label className="hi-control hi-control-stack"><span>{snapshot.kind === 'input' ? 'Value' : 'Text'}</span><DraftTextArea key={snapshot.uniquePath} ariaLabel={snapshot.kind === 'input' ? 'Value' : 'Text'} value={snapshot.rawText} onChange={applyText} /></label>{snapshot.hasMarkup && <p className="hi-empty-note hi-content-warning"><CircleAlert size={13} />This element wraps markup (line breaks, nested spans). Editing the text here replaces all of it with plain text.</p>}{snapshot.kind === 'link' && <label className="hi-control"><span>Link</span><input defaultValue={snapshot.attributes.href || ''} onBlur={(event) => applyAttribute('href', event.target.value)} /></label>}{snapshot.kind === 'input' && <><label className="hi-control"><span>Placeholder</span><input defaultValue={snapshot.attributes.placeholder || ''} onBlur={(event) => applyAttribute('placeholder', event.target.value)} /></label><label className="hi-control"><span>ARIA label</span><input defaultValue={snapshot.attributes['aria-label'] || ''} onBlur={(event) => applyAttribute('aria-label', event.target.value)} /></label></>}</ToolSection>}
               {['text', 'button', 'link', 'input'].includes(snapshot.kind) && <ToolSection title="Typography" icon={Type}>
                 <FontField label="Font" value={snapshot.styles['font-family']} projectFonts={pageFonts} onChange={(value) => applyStyle('font-family', value)} />

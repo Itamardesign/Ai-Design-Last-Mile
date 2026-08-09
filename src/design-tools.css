@@ -353,21 +353,6 @@
 .hi-limitations { margin: 0; padding: 0 0 0 16px; color: var(--tool-muted); font-size: 8px; line-height: 1.65; }
 
 /* Design mode */
-.hi-design-heading { display: flex; padding: 16px 12px 12px; align-items: start; justify-content: space-between; border-bottom: 1px solid var(--tool-border); }
-.hi-design-heading > div { min-width: 0; }
-.hi-design-heading > div > span { color: var(--tool-accent); font-size: 7px; font-weight: 750; letter-spacing: .12em; }
-.hi-design-heading h2 { margin: 5px 0 3px; overflow: hidden; font-size: 15px; font-weight: 640; letter-spacing: -.02em; text-overflow: ellipsis; white-space: nowrap; }
-.hi-design-heading p { margin: 0; color: var(--tool-muted); font-size: 8px; }
-.hi-live-dot { display: flex; padding: 4px 7px; align-items: center; gap: 4px; border-radius: 999px; color: #26734c; background: #e7f8ee; font-size: 7px; font-weight: 650; }
-.hi-live-dot::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: #37a96d; box-shadow: 0 0 0 3px rgba(55,169,109,.12); }
-.hi-scope { display: grid; padding: 8px 10px; grid-template-columns: 1fr 1fr; gap: 5px; border-bottom: 1px solid var(--tool-border); background: #fafafa; }
-.hi-scope button { display: grid; min-height: 50px; padding: 8px 9px; align-content: center; gap: 3px; border: 1px solid var(--tool-border); border-radius: 6px; color: #4f4f58; background: #fff; font: inherit; font-size: 9px; font-weight: 600; text-align: left; cursor: pointer; }
-.hi-scope button small { overflow: hidden; color: var(--tool-muted); font-size: 7px; font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
-.hi-scope button.is-active { border-color: #a88ce9; color: #5330b5; background: #f7f3ff; box-shadow: 0 0 0 1px rgba(139,92,246,.12); }
-.hi-reset-row { display: grid; padding: 8px 10px; grid-template-columns: 1fr 1fr; gap: 5px; border-bottom: 1px solid var(--tool-border); }
-.hi-reset-row button { display: flex; min-height: 28px; align-items: center; justify-content: center; gap: 5px; border: 1px solid var(--tool-border); border-radius: 5px; color: #5d5d66; background: #fff; font: inherit; font-size: 8px; cursor: pointer; }
-.hi-reset-row button:hover:not(:disabled) { border-color: #cabde9; color: #5f37c4; }
-.hi-reset-row button:disabled { opacity: .38; cursor: default; }
 .hi-control { display: grid; min-height: 31px; grid-template-columns: 86px minmax(0, 1fr); align-items: center; gap: 7px; }
 .hi-control > span { overflow: hidden; color: var(--tool-muted); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
 .hi-control input:not([type="color"]):not([type="range"]),
@@ -501,16 +486,6 @@
 .hi-empty-note { padding: 11px; font-size: 10px; }
 .hi-code pre { padding: 14px; font-size: 10px; line-height: 1.6; }
 .hi-limitations { font-size: 10px; line-height: 1.75; }
-.hi-design-heading { padding: 19px 14px 15px; }
-.hi-design-heading > div > span { font-size: 9px; }
-.hi-design-heading h2 { margin-top: 6px; font-size: 18px; }
-.hi-design-heading p { font-size: 10px; }
-.hi-live-dot { padding: 5px 8px; font-size: 9px; }
-.hi-scope { padding: 10px 12px; gap: 7px; }
-.hi-scope button { min-height: 60px; padding: 10px; font-size: 11px; }
-.hi-scope button small { font-size: 9px; }
-.hi-reset-row { padding: 10px 12px; gap: 7px; }
-.hi-reset-row button { min-height: 34px; font-size: 10px; }
 .hi-control { min-height: 39px; grid-template-columns: 98px minmax(0,1fr); gap: 9px; }
 .hi-control > span { font-size: 10.5px; }
 .hi-control input:not([type="color"]):not([type="range"]),
@@ -677,9 +652,6 @@
 
 .hi-preview-card,
 .hi-section,
-.hi-design-heading,
-.hi-scope,
-.hi-reset-row {
   border: 1px solid var(--hi-border);
   background: var(--hi-surface);
   box-shadow: 0 14px 36px rgba(71, 78, 122, .07), inset 0 0 0 1px rgba(255, 255, 255, .62);
@@ -712,25 +684,6 @@
 .hi-section-body { padding: 0 15px 17px; animation: hi-content-reveal .28s ease both; }
 .hi-readable-text { padding: 14px; border-color: var(--hi-border); border-radius: 11px; color: var(--hi-text); background: rgba(248, 250, 254, .8); font-size: 13px; }
 
-.hi-design-heading {
-  margin: 0 2px;
-  padding: 22px 17px 18px;
-  border-radius: 17px 17px 0 0;
-  border-bottom-color: rgba(157, 170, 207, .2);
-}
-.hi-design-heading > div > span { color: var(--hi-accent); font-size: 10.5px; letter-spacing: .13em; }
-.hi-design-heading h2 { margin: 8px 0 6px; color: var(--hi-text); font-size: 23px; font-weight: 720; }
-.hi-design-heading p { color: var(--hi-muted); font-size: 12.5px; }
-.hi-live-dot { padding: 7px 11px; color: #087d58; background: rgba(226, 250, 240, .9); font-size: 11px; box-shadow: 0 8px 22px rgba(16, 185, 129, .12); }
-.hi-live-dot::before { width: 7px; height: 7px; background: var(--hi-success); box-shadow: 0 0 0 4px rgba(16, 185, 129, .12); animation: hi-live-pulse 2s ease-in-out infinite; }
-.hi-scope { margin: 0 2px 10px; padding: 14px; gap: 10px; border-top: 0; border-radius: 0 0 17px 17px; }
-.hi-scope button { min-height: 76px; padding: 14px; gap: 6px; border-color: var(--hi-border); border-radius: 13px; color: var(--hi-text); background: rgba(255, 255, 255, .76); font-size: 13px; transition: border-color .2s ease, color .2s ease, background-color .2s ease, box-shadow .2s ease, transform .2s ease; }
-.hi-scope button:hover { transform: translateY(-2px); box-shadow: 0 12px 28px rgba(71, 78, 122, .1); }
-.hi-scope button small { color: var(--hi-muted); font-size: 11px; }
-.hi-scope button.is-active { border-color: var(--hi-border-strong); color: var(--hi-accent); background: rgba(246, 241, 255, .86); box-shadow: 0 0 0 2px rgba(124, 60, 255, .08), 0 14px 30px rgba(124, 60, 255, .1); }
-.hi-reset-row { margin: 0 2px 10px; padding: 12px 14px; gap: 10px; border-radius: 15px; }
-.hi-reset-row button { min-height: 42px; border-color: var(--hi-border); border-radius: 11px; color: var(--hi-muted); background: rgba(255, 255, 255, .78); font-size: 12px; transition: color .18s ease, border-color .18s ease, box-shadow .18s ease, transform .18s ease; }
-.hi-reset-row button:hover:not(:disabled) { border-color: var(--hi-border-strong); color: var(--hi-accent); box-shadow: 0 8px 20px rgba(124, 60, 255, .08); transform: translateY(-1px); }
 
 .hi-control { min-height: 46px; grid-template-columns: 104px minmax(0,1fr); gap: 11px; }
 .hi-control > span,
@@ -1201,26 +1154,6 @@
   cursor: text;
 }
 
-.hi-canvas-switch { display: grid; padding: 8px 10px 10px; gap: 6px; border-bottom: 1px solid var(--tool-border); }
-.hi-canvas-switch button {
-  display: flex;
-  min-height: 34px;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  border: 1px solid var(--hi-border, var(--tool-border));
-  border-radius: 11px;
-  color: var(--hi-muted, #5d5d66);
-  background: rgba(255, 255, 255, .78);
-  font: inherit;
-  font-size: 11px;
-  font-weight: 620;
-  cursor: pointer;
-  transition: color .18s ease, border-color .18s ease, background-color .18s ease;
-}
-.hi-canvas-switch button:hover { border-color: var(--hi-border-strong, #cabde9); color: var(--hi-accent, #5f37c4); }
-.hi-canvas-switch button.is-active { border-color: var(--hi-border-strong, #a88ce9); color: var(--hi-accent, #5330b5); background: var(--hi-accent-soft, #f7f3ff); }
-.hi-canvas-switch small { color: var(--hi-muted, #6e6e78); font-size: 10px; line-height: 1.5; }
 .hi-canvas-hint { display: inline-flex; align-items: center; gap: 6px; color: rgba(233, 238, 250, .68); font-size: 11px; }
 
 /* Two exits from the preview: step back to the page, or close the tool outright. */
@@ -1362,41 +1295,6 @@
    doing the work that words were doing before.
    =========================================================================== */
 
-/* --- compact header ------------------------------------------------------- */
-.hi-design-heading.is-compact { min-height: 0; padding: 10px 14px 8px; align-items: center; }
-.hi-design-heading.is-compact > div { display: flex; align-items: baseline; gap: 8px; }
-.hi-design-heading.is-compact span { color: var(--hi-muted); font-size: 9.5px; letter-spacing: .09em; text-transform: uppercase; }
-.hi-design-heading.is-compact h2 { margin: 0; font-size: 15px; line-height: 1.2; }
-
-/* --- single / all-variants toggle, locked without a design system --------- */
-.hi-scope.is-compact {
-  display: flex; margin: 0 14px 8px; padding: 3px; gap: 3px; align-items: center;
-  border: 1px solid var(--hi-border); border-radius: 9px; background: rgba(255,255,255,.6);
-}
-.hi-scope.is-compact button {
-  flex: 1; min-height: 26px; padding: 0 8px; border: 0; border-radius: 6px;
-  color: var(--hi-muted); background: transparent; font-size: 11px; cursor: pointer;
-}
-.hi-scope.is-compact button.is-active { color: var(--hi-text); background: #fff; box-shadow: 0 1px 3px rgba(31,33,68,.14); }
-.hi-scope.is-compact.is-locked { opacity: .5; }
-.hi-scope.is-compact.is-locked button { cursor: not-allowed; }
-.hi-scope.is-compact > svg { flex: none; margin-right: 4px; color: var(--hi-muted); }
-
-/* --- canvas editing switch ------------------------------------------------ */
-.hi-canvas-switch.is-compact { display: flex; min-height: 0; margin: 0 14px 8px; padding: 0; align-items: center; justify-content: space-between; gap: 10px; border: 0; background: none; }
-.hi-canvas-switch.is-compact > span { display: inline-flex; align-items: center; gap: 6px; color: var(--hi-muted); font-size: 11.5px; }
-.hi-switch { position: relative; width: 30px; height: 17px; padding: 0; border: 0; border-radius: 999px; background: var(--hi-border-strong); cursor: pointer; transition: background-color .16s ease; }
-.hi-switch i { position: absolute; top: 2px; left: 2px; width: 13px; height: 13px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.28); transition: transform .16s ease; }
-.hi-switch.is-on { background: var(--hi-accent); }
-.hi-switch.is-on i { transform: translateX(13px); }
-
-/* --- reset row pinned to the top of the scroll area ----------------------- */
-.hi-reset-row.is-sticky {
-  position: sticky; z-index: 12; top: 0; margin: 0 0 8px; border-radius: 0;
-  border-bottom: 1px solid var(--hi-border);
-  background: color-mix(in srgb, var(--hi-panel) 92%, transparent);
-  backdrop-filter: blur(8px);
-}
 
 /* --- section headers: disabled + status badge ---------------------------- */
 .hi-section.is-disabled .hi-section-title { cursor: not-allowed; opacity: .45; }
@@ -1460,3 +1358,102 @@
 .hi-a11y-list > div.is-warn { background: rgba(254,228,226,.6); box-shadow: inset 0 0 0 1px rgba(180,35,24,.16); }
 .hi-a11y-list > div.is-error svg,
 .hi-a11y-list > div.is-warn svg { color: #d92d20; }
+
+/* ===========================================================================
+   Selection header cluster — element identity, edit scope, canvas toggle and
+   the reset row.
+
+   These four had accumulated four separate rule blocks across earlier passes,
+   each partly overriding the last, which is why the controls rendered at
+   mismatched heights and the switch knob escaped its track. Defined once here
+   instead. Keep it that way: restyle in place rather than appending overrides.
+   =========================================================================== */
+
+.hi-design-cluster {
+  margin: 0 2px 8px;
+  overflow: hidden;
+  border: 1px solid var(--hi-border);
+  border-radius: 14px;
+  background: var(--hi-surface);
+  box-shadow: 0 10px 26px rgba(71, 78, 122, .06), inset 0 0 0 1px rgba(255, 255, 255, .6);
+}
+
+/* --- identity row --------------------------------------------------------- */
+.hi-design-heading {
+  display: flex; min-height: 0; padding: 11px 12px; gap: 10px;
+  align-items: center; justify-content: space-between;
+}
+.hi-design-heading > div { display: flex; min-width: 0; align-items: baseline; gap: 8px; }
+.hi-design-heading > div > span {
+  flex: none; color: var(--hi-muted); font-size: 9px; font-weight: 700;
+  letter-spacing: .1em; text-transform: uppercase;
+}
+.hi-design-heading h2 {
+  margin: 0; overflow: hidden; color: var(--hi-text); font-size: 15px; font-weight: 660;
+  letter-spacing: -.01em; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap;
+}
+.hi-live-dot {
+  display: inline-flex; flex: none; padding: 4px 9px; align-items: center; gap: 5px;
+  border-radius: 999px; color: #087d58; background: rgba(226, 250, 240, .92);
+  font-size: 9.5px; font-weight: 650; letter-spacing: .05em; text-transform: uppercase;
+}
+.hi-live-dot::before {
+  content: ''; width: 5px; height: 5px; border-radius: 50%; background: var(--hi-success, #10b981);
+}
+
+/* --- scope: one segmented control, not two cards -------------------------- */
+.hi-scope {
+  display: flex; margin: 0 12px; padding: 3px; gap: 2px; align-items: center;
+  border: 1px solid var(--hi-border); border-radius: 9px; background: rgba(240, 242, 248, .7);
+}
+.hi-scope button {
+  flex: 1; min-height: 27px; padding: 0 10px; border: 0; border-radius: 7px;
+  color: var(--hi-muted); background: transparent; font: inherit; font-size: 11.5px;
+  font-weight: 560; cursor: pointer; transition: color .15s ease, background-color .15s ease;
+}
+.hi-scope button:hover { color: var(--hi-text); }
+.hi-scope button.is-active { color: var(--hi-text); background: #fff; box-shadow: 0 1px 3px rgba(31, 33, 68, .16); }
+.hi-scope > svg { flex: none; margin: 0 5px; color: var(--hi-muted); }
+/* Locked reads as unavailable, not broken — the tooltip carries the reason. */
+.hi-scope.is-locked { opacity: .55; }
+.hi-scope.is-locked button { cursor: not-allowed; }
+.hi-scope.is-locked button:hover { color: var(--hi-muted); }
+
+/* --- canvas editing: label + switch on one line --------------------------- */
+.hi-canvas-switch {
+  display: flex; padding: 10px 12px 11px; gap: 10px;
+  align-items: center; justify-content: space-between;
+}
+.hi-canvas-switch > span {
+  display: inline-flex; align-items: center; gap: 7px;
+  color: var(--hi-muted); font-size: 11.5px; font-weight: 560;
+}
+.hi-switch {
+  position: relative; flex: none; width: 32px; height: 18px; padding: 0; border: 0;
+  border-radius: 999px; background: #c9ccd8; cursor: pointer;
+  transition: background-color .18s ease;
+}
+.hi-switch i {
+  position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, .3); transition: transform .18s ease;
+}
+.hi-switch.is-on { background: var(--hi-accent, #7c3cff); }
+.hi-switch.is-on i { transform: translateX(14px); }
+.hi-switch:focus-visible { outline: 2px solid var(--hi-accent); outline-offset: 2px; }
+
+/* --- reset row, pinned to the top of the scroll area ---------------------- */
+.hi-reset-row {
+  position: sticky; z-index: 12; top: 0;
+  display: grid; margin: 0 0 8px; padding: 8px 14px; gap: 8px; grid-template-columns: 1fr 1fr;
+  border-bottom: 1px solid var(--hi-border);
+  background: color-mix(in srgb, var(--hi-panel, #fcfdff) 94%, transparent);
+  backdrop-filter: blur(10px);
+}
+.hi-reset-row button {
+  display: flex; min-height: 32px; align-items: center; justify-content: center; gap: 6px;
+  border: 1px solid var(--hi-border); border-radius: 9px; color: var(--hi-muted);
+  background: rgba(255, 255, 255, .8); font: inherit; font-size: 11.5px; cursor: pointer;
+  transition: color .15s ease, border-color .15s ease;
+}
+.hi-reset-row button:hover:not(:disabled) { border-color: var(--hi-accent); color: var(--hi-accent); }
+.hi-reset-row button:disabled { opacity: .4; cursor: default; }
