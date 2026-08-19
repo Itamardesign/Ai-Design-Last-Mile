@@ -824,8 +824,9 @@ function getSelector(element: Element) {
  */
 function getUniquePath(element: Element) {
   const parts: string[] = [];
+  const root = element.ownerDocument.documentElement;
   let current: Element | null = element;
-  while (current && current !== document.documentElement) {
+  while (current && current !== root) {
     const parent: Element | null = current.parentElement;
     if (!parent) break;
     parts.unshift(`${current.tagName.toLowerCase()}:nth-child(${Array.from(parent.children).indexOf(current) + 1})`);
@@ -848,8 +849,9 @@ function resolveInDocument(doc: Document, snapshot: Pick<ElementSnapshot, 'uniqu
 
 function getDomPath(element: Element) {
   const parts: string[] = [];
+  const stop = element.ownerDocument.body;
   let current: Element | null = element;
-  while (current && current !== document.body && parts.length < 6) {
+  while (current && current !== stop && parts.length < 6) {
     let part = current.tagName.toLowerCase();
     if (current.id) {
       part += `#${current.id}`;
@@ -890,7 +892,7 @@ function getComponentFamily(selected: HTMLElement, kind: ElementKind): Component
   for (const key of ['data-component', 'data-design-component', 'data-ui', 'data-testid', 'data-test']) {
     const value = selected.getAttribute(key);
     if (value) {
-      candidates = Array.from(document.querySelectorAll<HTMLElement>(`[${key}="${value.replace(/"/g, '\\"')}"]`));
+      candidates = Array.from(selected.ownerDocument.querySelectorAll<HTMLElement>(`[${key}="${value.replace(/"/g, '\\"')}"]`));
       reason = `${key}="${value}"`;
       break;
     }
@@ -900,13 +902,13 @@ function getComponentFamily(selected: HTMLElement, kind: ElementKind): Component
     if (stableClasses.length) {
       const query = `${selected.tagName.toLowerCase()}${stableClasses.map((name) => `.${escapeClass(name)}`).join('')}`;
       try {
-        candidates = Array.from(document.querySelectorAll<HTMLElement>(query));
+        candidates = Array.from(selected.ownerDocument.querySelectorAll<HTMLElement>(query));
         reason = `tag + ${stableClasses.join(' + ')}`;
       } catch { candidates = []; }
     }
   }
   if (!candidates.length && selected.getAttribute('role')) {
-    candidates = Array.from(document.querySelectorAll<HTMLElement>(`${selected.tagName.toLowerCase()}[role="${selected.getAttribute('role')}"]`));
+    candidates = Array.from(selected.ownerDocument.querySelectorAll<HTMLElement>(`${selected.tagName.toLowerCase()}[role="${selected.getAttribute('role')}"]`));
     reason = 'tag + role';
   }
   if (!candidates.length) candidates = [selected];
@@ -3117,6 +3119,9 @@ function HandoffInspectorPanel() {
     const doc = deviceDocRef.current;
     if (doc) {
       elements.forEach((element) => {
+        // An element that already lives in the frame is the thing being edited, not a copy of it;
+        // mirroring onto itself would apply every edit twice.
+        if (element.ownerDocument === doc) return;
         const node = doc.querySelector<HTMLElement>(getUniquePath(element));
         if (node) run(node, element);
       });
@@ -3239,9 +3244,23 @@ function HandoffInspectorPanel() {
     element.scrollIntoView({ block: 'center' });
   }, []);
 
+  /**
+   * Selects what was clicked inside the device preview.
+   *
+   * The path is looked up in the live page first, because editing there is what the designer sees
+   * behind the preview and what the exported CSS describes. When it does not resolve — which is the
+   * normal case on any real site, where a feed, an experiment or a personalised block means the
+   * framed copy is simply not the same tree — the element inside the frame is selected instead and
+   * edited in place. Refusing to edit at all, which is what happened before, made the preview
+   * useless on exactly the sites it was most needed for.
+   */
   const selectFromDevice = useCallback((path: string) => {
     let element: HTMLElement | null = null;
     try { element = document.querySelector<HTMLElement>(path); } catch { element = null; }
+    if (!element || element.closest(IGNORED_SELECTOR)) {
+      const doc = deviceDocRef.current;
+      try { element = doc?.querySelector<HTMLElement>(path) ?? null; } catch { element = null; }
+    }
     if (!element || element.closest(IGNORED_SELECTOR)) return false;
     selectElement(element);
     return true;
@@ -3533,6 +3552,11 @@ function HandoffInspectorPanel() {
   const applyTextFromDevice = (path: string, value: string) => {
     let element: HTMLElement | null = null;
     try { element = document.querySelector<HTMLElement>(path); } catch { element = null; }
+    if (!element || element.closest(IGNORED_SELECTOR)) {
+      // Same fallback as selecting: edit the element in the frame when the live page has no twin.
+      const doc = deviceDocRef.current;
+      try { element = doc?.querySelector<HTMLElement>(path) ?? null; } catch { element = null; }
+    }
     if (!element || element.closest(IGNORED_SELECTOR)) {
       setCanvasNote('That element only exists at this screen size, so the edit could not be recorded.');
       return;

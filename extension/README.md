@@ -80,6 +80,17 @@ panel, on the page and inside the device preview.
   finds its element again and quietly rewrites its own address. Pins also follow the page live: a
   modal opening or a route changing moves them with it.
 
+### The device preview on a real site
+
+The preview loads the page inside itself, and on any site with a feed, an experiment or a
+personalised block, the framed copy is simply not the same tree as the page behind it. Picking an
+element there used to look up its position in the live page, fail, and refuse to edit — which made
+the preview useless on exactly the sites it was most needed for.
+
+It now edits the framed element in place when the live page has no twin for it. One consequence
+worth knowing: those edits belong to that frame, so reloading it, rotating it or switching device
+starts them over. Edits to elements that exist on both are unaffected.
+
 ### Sites that fight back
 
 Plenty of real sites write `!important` in their own stylesheets, and an inline style loses to one —

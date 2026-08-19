@@ -79,7 +79,12 @@ createServer(async (request, response) => {
   const target = join(root, normalize(path === '/' ? '/test/harness.html' : path).replace(/^(\.\.[/\\])+/, ''));
   try {
     const body = await readFile(target);
-    response.writeHead(200, { 'content-type': TYPES[extname(target)] ?? 'application/octet-stream' });
+    // Open to any origin: the harness is also used to drop the built bundle onto a real site, to
+    // check the inspector against markup nobody wrote for it.
+    response.writeHead(200, {
+      'content-type': TYPES[extname(target)] ?? 'application/octet-stream',
+      'access-control-allow-origin': '*',
+    });
     response.end(body);
   } catch {
     response.writeHead(404, { 'content-type': 'text/plain' });
