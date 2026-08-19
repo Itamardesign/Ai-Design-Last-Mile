@@ -63,6 +63,23 @@ Without a connected design system this measures against the values detected from
 useful for spotting inconsistency but is not the same question. Connect real tokens for the real
 answer.
 
+### The Handoff tab
+
+The third tab is the document the session produces, arranged the way the person receiving it reads:
+**by element**. What was said about it, what changed on it, and what is wrong with it — together,
+rather than three lists to cross-reference by selector.
+
+- **One CSS rule per selector.** Twenty edits on a button come out as one `button.cta { … }` block,
+  not twenty, with `!important` where the site's CSS had to be outranked.
+- **Token names in the output** — `background-color: #7C3CFF; /* brand/500 */` — so a value that is
+  on the system says so.
+- **Undo one change** without resetting the rest: hover any row and press ×.
+- **Accessibility findings** for every element in the report, because contrast and target size are
+  exactly what a developer needs handed to them.
+- **Markdown out**, for a ticket or a pull request, or **Download .md** for an attachment. On top of
+  that the extension can **capture the tab** and save the screenshot beside it.
+- Edits applied to every variant of a component are marked with the count they reached.
+
 ### Notes you can see
 
 Notes are pinned to the elements they are about, and numbered — "note 3" means the same thing in the

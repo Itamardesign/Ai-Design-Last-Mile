@@ -16,6 +16,7 @@ import {
   writeSettings,
 } from './storage.js';
 import type { PageMessage, PopupRequest, TabState } from './messages.js';
+import { firebaseStatus } from './firebase.js';
 import type { DesignTokens } from '../../src/types.js';
 
 const ACTIVE_TABS_KEY = 'activeTabs';
@@ -229,6 +230,21 @@ chrome.runtime.onMessage.addListener((message: PopupRequest & { type: string }, 
         respond({ ok: true });
         return;
       }
+      case 'capture': {
+        // A page cannot photograph itself; the service worker can, and only for the tab that asked.
+        const windowId = _sender.tab?.windowId;
+        try {
+          const dataUrl = windowId === undefined
+            ? await chrome.tabs.captureVisibleTab({ format: 'png' })
+            : await chrome.tabs.captureVisibleTab(windowId, { format: 'png' });
+          respond({ dataUrl });
+        } catch {
+          // Restricted pages, a tab that lost focus mid-capture, or a quota hit: the handoff simply
+          // has no picture in it.
+          respond({ dataUrl: null });
+        }
+        return;
+      }
       case 'notes': {
         const tabId = _sender.tab?.id;
         if (tabId !== undefined) {
@@ -238,6 +254,11 @@ chrome.runtime.onMessage.addListener((message: PopupRequest & { type: string }, 
         respond({ ok: true });
         return;
       }
+      case 'firebase':
+        // Signing in lives in the worker, not in the options page: one identity per install, and it
+        // survives the page being closed mid-handshake.
+        respond(await firebaseStatus());
+        return;
       case 'reload':
         await chrome.tabs.reload(message.tabId);
         respond({ ok: true });

@@ -21,8 +21,12 @@ export type PopupRequest =
   | { type: 'setAutoStart'; tabId: number; autoStart: boolean }
   | { type: 'setRelaxCsp'; relaxCsp: boolean }
   | { type: 'reload'; tabId: number }
+  /** Sent by the options page: is this build talking to Firebase, and as which user? */
+  | { type: 'firebase' }
   /** Sent by the page, not the popup: how many notes on it are still open. */
-  | { type: 'notes'; open: number };
+  | { type: 'notes'; open: number }
+  /** Sent by the page: photograph this tab for the handoff document. */
+  | { type: 'capture' };
 
 export type PageMessage =
   | { type: 'inspector:set'; active: boolean; tokens: DesignTokens | null; systemName: string | null }

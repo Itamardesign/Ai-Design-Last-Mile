@@ -46,6 +46,7 @@
     "react-dom": ">=18"
   },
   "dependencies": {
+    "firebase": "^12.17.1",
     "lucide-react": "^0.468.0"
   },
   "devDependencies": {

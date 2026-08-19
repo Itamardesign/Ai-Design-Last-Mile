@@ -181,6 +181,23 @@ function boot(): InspectorApi {
 
   const { controller, host, shadow } = mount();
 
+  /*
+   * Publishes the one capability the component cannot have on its own.
+   *
+   * The inspector runs inside this content script's isolated world, so a function left on `window`
+   * here is reachable from the panel and invisible to the page. The handoff tab feature-detects it:
+   * the screenshot button exists in the extension, and is simply absent when the same component is
+   * rendered by an app.
+   */
+  (window as typeof window & { __merakiInspectorCapture?: () => Promise<string | null> }).__merakiInspectorCapture = async () => {
+    try {
+      const answer = await chrome.runtime.sendMessage({ type: 'capture' });
+      return (answer as { dataUrl?: string | null } | undefined)?.dataUrl ?? null;
+    } catch {
+      return null;
+    }
+  };
+
   // Notes are mirrored into extension storage, so a site clearing its own storage cannot take a
   // review with it. The count rides on the toolbar icon.
   const mirror = startNoteMirror((open) => {

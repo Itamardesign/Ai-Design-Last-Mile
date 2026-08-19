@@ -160,6 +160,11 @@ type DesignChange = {
   after: string;
   /** True when the site's own CSS had to be outranked to make the edit visible — see `applyStyleTo`. */
   forced?: boolean;
+  /** The inline value this edit replaced, so this one edit can be taken back without resetting the rest. */
+  inlineBefore?: string;
+  priorityBefore?: string;
+  /** How many elements the edit landed on — one, or every variant of a component. */
+  appliedTo?: number;
   kind: 'css' | 'content' | 'attribute' | 'asset' | 'layout' | 'state' | 'token';
   /** Handoff note explaining what a designer or developer has to do in the source of truth. */
   instruction?: string;
@@ -330,11 +335,12 @@ function readStoredPreference(key: string): string | null {
   }
 }
 
-type InspectorMode = 'design' | 'comment';
+type InspectorMode = 'design' | 'comment' | 'handoff';
 
 const MODES: Array<{ id: InspectorMode; label: string; hint: string }> = [
   { id: 'design', label: 'Design', hint: 'Edit styles and drag on the canvas' },
   { id: 'comment', label: 'Comment', hint: 'Click an element to leave a note' },
+  { id: 'handoff', label: 'Handoff', hint: 'Everything you changed and said, ready to hand over' },
 ];
 
 /** One note pinned to one element. Elements can carry several. */
@@ -1423,6 +1429,338 @@ function usePortalTarget(source: { current: HTMLElement | null }, active: boolea
   }, [source, active]);
 
   return target;
+}
+
+/**
+ * Hands the report over as a file.
+ *
+ * The clipboard is fine for a paste into a ticket and useless for anything that wants an
+ * attachment. Written through a blob URL and revoked immediately, so nothing is left behind on the
+ * page the inspector is a guest on.
+ */
+function downloadFile(name: string, contents: string | Blob, type = 'text/markdown') {
+  const blob = contents instanceof Blob ? contents : new Blob([contents], { type });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = name;
+  link.style.display = 'none';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  // Revoking immediately would race the download in some builds; a tick is enough.
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/**
+ * A screenshot of the page, when something can take one.
+ *
+ * Only the extension can: a page cannot photograph itself, and the service worker's
+ * `captureVisibleTab` is the one thing here that needs a privilege the component does not have. The
+ * capability is published by the extension's content script onto the window it shares with this
+ * code, so the button appears where it works and is absent where it does not — rather than being
+ * offered everywhere and failing on half of them.
+ */
+type CaptureHost = typeof window & { __merakiInspectorCapture?: () => Promise<string | null> };
+
+const captureAvailable = () => typeof window !== 'undefined' && typeof (window as CaptureHost).__merakiInspectorCapture === 'function';
+
+/* ===========================================================================
+   The handoff report.
+
+   Everything the session produced, arranged the way the person receiving it
+   reads: by element. What was said about it, what changed on it, and what is
+   wrong with it — together, rather than in three separate lists that have to be
+   cross-referenced by selector.
+   =========================================================================== */
+
+type HandoffChange = DesignChange & { token?: string };
+
+type HandoffGroup = {
+  element: HTMLElement;
+  selector: string;
+  label: string;
+  changes: HandoffChange[];
+  notes: PageComment[];
+  issues: AccessibilityFinding[];
+};
+
+type HandoffReport = {
+  groups: HandoffGroup[];
+  css: string;
+  markdown: string;
+  changeCount: number;
+  noteCount: number;
+  issueCount: number;
+};
+
+/** Which token, if any, a value is — so the handoff can say `brand/500` instead of only `#7C3CFF`. */
+function tokenNameFor(property: string, value: string, colorTokens: readonly BrandColorToken[], customTokens: readonly CustomDesignToken[]): string | undefined {
+  const category: CustomDesignToken['category'] | null = /color$/.test(property) ? 'color'
+    : /radius/.test(property) ? 'radius'
+    : /padding|margin|gap/.test(property) ? 'spacing'
+    : /font-size/.test(property) ? 'typography'
+    : null;
+  if (!category) return undefined;
+  return matchToken(category, value, colorTokens, customTokens);
+}
+
+/**
+ * One rule per selector, not one rule per edit.
+ *
+ * The old export emitted a fresh block for every property changed, so twenty edits on one button
+ * produced twenty `button.cta { … }` rules that whoever received them had to merge by hand. Edits
+ * are grouped by the selector they belong to and written once, in the order they were made.
+ */
+function mergedCss(groups: readonly HandoffGroup[]): string {
+  return groups
+    .map((group) => {
+      const declarations = group.changes.filter((change) => change.kind === 'css');
+      if (!declarations.length) return '';
+      const body = declarations
+        .map((change) => `  ${change.property}: ${change.after}${change.forced ? ' !important' : ''};${change.token ? ` /* ${change.token} */` : ''}`)
+        .join('\n');
+      return `${group.selector} {\n${body}\n}`;
+    })
+    .filter(Boolean)
+    .join('\n\n');
+}
+
+/**
+ * The whole session as markdown.
+ *
+ * Markdown rather than plain text because of where this ends up: a ticket, a pull request, a chat
+ * message. All three render it, and none of them render a wall of indented text.
+ */
+function handoffMarkdown(report: Omit<HandoffReport, 'markdown'>, extras: { url: string; author: string; tokenCss: string; stateCss: string }): string {
+  const lines: string[] = [
+    `# Design handoff`,
+    '',
+    `**Page:** ${extras.url}  `,
+    `**Prepared:** ${new Date().toLocaleString()}${extras.author ? ` by ${extras.author}` : ''}  `,
+    `**Summary:** ${report.changeCount} change${report.changeCount === 1 ? '' : 's'} · ${report.noteCount} note${report.noteCount === 1 ? '' : 's'} · ${report.issueCount} accessibility issue${report.issueCount === 1 ? '' : 's'}`,
+    '',
+  ];
+
+  for (const [index, group] of report.groups.entries()) {
+    lines.push(`## ${index + 1}. ${group.label}`, '', `\`${group.selector}\``, '');
+
+    if (group.notes.length) {
+      lines.push('**Notes**', '');
+      for (const note of group.notes) {
+        const who = note.author ? `${note.author}, ` : '';
+        lines.push(`- ${note.resolved ? '~~' : ''}${note.text}${note.resolved ? '~~' : ''} — _${who}${relativeTime(note.createdAt)}_${note.resolved ? ' (resolved)' : ''}`);
+      }
+      lines.push('');
+    }
+
+    if (group.changes.length) {
+      lines.push('**Changes**', '');
+      for (const change of group.changes) {
+        const scope = change.appliedTo && change.appliedTo > 1 ? ` · applied to ${change.appliedTo} matching elements` : '';
+        const token = change.token ? ` — token \`${change.token}\`` : '';
+        lines.push(`- \`${change.property}\`: ${change.before || '—'} → **${change.after}**${token}${scope}`);
+        if (change.instruction) lines.push(`  - ${change.instruction}`);
+      }
+      lines.push('');
+    }
+
+    if (group.issues.length) {
+      lines.push('**Accessibility**', '');
+      for (const issue of group.issues) {
+        lines.push(`- ${issue.status === 'error' ? '❌' : '⚠️'} ${issue.label}: ${issue.detail}`);
+      }
+      lines.push('');
+    }
+  }
+
+  const css = [extras.tokenCss, report.css, extras.stateCss].filter(Boolean).join('\n\n');
+  if (css) lines.push('## CSS', '', '```css', css, '```', '');
+
+  return lines.join('\n');
+}
+
+/**
+ * Gathers the session into one document.
+ *
+ * Grouped by element rather than by kind: a developer picking this up wants everything about the
+ * button in one place, not a list of colours followed by a list of comments they have to match up
+ * by selector.
+ */
+function buildHandoff(
+  changes: readonly DesignChange[],
+  comments: readonly PageComment[],
+  colorTokens: readonly BrandColorToken[],
+  extras: { url: string; author: string; tokenCss: string; stateCss: string },
+): HandoffReport {
+  const customTokens = readCustomDesignTokens();
+  const groups = new Map<HTMLElement, HandoffGroup>();
+
+  const groupFor = (element: HTMLElement, selector: string, label: string) => {
+    const existing = groups.get(element);
+    if (existing) return existing;
+    const created: HandoffGroup = { element, selector, label, changes: [], notes: [], issues: [] };
+    groups.set(element, created);
+    return created;
+  };
+
+  for (const change of changes) {
+    const group = groupFor(change.element, change.selector, describeElement(change.element));
+    group.changes.push({ ...change, token: change.kind === 'css' ? tokenNameFor(change.property, change.after, colorTokens, customTokens) : undefined });
+  }
+
+  for (const comment of comments) {
+    const element = resolveComment(document, comment);
+    if (!element) continue;
+    const group = groupFor(element, comment.selector, comment.label);
+    group.notes.push(comment);
+  }
+
+  // Accessibility is computed once per element that already earned a place in the report: a page-wide
+  // audit would bury the findings that are actually about the work being handed over.
+  for (const group of groups.values()) {
+    if (!group.element.isConnected) continue;
+    try {
+      group.issues = getAccessibilityFindings(createSnapshot(group.element)).filter((finding) => finding.status !== 'pass');
+    } catch {
+      // An element that cannot be measured contributes no findings rather than breaking the report.
+    }
+  }
+
+  const ordered = [...groups.values()];
+  const partial: Omit<HandoffReport, 'markdown'> = {
+    groups: ordered,
+    css: mergedCss(ordered),
+    changeCount: changes.length,
+    noteCount: comments.length,
+    issueCount: ordered.reduce((total, group) => total + group.issues.length, 0),
+  };
+
+  return { ...partial, markdown: handoffMarkdown(partial, extras) };
+}
+
+/**
+ * The handoff tab.
+ *
+ * Deliberately not a section inside the design panel: handing work over is a different job from
+ * doing it, wants the whole width, and reads top to bottom rather than per-selection. Everything
+ * here is grouped by element, and every row is reversible — a change you disown should not require
+ * resetting the fourteen you meant.
+ */
+function HandoffTab({ report, author, onSelect, onUndoChange, onToggleResolved, onDeleteNote, onAuthorChange }: {
+  report: HandoffReport;
+  author: string;
+  onSelect: (element: HTMLElement) => void;
+  onUndoChange: (change: DesignChange) => void;
+  onToggleResolved: (id: string) => void;
+  onDeleteNote: (id: string) => void;
+  onAuthorChange: (name: string) => void;
+}) {
+  const [shot, setShot] = useState<string | null>(null);
+  const [capturing, setCapturing] = useState(false);
+
+  const capture = async () => {
+    setCapturing(true);
+    try {
+      const dataUrl = await (window as CaptureHost).__merakiInspectorCapture?.();
+      setShot(dataUrl ?? null);
+    } finally {
+      setCapturing(false);
+    }
+  };
+
+  if (!report.groups.length) {
+    return <div className="hi-handoff-empty">
+      <div><Code2 size={22} /></div>
+      <h2>Nothing to hand over yet</h2>
+      <p>Edit something, or leave a note on it. Everything you do collects here as a document grouped by element — changes, notes and accessibility findings together.</p>
+    </div>;
+  }
+
+  const fileStem = `handoff-${window.location.hostname}-${new Date().toISOString().slice(0, 10)}`;
+
+  return <div className="hi-handoff">
+    <header className="hi-handoff-head">
+      <div className="hi-handoff-summary">
+        <strong>{report.changeCount}</strong><span>change{report.changeCount === 1 ? '' : 's'}</span>
+        <strong>{report.noteCount}</strong><span>note{report.noteCount === 1 ? '' : 's'}</span>
+        <strong className={report.issueCount ? 'is-alert' : ''}>{report.issueCount}</strong><span>a11y</span>
+      </div>
+      <label className="hi-comment-signature" title="Signs the document you hand over">
+        <span>By</span>
+        <input value={author} placeholder="your name" aria-label="Your name on this handoff" onChange={(event) => onAuthorChange(event.target.value)} />
+      </label>
+    </header>
+
+    <div className="hi-handoff-exports">
+      <CopyButton value={report.markdown} label="Copy as Markdown" />
+      <CopyButton value={report.css} label="Copy CSS" />
+      <button onClick={() => downloadFile(`${fileStem}.md`, report.markdown)}><Download size={13} />Download .md</button>
+      {captureAvailable() && <button onClick={capture} disabled={capturing}><ImageIcon size={13} />{capturing ? 'Capturing…' : 'Screenshot'}</button>}
+    </div>
+
+    {shot && <figure className="hi-handoff-shot">
+      <img src={shot} alt="The page as handed over" />
+      <figcaption>
+        <span>Captured {new Date().toLocaleTimeString()}</span>
+        <button onClick={() => downloadFile(`${fileStem}.png`, dataUrlToBlob(shot), 'image/png')}><Download size={12} />Save PNG</button>
+        <button onClick={() => setShot(null)}><X size={12} /></button>
+      </figcaption>
+    </figure>}
+
+    <div className="hi-handoff-groups">
+      {report.groups.map((group, index) => <section key={index} className="hi-handoff-group">
+        <header>
+          <span className="hi-handoff-index">{index + 1}</span>
+          <button className="hi-handoff-target" onClick={() => group.element.isConnected && onSelect(group.element)} title="Select this element">
+            <strong>{group.label}</strong>
+            <code>{group.selector}</code>
+          </button>
+        </header>
+
+        {group.notes.length > 0 && <div className="hi-handoff-notes">
+          {group.notes.map((note) => <article key={note.id} className={note.resolved ? 'is-resolved' : ''}>
+            <p>{note.text}</p>
+            <footer>
+              <span>{note.author || 'Unsigned'} · {relativeTime(note.createdAt)}</span>
+              <button title={note.resolved ? 'Reopen' : 'Mark resolved'} aria-pressed={Boolean(note.resolved)} onClick={() => onToggleResolved(note.id)}><Check size={12} /></button>
+              <button title="Delete this note" onClick={() => onDeleteNote(note.id)}><Trash2 size={12} /></button>
+            </footer>
+          </article>)}
+        </div>}
+
+        {group.changes.length > 0 && <ul className="hi-handoff-changes">
+          {group.changes.map((change, changeIndex) => <li key={`${change.property}-${changeIndex}`}>
+            <span className="hi-handoff-property">{change.property}</span>
+            <span className="hi-handoff-value"><del>{change.before || '—'}</del> {change.after}</span>
+            {change.token && <em className="hi-handoff-token" title="This value is a token in the connected design system">{change.token}</em>}
+            {change.appliedTo && change.appliedTo > 1 && <em className="hi-handoff-scope" title="This edit was applied to every matching variant">×{change.appliedTo}</em>}
+            <button className="hi-handoff-undo" title="Undo just this change" onClick={() => onUndoChange(change)}><X size={12} /></button>
+            {change.instruction && <p className="hi-handoff-instruction"><Wand2 size={11} />{change.instruction}</p>}
+          </li>)}
+        </ul>}
+
+        {group.issues.length > 0 && <ul className="hi-handoff-issues">
+          {group.issues.map((issue) => <li key={issue.id} className={issue.status}>
+            <CircleAlert size={12} />
+            <span><strong>{issue.label}</strong><small>{issue.detail}</small></span>
+          </li>)}
+        </ul>}
+      </section>)}
+    </div>
+
+    {report.css && <div className="hi-code"><CopyButton value={report.css} label="Copy CSS" /><pre>{report.css}</pre></div>}
+  </div>;
+}
+
+/** A captured tab arrives as a data URL; saving it as a file needs the bytes. */
+function dataUrlToBlob(dataUrl: string): Blob {
+  const [meta, encoded] = dataUrl.split(',');
+  const mime = /:(.*?);/.exec(meta)?.[1] ?? 'image/png';
+  const binary = atob(encoded);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return new Blob([bytes], { type: mime });
 }
 
 /**
@@ -3674,8 +4012,21 @@ function HandoffInspectorPanel() {
     targets.forEach((element) => {
       storeOriginal(element);
       const before = getComputedStyle(element).getPropertyValue(property);
+      const inlineBefore = element.style.getPropertyValue(property);
+      const priorityBefore = element.style.getPropertyPriority(property);
       const forced = setPropertyVisibly(element, property, value);
-      recordChange({ element, selector: getSelector(element), property, before, after: value, kind: 'css', forced });
+      recordChange({
+        element,
+        selector: getSelector(element),
+        property,
+        before,
+        after: value,
+        kind: 'css',
+        forced,
+        inlineBefore,
+        priorityBefore,
+        appliedTo: targets.length,
+      });
     });
     mirrorToDevice(targets, (node) => setPropertyVisibly(node, property, value));
     window.setTimeout(() => refresh(snapshotRef.current?.element), 0);
@@ -3699,6 +4050,36 @@ function HandoffInspectorPanel() {
     };
     applyStyleTo([element], property, value);
     return receipt;
+  };
+
+  /**
+   * Takes back a single edit.
+   *
+   * `Reset all` was the only way out, which is the wrong unit: disowning one colour should not cost
+   * you the other fourteen decisions made since. Every css edit records the inline value it replaced,
+   * so this puts back exactly that — and anything else is reverted to what the element computed
+   * before, which is the closest thing to "as it was" available for text, attributes and layout.
+   */
+  const undoChange = (change: DesignChange) => {
+    const element = change.element;
+    if (element.isConnected) {
+      if (change.kind === 'css') {
+        if (change.inlineBefore) element.style.setProperty(change.property, change.inlineBefore, change.priorityBefore || '');
+        else element.style.removeProperty(change.property);
+        mirrorToDevice([element], (node) => {
+          if (change.inlineBefore) node.style.setProperty(change.property, change.inlineBefore, change.priorityBefore || '');
+          else node.style.removeProperty(change.property);
+        });
+      } else if (change.kind === 'content') {
+        if (isFieldNode(element)) element.value = change.before;
+        else element.textContent = change.before;
+      } else if (change.kind === 'attribute') {
+        element.setAttribute(change.property.replace(/^@/, ''), change.before);
+      }
+    }
+    setChanges((current) => current.filter((entry) => !(entry.element === change.element && entry.property === change.property)));
+    setToast({ id: Date.now(), label: `${change.property} put back`, receipts: [] });
+    window.setTimeout(() => refresh(snapshotRef.current?.element), 0);
   };
 
   /** Puts back exactly what was there — an inline value if there was one, nothing if there was not. */
@@ -4092,6 +4473,25 @@ function HandoffInspectorPanel() {
     commentsReport && `\nCOMMENTS\n${commentsReport}`,
     cssDiff && `\nCSS\n${cssDiff}`,
   ].filter(Boolean).join('\n') : '';
+  /**
+   * The document the session produces.
+   *
+   * Rebuilt from the same state the panel already holds rather than accumulated separately, so it
+   * cannot drift from what is actually on the page — an export that disagrees with the screen is
+   * worse than no export.
+   */
+  const handoffReport = useMemo(
+    () => buildHandoff(changes, comments, colorTokens, {
+      url: `${window.location.origin}${window.location.pathname}`,
+      author: commentAuthor,
+      tokenCss: tokenCssDiff,
+      stateCss: stateCssDiff,
+    }),
+    // `changes` carries live element references, so a version counter is what says "something moved".
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [changes, comments, colorTokens, commentAuthor, tokenCssDiff, stateCssDiff, editVersion],
+  );
+
   const liveStyle = snapshot ? getComputedStyle(snapshot.element) : null;
 
   return <div data-inspector-ui className="hi-root" dir="ltr" style={{
@@ -4234,7 +4634,16 @@ function HandoffInspectorPanel() {
           >{entry.label}</button>)}
         </div>
         <div className="hi-scroll">
-          {!snapshot ? <div className="hi-onboarding"><div><MousePointer2 size={24} /></div><h2>Select something on the canvas</h2><p>Move over the page to preview an element. Click to lock it, then edit it here or straight on the canvas.</p><div><span>ESC</span> unlock or close</div></div>
+          {mode === 'handoff' ? <HandoffTab
+            report={handoffReport}
+            author={commentAuthor}
+            onSelect={selectElement}
+            onUndoChange={undoChange}
+            onToggleResolved={toggleCommentResolved}
+            onDeleteNote={removeComment}
+            onAuthorChange={(name) => { setCommentAuthor(name); writeCommentAuthor(name.trim()); }}
+          />
+          : !snapshot ? <div className="hi-onboarding"><div><MousePointer2 size={24} /></div><h2>Select something on the canvas</h2><p>Move over the page to preview an element. Click to lock it, then edit it here or straight on the canvas.</p><div><span>ESC</span> unlock or close</div></div>
             : <div className="hi-design">
               {mode === 'design' && <><div className="hi-design-cluster"><div className="hi-design-heading"><div><h2>{snapshot.family.label}</h2></div><span className="hi-live-dot">Live</span></div>
               {/* Editing every matching variant at once is only meaningful against a real design
@@ -4361,7 +4770,7 @@ function HandoffInspectorPanel() {
               <MeasurementDetails snapshot={snapshot} />
               <ToolSection title="Token binding" icon={Link2} defaultOpen={false} disabled={!designSystemConnected} disabledHint={DESIGN_SYSTEM_REQUIRED}><TokenBindingPanel snapshot={snapshot} colorTokens={colorTokens} onBind={applyTokenBinding} /></ToolSection>
               <ToolSection title="Page token audit" icon={ScanSearch} defaultOpen={false} disabled={!designSystemConnected} disabledHint={DESIGN_SYSTEM_REQUIRED}><PageTokenAudit colorTokens={colorTokens} onSelect={selectElement} /></ToolSection></>}
-              {<ToolSection title={mode === 'comment' ? `Handoff · ${comments.length} note${comments.length === 1 ? '' : 's'}` : `Designer changes · ${changes.length + comments.length}`} icon={Code2} defaultOpen openWhen={changes.length + comments.length > 0}>{(changes.length || comments.length) ? <>
+              {<ToolSection title={mode === 'comment' ? `Notes · ${comments.length}` : `Designer changes · ${changes.length + comments.length}`} icon={Code2} defaultOpen openWhen={changes.length + comments.length > 0}>{(changes.length || comments.length) ? <>
                 <div className="hi-handoff-actions">
                   <CopyButton value={handoffText} label="Copy everything" />
                   {cssDiff && <CopyButton value={cssDiff} label="Copy changed CSS" />}
