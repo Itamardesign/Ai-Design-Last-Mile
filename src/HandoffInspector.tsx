@@ -259,6 +259,9 @@ type StoredChange = {
 
 type StoredSession = { savedAt: string; variables: Array<[string, string]>; changes: StoredChange[] };
 
+/** What was there before one reversible edit — enough to put it back exactly. */
+type StyleReceipt = { element: HTMLElement; property: string; inlineBefore: string };
+
 /**
  * The inspector only ever does anything in a browser, but the module still gets imported and
  * first-rendered on the server (Next.js, Remix, tests). Reading `window` during render would
@@ -295,12 +298,104 @@ type PageComment = {
   createdAt: string;
   /** Who left it. Blank until someone signs their notes — see `readCommentAuthor`. */
   author?: string;
+  /** What the element looked like, for finding it again after the markup moves. Absent on older notes. */
+  anchor?: CommentAnchor;
   /** Kept rather than deleted, so a review reads as a list of decisions rather than a list of gaps. */
   resolved?: boolean;
 };
 
+/**
+ * A description of the element a note was left on, independent of where it sat in the tree.
+ *
+ * The structural path is exact and therefore brittle: one wrapper div added on the next deploy and
+ * every note below it points at nothing. What a reviewer actually meant was "this button, the one
+ * that says Upgrade plan" — which survives a refactor that `body > div:nth-child(2)` does not.
+ */
+type CommentAnchor = { tag: string; text: string; classes: string[]; role?: string; ancestor?: string };
+
 const COMMENTS_STORAGE_KEY = 'meraki-inspector-comments';
 const COMMENT_AUTHOR_KEY = 'meraki-inspector-author';
+
+const anchorText = (element: Element): string => (element.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 90);
+
+/** Classes a bundler is unlikely to have generated, so they still mean something next week. */
+const stableClasses = (element: Element): string[] =>
+  Array.from(element.classList)
+    .filter((name) => name.length < 32 && !name.includes(':') && !/^[a-z]{1,3}[-_]?[0-9a-f]{5,}$/i.test(name))
+    .slice(0, 4);
+
+function captureAnchor(element: HTMLElement): CommentAnchor {
+  // The nearest ancestor a human named — an id, a landmark, a test hook. Narrows the search without
+  // pinning the note to the exact depth it was written at.
+  let ancestor: string | undefined;
+  for (let node = element.parentElement, depth = 0; node && depth < 6; node = node.parentElement, depth += 1) {
+    if (node.id) { ancestor = `#${CSS.escape(node.id)}`; break; }
+    const hook = node.getAttribute('data-testid') ?? node.getAttribute('data-component');
+    if (hook) { ancestor = `[data-testid="${hook}"], [data-component="${hook}"]`; break; }
+    const named = stableClasses(node)[0];
+    if (named) { ancestor = `.${escapeClass(named)}`; break; }
+  }
+
+  return {
+    tag: element.tagName.toLowerCase(),
+    text: anchorText(element),
+    classes: stableClasses(element),
+    role: element.getAttribute('role') ?? undefined,
+    ancestor,
+  };
+}
+
+/**
+ * Finds the element a note was about, when its path no longer matches anything.
+ *
+ * Scored rather than matched: no single signal is reliable on its own — text changes, classes get
+ * renamed, roles are often absent — but agreeing on several of them at once is rarely a coincidence.
+ * The threshold is set so that a wrong element is much less likely than no element at all, because a
+ * note silently reattached to the wrong button is worse than a note that says it lost its home.
+ */
+function findByAnchor(doc: Document, anchor: CommentAnchor): HTMLElement | null {
+  // Every element of the right kind is a candidate. Scoping the *search* to the remembered ancestor
+  // was the obvious optimisation and the wrong one: an element that moved out of that ancestor is
+  // exactly the case this exists for. The ancestor is worth a point, not a veto.
+  const candidates = Array.from(doc.querySelectorAll<HTMLElement>(anchor.tag)).slice(0, 800);
+
+  let inAncestor: HTMLElement[] = [];
+  if (anchor.ancestor) {
+    try {
+      inAncestor = Array.from(doc.querySelectorAll<HTMLElement>(anchor.ancestor));
+    } catch {
+      inAncestor = [];
+    }
+  }
+
+  let best: { element: HTMLElement; score: number } | null = null;
+  for (const candidate of candidates) {
+    if (candidate.closest(IGNORED_SELECTOR)) continue;
+    let score = 0;
+
+    const text = anchorText(candidate);
+    if (anchor.text && text) {
+      if (text === anchor.text) score += 5;
+      else if (text.startsWith(anchor.text.slice(0, 24)) || anchor.text.startsWith(text.slice(0, 24))) score += 3;
+    } else if (!anchor.text && !text) score += 1;
+
+    const shared = anchor.classes.filter((name) => candidate.classList.contains(name)).length;
+    score += shared * 2;
+    if (anchor.role && candidate.getAttribute('role') === anchor.role) score += 2;
+    if (inAncestor.some((ancestor) => ancestor.contains(candidate))) score += 1;
+
+    if (!best || score > best.score) best = { element: candidate, score };
+  }
+
+  return best && best.score >= 4 ? best.element : null;
+}
+
+/** The full search for a note's element: exact path, then selector, then what it looked like. */
+function resolveComment(doc: Document, comment: Pick<PageComment, 'path' | 'selector' | 'anchor'>): HTMLElement | null {
+  const exact = resolveInDocument(doc, { uniquePath: comment.path, selector: comment.selector });
+  if (exact) return exact;
+  return comment.anchor ? findByAnchor(doc, comment.anchor) : null;
+}
 
 /**
  * Who is reviewing.
@@ -1659,7 +1754,7 @@ function DeviceOverlay({ presetId, onPresetChange, snapshot, dock, hidden, editV
     if (!frameDoc) { setPins([]); return; }
     const next: Array<CommentThread & { top: number; left: number }> = [];
     for (const thread of groupComments(comments)) {
-      const node = resolveInDocument(frameDoc, { uniquePath: thread.path, selector: thread.comments[0].selector });
+      const node = resolveComment(frameDoc, thread.comments[0]);
       if (!node) continue;
       const rect = node.getBoundingClientRect();
       if (rect.width === 0 && rect.height === 0) continue;
@@ -2088,7 +2183,17 @@ type DriftIssue = {
 };
 
 type DriftTarget = { element: HTMLElement; label: string; issues: DriftIssue[]; rect: DOMRect };
-type DriftReport = { targets: DriftTarget[]; scanned: number; bound: number; near: number; loose: number };
+type DriftReport = {
+  targets: DriftTarget[];
+  scanned: number;
+  bound: number;
+  near: number;
+  loose: number;
+  /** Elements the walk stopped short of, and drifting spots past the drawing limit. A score that
+   *  covered only part of a page has to say so, or it is just a confident wrong number. */
+  skippedElements: number;
+  hiddenTargets: number;
+};
 
 const DRIFT_PROPERTIES: Array<{ property: string; label: string; category: CustomDesignToken['category'] }> = [
   { property: 'color', label: 'Text', category: 'color' },
@@ -2122,10 +2227,13 @@ function describeElement(element: HTMLElement): string {
  * the point is a fast, repeatable read a designer can leave running — not a complete census. The
  * cap is on elements examined, so the score stays honest for the part of the page it did look at.
  */
+const DRIFT_ELEMENT_LIMIT = 900;
+const DRIFT_BOX_LIMIT = 140;
+
 function scanForDrift(colorTokens: readonly BrandColorToken[], customTokens: readonly CustomDesignToken[]): DriftReport {
-  const elements = Array.from(document.body.querySelectorAll<HTMLElement>('*'))
-    .filter((element) => !element.closest(IGNORED_SELECTOR))
-    .slice(0, 900);
+  const candidates = Array.from(document.body.querySelectorAll<HTMLElement>('*'))
+    .filter((element) => !element.closest(IGNORED_SELECTOR));
+  const elements = candidates.slice(0, DRIFT_ELEMENT_LIMIT);
 
   const targets: DriftTarget[] = [];
   let scanned = 0;
@@ -2163,7 +2271,15 @@ function scanForDrift(colorTokens: readonly BrandColorToken[], customTokens: rea
 
   // Busiest first: the boxes that matter are the ones drifting in several ways at once.
   targets.sort((a, b) => b.issues.length - a.issues.length);
-  return { targets: targets.slice(0, 140), scanned, bound, near, loose };
+  return {
+    targets: targets.slice(0, DRIFT_BOX_LIMIT),
+    scanned,
+    bound,
+    near,
+    loose,
+    skippedElements: Math.max(0, candidates.length - elements.length),
+    hiddenTargets: Math.max(0, targets.length - DRIFT_BOX_LIMIT),
+  };
 }
 
 /**
@@ -2174,11 +2290,14 @@ function scanForDrift(colorTokens: readonly BrandColorToken[], customTokens: rea
  * ordinary tracked change: it shows up in Designer changes, copies out as CSS, and resets with
  * everything else.
  */
-function SystemCheckOverlay({ colorTokens, connected, onSelect, onSnap, onClose }: {
+function SystemCheckOverlay({ colorTokens, connected, onSelect, onSnap, onUndo, onClose }: {
   colorTokens: readonly BrandColorToken[];
   connected: boolean;
   onSelect: (element: HTMLElement) => void;
-  onSnap: (element: HTMLElement, property: string, value: string) => void;
+  /** Applies one snap and hands back what was there before, so it can be taken back. */
+  onSnap: (element: HTMLElement, property: string, value: string) => StyleReceipt;
+  /** Offers the undo, with the receipts for everything the gesture changed. */
+  onUndo: (label: string, receipts: StyleReceipt[]) => void;
   onClose: () => void;
 }) {
   const [report, setReport] = useState<DriftReport | null>(null);
@@ -2219,8 +2338,9 @@ function SystemCheckOverlay({ colorTokens, connected, onSelect, onSnap, onClose 
   const fixable = report?.targets.flatMap((target) => target.issues.filter((issue) => issue.nearest).map((issue) => ({ target, issue }))) ?? [];
 
   const snapAll = () => {
-    fixable.forEach(({ target, issue }) => onSnap(target.element, issue.property, issue.nearest!.value));
-    setSnapped(fixable.length);
+    const receipts = fixable.map(({ target, issue }) => onSnap(target.element, issue.property, issue.nearest!.value));
+    setSnapped(receipts.length);
+    onUndo(`${receipts.length} value${receipts.length === 1 ? '' : 's'} snapped to the system`, receipts);
     window.setTimeout(scan, 220);
   };
 
@@ -2248,7 +2368,12 @@ function SystemCheckOverlay({ colorTokens, connected, onSelect, onSnap, onClose 
                 ? <button
                     className="hi-xray-snap"
                     title={`Snap to ${issue.nearest.name} (${issue.nearest.value})`}
-                    onClick={() => { onSnap(target.element, issue.property, issue.nearest!.value); setSnapped((count) => count + 1); window.setTimeout(scan, 200); }}
+                    onClick={() => {
+                      const receipt = onSnap(target.element, issue.property, issue.nearest!.value);
+                      setSnapped((count) => count + 1);
+                      onUndo(`${issue.label} snapped to ${issue.nearest!.name}`, [receipt]);
+                      window.setTimeout(scan, 200);
+                    }}
                   >Snap to {issue.nearest.name}</button>
                 : <em title="No token in the system is close enough to suggest">one-off</em>}
             </div>)}
@@ -2268,6 +2393,11 @@ function SystemCheckOverlay({ colorTokens, connected, onSelect, onSnap, onClose 
         <span className="is-loose"><i />{report?.loose ?? 0} one-off</span>
         {!connected && <small>Measured against values detected from the page — connect a design system for the real answer.</small>}
         {connected && snapped > 0 && <small className="is-good"><Check size={11} />{snapped} value{snapped === 1 ? '' : 's'} snapped to the system</small>}
+        {/* A partial walk that keeps quiet about being partial is a wrong number stated confidently. */}
+        {report && (report.skippedElements > 0 || report.hiddenTargets > 0) && <small className="is-capped" title={`This page is larger than one pass covers. The first ${DRIFT_ELEMENT_LIMIT} elements were measured and the ${DRIFT_BOX_LIMIT} busiest are drawn; the score describes that part of the page.`}>
+          <CircleAlert size={11} />
+          {report.skippedElements > 0 ? `${report.scanned} of ${report.scanned + report.skippedElements} elements measured` : `${report.targets.length} of ${report.targets.length + report.hiddenTargets} spots drawn`}
+        </small>}
       </div>
       <div className="hi-xray-actions">
         <button disabled={scanning || !fixable.length} onClick={snapAll}><Wand2 size={13} />Snap all {fixable.length ? `(${fixable.length})` : ''}</button>
@@ -2523,6 +2653,8 @@ function HandoffInspectorPanel() {
   const [deviceOpen, setDeviceOpen] = useState(false);
   /** The X-ray of design-system drift, drawn over the page. Off by default — it is a mode, not a mood. */
   const [systemCheck, setSystemCheck] = useState(false);
+  /** The one confirmation on screen, if any. Ids let a repeat gesture restart its own timer. */
+  const [toast, setToast] = useState<{ id: number; label: string; receipts: StyleReceipt[] } | null>(null);
   // The frame stays mounted after the first open so reopening does not reboot the app and replay every reveal.
   const [deviceMounted, setDeviceMounted] = useState(false);
   const [editVersion, setEditVersion] = useState(0);
@@ -2640,14 +2772,32 @@ function HandoffInspectorPanel() {
   const syncCommentMarkers = useCallback(() => {
     if (typeof document === 'undefined') return;
     const next: CommentMarker[] = [];
+    /** Threads whose element moved: their stored path is stale and worth rewriting once. */
+    const healed: Array<{ path: string; to: string }> = [];
+
     for (const thread of groupComments(comments)) {
-      const element = resolveInDocument(document, { uniquePath: thread.path, selector: thread.comments[0].selector });
+      const first = thread.comments[0];
+      const element = resolveComment(document, first);
       if (!element) continue; // the element may not exist on this render of the page
       const rect = element.getBoundingClientRect();
       if (rect.width === 0 && rect.height === 0) continue;
+
+      const current = getUniquePath(element);
+      if (current !== thread.path) healed.push({ path: thread.path, to: current });
       next.push({ ...thread, top: rect.top, left: rect.left + rect.width });
     }
+
     setCommentMarkers(next);
+
+    // Re-anchoring is worth persisting: a note that found its element through its description should
+    // not have to do that search again on every scroll, and the healed path is what makes the panel,
+    // the device preview and the exported review agree.
+    if (healed.length) {
+      setComments((current) => current.map((comment) => {
+        const move = healed.find((entry) => entry.path === comment.path);
+        return move ? { ...comment, path: move.to } : comment;
+      }));
+    }
   }, [comments]);
 
   useEffect(() => {
@@ -2656,9 +2806,29 @@ function HandoffInspectorPanel() {
     syncCommentMarkers();
     window.addEventListener('scroll', syncCommentMarkers, true);
     window.addEventListener('resize', syncCommentMarkers);
+
+    /**
+     * Follow the page, not just the viewport.
+     *
+     * Scroll and resize were the only triggers, which is fine for a static page and wrong for
+     * everything else: a modal opening, a route changing, a list loading — all of them move the
+     * elements notes are pinned to, and the pins stayed where they were. This is also what gives
+     * re-anchoring a chance to run when markup changes underneath a review.
+     */
+    let settle = 0;
+    const observer = new MutationObserver((records) => {
+      // Our own overlays mutate constantly; reacting to them would be an infinite loop.
+      if (records.every((record) => record.target instanceof Element && record.target.closest(IGNORED_SELECTOR))) return;
+      window.clearTimeout(settle);
+      settle = window.setTimeout(syncCommentMarkers, 200);
+    });
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+
     return () => {
       window.removeEventListener('scroll', syncCommentMarkers, true);
       window.removeEventListener('resize', syncCommentMarkers);
+      window.clearTimeout(settle);
+      observer.disconnect();
     };
   }, [open, syncCommentMarkers]);
 
@@ -2670,6 +2840,7 @@ function HandoffInspectorPanel() {
       path: snapshot.uniquePath,
       selector: snapshot.selector,
       label: snapshot.family.label,
+      anchor: captureAnchor(snapshot.element),
       text: trimmed,
       createdAt: new Date().toISOString(),
       author: commentAuthor.trim() || undefined,
@@ -2679,6 +2850,28 @@ function HandoffInspectorPanel() {
 
   const removeComment = useCallback((id: string) => {
     setComments((current) => current.filter((comment) => comment.id !== id));
+  }, []);
+
+  /**
+   * Adds a note to an existing thread.
+   *
+   * Deliberately not routed through `addComment`, which posts against the current selection — a
+   * reply typed into a pin is about that pin's element, whatever happens to be selected at the time.
+   */
+  const addCommentToThread = useCallback((thread: CommentThread, text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    const parent = thread.comments[0];
+    setComments((current) => [...current, {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      path: parent.path,
+      selector: parent.selector,
+      label: parent.label,
+      anchor: parent.anchor,
+      text: trimmed,
+      createdAt: new Date().toISOString(),
+      author: readCommentAuthor().trim() || undefined,
+    }]);
   }, []);
 
   const toggleCommentResolved = useCallback((id: string) => {
@@ -2691,8 +2884,10 @@ function HandoffInspectorPanel() {
    * Pins are the one part of the tool that points *into* the page from outside it, so they need a
    * way back to a selection — clicking a note should put you on the thing the note is about.
    */
-  const selectByPath = useCallback((path: string) => {
-    const element = resolveInDocument(document, { uniquePath: path, selector: '' });
+  const selectByPath = useCallback((path: string, comment?: Pick<PageComment, 'path' | 'selector' | 'anchor'>) => {
+    const element = comment
+      ? resolveComment(document, comment)
+      : resolveInDocument(document, { uniquePath: path, selector: '' });
     if (!element) return;
     selectedRef.current = element;
     hoverRef.current = element;
@@ -3009,6 +3204,39 @@ function HandoffInspectorPanel() {
   };
 
   const applyStyle = (property: string, rawValue: string) => applyStyleTo(currentTargets(), property, rawValue);
+
+  /**
+   * One reversible style edit, for callers that offer to take it back.
+   *
+   * `Reset all` already undoes everything, but "everything" is the wrong unit when a single gesture
+   * changed thirty values — so the *inline* value is captured (not the computed one, which would
+   * bake a resolved colour in where there was previously nothing) and handed back as a receipt.
+   */
+  const applyStyleReversibly = (element: HTMLElement, property: string, value: string): StyleReceipt => {
+    const receipt = { element, property, inlineBefore: element.style.getPropertyValue(property) };
+    applyStyleTo([element], property, value);
+    return receipt;
+  };
+
+  /** Puts back exactly what was there — an inline value if there was one, nothing if there was not. */
+  const revertStyles = (receipts: readonly StyleReceipt[]) => {
+    receipts.forEach(({ element, property, inlineBefore }) => {
+      if (inlineBefore) element.style.setProperty(property, inlineBefore);
+      else element.style.removeProperty(property);
+    });
+    mirrorToDevice(receipts.map((receipt) => receipt.element), (node, source) => {
+      const receipt = receipts.find((entry) => entry.element === source);
+      if (!receipt) return;
+      if (receipt.inlineBefore) node.style.setProperty(receipt.property, receipt.inlineBefore);
+      else node.style.removeProperty(receipt.property);
+    });
+    // The change log has to forget them too, or a copied stylesheet still carries edits the page no
+    // longer has.
+    setChanges((current) => current.filter((change) => !receipts.some(
+      (receipt) => receipt.element === change.element && receipt.property === change.property,
+    )));
+    window.setTimeout(() => refresh(snapshotRef.current?.element), 0);
+  };
 
   const applyTokenBinding = (payload: { property: string; label: string; from: string; tokenName: string; tokenValue: string; variable: string; created: boolean }) => {
     if (!snapshot) return;
@@ -3401,16 +3629,26 @@ function HandoffInspectorPanel() {
       colorTokens={colorTokens}
       connected={designSystemConnected}
       onSelect={selectElement}
-      onSnap={(element, property, value) => applyStyleTo([element], property, value)}
+      onSnap={applyStyleReversibly}
+      onUndo={(label, receipts) => setToast({ id: Date.now(), label, receipts })}
       onClose={() => setSystemCheck(false)}
+    />}
+
+    {toast && <InspectorToast
+      key={toast.id}
+      toast={toast}
+      onUndo={() => { revertStyles(toast.receipts); setToast({ id: Date.now(), label: 'Put back', receipts: [] }); }}
+      onDismiss={() => setToast(null)}
     />}
 
     {!deviceOpen && commentMarkers.length > 0 && <CommentPinLayer
       markers={commentMarkers}
       openPath={openThread}
+      author={commentAuthor}
       onOpenPath={setOpenThread}
       onSelect={(path) => { setOpen(true); selectByPath(path); }}
-      onReply={(path) => { selectByPath(path); setMode('comment'); setFocusComposer((count) => count + 1); setOpenThread(null); }}
+      onPost={addCommentToThread}
+      onOpenInPanel={(path) => { setOpen(true); selectByPath(path); setMode('comment'); setFocusComposer((count) => count + 1); setOpenThread(null); }}
       onToggleResolved={toggleCommentResolved}
       onDelete={removeComment}
     />}
@@ -3573,7 +3811,7 @@ function HandoffInspectorPanel() {
                     key={comment.id}
                     title={`Go to ${comment.label}`}
                     onClick={() => {
-                      const element = resolveInDocument(document, { uniquePath: comment.path, selector: comment.selector });
+                      const element = resolveComment(document, comment);
                       if (!element) return;
                       element.scrollIntoView({ behavior: 'smooth', block: 'center' });
                       selectedRef.current = element;
@@ -3660,6 +3898,33 @@ function HandoffInspectorPanel() {
 }
 
 /**
+ * A short-lived confirmation with a way out of it.
+ *
+ * Some gestures change more than the eye can follow — snapping a whole page onto the system moves
+ * thirty values at once. `Reset all` could always undo that, but only if you knew it existed and
+ * were willing to lose every other edit with it. This says what happened and offers to take back
+ * exactly that, for as long as anyone is plausibly still looking at it.
+ */
+function InspectorToast({ toast, onUndo, onDismiss }: {
+  toast: { id: number; label: string; receipts: StyleReceipt[] };
+  onUndo: () => void;
+  onDismiss: () => void;
+}) {
+  useEffect(() => {
+    const timer = window.setTimeout(onDismiss, 9000);
+    return () => window.clearTimeout(timer);
+    // Keyed by id at the call site, so a new toast restarts the clock rather than inheriting it.
+  }, [toast.id, onDismiss]);
+
+  return <div className="hi-toast" role="status">
+    <Check size={13} />
+    <span>{toast.label}</span>
+    {toast.receipts.length > 0 && <button onClick={onUndo}><RotateCcw size={12} />Undo</button>}
+    <button className="hi-toast-close" aria-label="Dismiss" onClick={onDismiss}><X size={12} /></button>
+  </div>;
+}
+
+/**
  * The notes, on the page, readable without opening anything.
  *
  * A pin that only says "3" is a promise of information, not information — you still have to click
@@ -3667,16 +3932,23 @@ function HandoffInspectorPanel() {
  * remark and a designer understanding it. Hovering a pin peeks at the note; clicking opens the
  * whole thread where it is pinned, with the two actions a thread ever needs.
  */
-function CommentPinLayer({ markers, openPath, onOpenPath, onSelect, onReply, onToggleResolved, onDelete }: {
+function CommentPinLayer({ markers, openPath, author, onOpenPath, onSelect, onPost, onOpenInPanel, onToggleResolved, onDelete }: {
   markers: CommentMarker[];
   openPath: string | null;
+  /** Who the reply will be signed as, so the bubble can say it before you commit to posting. */
+  author: string;
   onOpenPath: (path: string | null) => void;
   onSelect: (path: string) => void;
-  onReply: (path: string) => void;
+  onPost: (thread: CommentThread, text: string) => void;
+  onOpenInPanel: (path: string) => void;
   onToggleResolved: (id: string) => void;
   onDelete: (id: string) => void;
 }) {
   const [peeked, setPeeked] = useState<string | null>(null);
+  const [draft, setDraft] = useState('');
+
+  // A draft belongs to the thread it was typed into; switching pins must not carry it along.
+  useEffect(() => { setDraft(''); }, [openPath]);
 
   return <div className="hi-comment-pins">
     {markers.map((marker) => {
@@ -3731,7 +4003,28 @@ function CommentPinLayer({ markers, openPath, onOpenPath, onSelect, onReply, onT
               </footer>
             </article>)}
           </div>
-          <button className="hi-comment-bubble-reply" onClick={() => onReply(marker.path)}><MessageSquare size={12} />Reply in the panel</button>
+          {/* Replying where you are reading is the whole point of a thread; being sent to a panel
+              on the other side of the screen to type is how a conversation stops happening. */}
+          <div className="hi-comment-bubble-composer">
+            <textarea
+              value={draft}
+              rows={2}
+              placeholder={`Reply${author ? ` as ${author}` : ''}…`}
+              aria-label="Reply to this note"
+              autoFocus
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && !event.shiftKey) {
+                  event.preventDefault();
+                  if (draft.trim()) { onPost(marker, draft); setDraft(''); }
+                }
+              }}
+            />
+            <div className="hi-comment-bubble-actions">
+              <button className="is-quiet" title="Open this thread in the panel" onClick={() => onOpenInPanel(marker.path)}><PanelRight size={12} />Panel</button>
+              <button disabled={!draft.trim()} onClick={() => { onPost(marker, draft); setDraft(''); }}>Reply</button>
+            </div>
+          </div>
         </div>}
       </div>;
     })}

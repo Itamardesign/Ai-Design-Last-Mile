@@ -50,9 +50,14 @@ not a token is outlined where it sits: amber for near a token, red for genuinely
 each box opens the list of what drifted, and any value close enough to a token carries a
 **Snap to <token>** button — one click puts it on the system.
 
-**Snap all** does the whole page at once. The score at the bottom tells you how much of the page is
-on system before and after, and every snap is an ordinary tracked change: it shows up in *Designer
-changes*, copies out as CSS, and resets with everything else.
+**Snap all** does the whole page at once, and says so with an **Undo** you have nine seconds to
+take — undoing puts back exactly what was there, including nothing where there was nothing. Every
+snap is also an ordinary tracked change: it shows up in *Designer changes*, copies out as CSS, and
+resets with everything else.
+
+The score describes the part of the page it measured. One pass covers 900 elements and draws the 140
+busiest spots; past that the HUD says how much it left out, because a partial score stated
+confidently is just a wrong number.
 
 Without a connected design system this measures against the values detected from the page, which is
 useful for spotting inconsistency but is not the same question. Connect real tokens for the real
@@ -64,10 +69,15 @@ Notes are pinned to the elements they are about, and numbered — "note 3" means
 panel, on the page and inside the device preview.
 
 - **Hover a pin** to read the note without opening anything.
-- **Click a pin** for the whole thread, with resolve and delete on each note.
+- **Click a pin** for the whole thread — read it, reply to it and resolve it without leaving the
+  page. Enter posts, Shift + Enter breaks the line.
 - **Resolve** rather than delete, so a review reads as a list of decisions.
 - **Sign your notes** once in the composer and every later note carries your name.
 - **Pins stay visible with the panel closed**, so walking up to a page shows what has already been said.
+- **Notes survive a deploy.** Each one remembers what its element looked like — the tag, its text,
+  its stable classes, the nearest named ancestor — so when the markup moves underneath it, the note
+  finds its element again and quietly rewrites its own address. Pins also follow the page live: a
+  modal opening or a route changing moves them with it.
 
 Edits are live-preview only. Reload and they are gone — copy anything you want to keep.
 

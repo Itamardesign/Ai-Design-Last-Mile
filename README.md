@@ -98,12 +98,15 @@ That's the whole install. If the button doesn't appear, see [Troubleshooting](#t
 
 - **Click any element** to select it — including elements nested inside other elements.
 - **See where the page leaves your system** — the radar button in the header outlines every value
-  that is not a token, and snaps the near misses onto it in one click.
+  that is not a token, and snaps the near misses onto it in one click, with an undo for the whole
+  gesture.
 - **Edit** its content, typography, fill and layout from the panel on the right.
 - **Preview** the page at real device sizes from the *Device preview* section.
 - **Check accessibility** — contrast, touch targets, readable type, focus states.
-- **Leave notes on the page** — pinned to the element, numbered, readable on hover, resolvable, and
-  signed with your name. Pins stay visible with the panel closed and inside the device preview.
+- **Leave notes on the page** — pinned to the element, numbered, readable on hover, and answerable
+  in place. Resolve rather than delete, sign them with your name, and they stay visible with the
+  panel closed and inside the device preview. A note remembers what its element looked like, so it
+  finds it again when the markup changes underneath it.
 - **Copy your changes** from *Designer changes* at the bottom: CSS, or written instructions.
 - **`Esc`** deselects the current element; press it again to close the inspector.
 

@@ -1835,3 +1835,50 @@
 .hi-system-chip > i { width: 6px; height: 6px; flex: none; border-radius: 999px; background: var(--hi-faint); }
 .hi-system-chip.is-connected { color: #0d6b36; border-color: rgba(18, 161, 80, .3); background: rgba(18, 161, 80, .08); }
 .hi-system-chip.is-connected > i { background: #12a150; box-shadow: 0 0 0 3px rgba(18, 161, 80, .18); }
+
+/* --- confirmation with a way out ------------------------------------------ */
+.hi-toast {
+  position: fixed; bottom: 92px; left: 50%; z-index: 2147483100; display: flex;
+  padding: 9px 9px 9px 13px; align-items: center; gap: 9px; transform: translateX(-50%);
+  border-radius: 12px; color: #fff; background: #27212d;
+  font-size: 11.5px; font-weight: 500; box-shadow: 0 16px 40px rgba(31, 33, 68, .38);
+  pointer-events: auto; animation: hi-toast-in .24s cubic-bezier(.2, .9, .3, 1.3) both;
+}
+.hi-toast > svg { color: #4ade80; }
+.hi-toast > span { white-space: nowrap; }
+.hi-toast button {
+  display: inline-flex; min-height: 26px; padding: 0 10px; align-items: center; gap: 5px;
+  border: 1px solid rgba(255, 255, 255, .22); border-radius: 8px; color: #fff;
+  background: rgba(255, 255, 255, .1); font: inherit; font-size: 11px; font-weight: 600; cursor: pointer;
+}
+.hi-toast button:hover { background: rgba(255, 255, 255, .2); }
+.hi-toast .hi-toast-close { min-height: 24px; padding: 0 6px; border-color: transparent; background: transparent; opacity: .65; }
+.hi-toast .hi-toast-close:hover { opacity: 1; background: rgba(255, 255, 255, .12); }
+
+@keyframes hi-toast-in {
+  from { opacity: 0; transform: translate(-50%, 12px) scale(.96); }
+  to { opacity: 1; transform: translate(-50%, 0) scale(1); }
+}
+
+/* The X-ray owns the bottom of the screen while it is open, so the toast sits above it. */
+.hi-xray-legend small.is-capped { display: flex; align-items: center; gap: 4px; color: #b45309; }
+
+/* --- replying where you are reading --------------------------------------- */
+.hi-comment-bubble-composer { display: grid; padding: 8px; gap: 6px; border-top: 1px solid var(--hi-border); }
+.hi-comment-bubble-composer textarea {
+  padding: 7px 8px; border: 1px solid var(--hi-border); border-radius: 8px;
+  color: var(--hi-text); background: rgba(255, 255, 255, .8); font: inherit; font-size: 11.5px;
+  line-height: 1.45; resize: vertical;
+}
+.hi-comment-bubble-composer textarea:focus {
+  border-color: var(--hi-accent); outline: 0; box-shadow: 0 0 0 2px rgba(139, 92, 246, .14);
+}
+.hi-comment-bubble-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+.hi-comment-bubble-actions button {
+  display: inline-flex; min-height: 26px; padding: 0 11px; align-items: center; gap: 5px;
+  border: 0; border-radius: 7px; color: #fff; background: var(--hi-accent, #7c3cff);
+  font: inherit; font-size: 11px; font-weight: 600; cursor: pointer;
+}
+.hi-comment-bubble-actions button:disabled { opacity: .4; cursor: default; }
+.hi-comment-bubble-actions .is-quiet { margin-right: auto; color: var(--hi-muted); background: transparent; }
+.hi-comment-bubble-actions .is-quiet:hover { color: var(--hi-accent); background: rgba(139, 92, 246, .1); }
