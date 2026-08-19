@@ -7,6 +7,17 @@
     <style>
       body { width: 320px; padding: 14px; }
       .site { padding: 7px 9px; border: 1px solid var(--tool-border); border-radius: 8px; background: #fff; }
+      /* The account row: an avatar, one line about it, and whatever there is to do about it. */
+      .account { padding: 8px 9px; border: 1px solid var(--tool-border); border-radius: 8px; background: #fff; gap: 8px; }
+      .account img, .account .avatar {
+        width: 26px; height: 26px; flex: none; border-radius: 50%;
+        background: var(--tool-accent-soft); color: #6d31d8;
+        display: inline-flex; align-items: center; justify-content: center;
+        font-size: 11px; font-weight: 700;
+      }
+      .account .lines { min-width: 0; }
+      .account .lines strong { display: block; font-size: 11.5px; }
+      .account button { flex: none; }
       .shortcut kbd {
         padding: 1px 5px;
         border: 1px solid var(--tool-border-strong);
@@ -74,6 +85,24 @@
         <p class="faint shortcut" style="font-size: 10.5px">
           Toggle anywhere with <kbd id="shortcut">Alt</kbd> <kbd>Shift</kbd> <kbd>D</kbd>
         </p>
+      </div>
+
+      <!--
+        Signing in from the popup, not only from the settings page. Deliberately outside `#controls`:
+        that block is hidden on pages Chrome will not let us inspect, and whether you have an account
+        has nothing to do with which tab you happen to be on.
+
+        The Google chooser is a native window and opening it closes this popup — which is fine, because
+        the service worker owns the exchange and outlives the popup. Reopening shows how it ended.
+      -->
+      <div class="account row" id="account-row">
+        <span class="avatar" id="account-avatar">?</span>
+        <span class="lines grow truncate">
+          <strong id="account-title">Checking…</strong>
+          <span class="faint" id="account-detail" style="font-size: 10px"></span>
+        </span>
+        <button class="ghost hidden" id="account-skip">Skip</button>
+        <button class="primary hidden" id="account-signin">Sign in</button>
       </div>
     </div>
     <script src="popup.js"></script>

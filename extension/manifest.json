@@ -20,7 +20,7 @@
     "declarativeNetRequestWithHostAccess"
   ],
   "oauth2": {
-    "client_id": "REPLACE_ME.apps.googleusercontent.com",
+    "client_id": "328403266454-easgn1aie4nm9faolqp0s4p0iokaiej1.apps.googleusercontent.com",
     "scopes": ["openid", "email", "profile"]
   },
   "host_permissions": ["<all_urls>"],

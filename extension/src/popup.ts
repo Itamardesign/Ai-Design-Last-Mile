@@ -5,6 +5,7 @@
 import { DETECT, readSettings } from './storage.js';
 import { notesAsMarkdown, openNoteCount, readAllNotes, type NotePage } from './notes.js';
 import type { PopupRequest, TabState } from './messages.js';
+import type { Account } from './account.js';
 
 const el = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
 
@@ -19,6 +20,11 @@ const swatches = el<HTMLDivElement>('system-swatches');
 const autoToggle = el<HTMLInputElement>('auto');
 const controls = el<HTMLDivElement>('controls');
 const unsupported = el<HTMLDivElement>('unsupported');
+const accountAvatar = el<HTMLSpanElement>('account-avatar');
+const accountTitle = el<HTMLElement>('account-title');
+const accountDetail = el<HTMLSpanElement>('account-detail');
+const accountSignIn = el<HTMLButtonElement>('account-signin');
+const accountSkip = el<HTMLButtonElement>('account-skip');
 
 const ask = <T,>(request: PopupRequest): Promise<T> => chrome.runtime.sendMessage(request) as Promise<T>;
 
@@ -53,6 +59,64 @@ async function paintNotes(tab: chrome.tabs.Tab | undefined): Promise<void> {
     window.setTimeout(() => { copy.textContent = 'Copy review'; }, 1200);
   };
 }
+
+/**
+ * The account, in one row.
+ *
+ * The settings page is where an account is managed; this is where it is *noticed*. Somebody who never
+ * opens the settings page should still find out that their work can follow them, and be one click from
+ * saying yes or no to it.
+ *
+ * Signing out is deliberately not here: it is rare, it is not reversible by accident, and a row this
+ * small should not carry a button whose worst case is a designer wondering where their sync went.
+ */
+async function paintAccount(): Promise<void> {
+  const account = await ask<Account | undefined>({ type: 'account' });
+  const mode = account?.mode ?? 'undecided';
+
+  accountSignIn.classList.toggle('hidden', mode === 'cloud' && !account?.error);
+  accountSkip.classList.toggle('hidden', mode !== 'undecided');
+
+  if (mode === 'cloud' && account?.profile) {
+    const name = account.profile.name || account.profile.email || 'Signed in';
+    accountTitle.textContent = name;
+    accountDetail.textContent = account.error ?? (account.syncedAt ? 'Everything is saved to your account' : 'Syncing to your account');
+    accountSignIn.textContent = 'Retry';
+    // The Google avatar, when there is one, and the initial when there is not.
+    if (account.profile.photo) {
+      const image = document.createElement('img');
+      image.src = account.profile.photo;
+      image.alt = '';
+      accountAvatar.replaceWith(image);
+      image.id = 'account-avatar';
+    } else {
+      accountAvatar.textContent = name.slice(0, 1).toUpperCase();
+    }
+    return;
+  }
+
+  accountAvatar.textContent = mode === 'local' ? '·' : '?';
+  accountTitle.textContent = mode === 'local' ? 'This machine only' : 'Not signed in';
+  accountDetail.textContent = account?.error ?? (mode === 'local'
+    ? 'Your notes and edits stay here'
+    : 'Sign in to keep your notes across machines');
+  accountSignIn.textContent = 'Sign in';
+}
+
+accountSignIn.addEventListener('click', async () => {
+  accountSignIn.disabled = true;
+  accountTitle.textContent = 'Opening Google…';
+  // The chooser is a native window and closing this popup does not stop it: the worker owns the
+  // exchange, so reopening the popup shows however it ended.
+  await ask({ type: 'account:signIn' });
+  accountSignIn.disabled = false;
+  await paintAccount();
+});
+
+accountSkip.addEventListener('click', async () => {
+  await ask({ type: 'account:skip' });
+  await paintAccount();
+});
 
 async function currentTab(): Promise<chrome.tabs.Tab | undefined> {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -117,6 +181,9 @@ function paint(state: TabState): void {
 }
 
 async function refresh(): Promise<void> {
+  // The account first, and outside the early return below: a popup opened on a chrome:// tab can do
+  // nothing about that page, but it can still sign you in.
+  await paintAccount();
   const tab = await currentTab();
   if (!tab?.id) return;
   paint(await ask<TabState>({ type: 'state', tabId: tab.id }));
