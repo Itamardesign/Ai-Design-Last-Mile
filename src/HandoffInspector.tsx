@@ -189,7 +189,53 @@ const LENGTH_PROPERTIES = new Set([
   'margin-top', 'margin-right', 'margin-bottom', 'margin-left',
   'line-height', 'letter-spacing', 'top', 'right', 'bottom', 'left',
 ]);
-const FONT_SIZES = ['12px', '13px', '14px', '15px', '16px', '18px', '20px', '24px', '28px', '32px', '40px', '48px', '56px', '64px'];
+/**
+ * Sizes offered as a starting point — not a ceiling.
+ *
+ * These used to be the only sizes the panel would set, which quietly asserted that nothing on any
+ * page is larger than 64px. Hero type is. They are presets now; the field takes any number.
+ */
+const FONT_SIZES = ['12px', '13px', '14px', '15px', '16px', '18px', '20px', '24px', '28px', '32px', '40px', '48px', '56px', '64px', '80px', '96px', '128px'];
+
+/** Weights named as well as numbered: "600" is a number, "Semibold" is a decision. */
+const FONT_WEIGHTS = [
+  { value: '300', label: 'Light · 300' },
+  { value: '400', label: 'Regular · 400' },
+  { value: '500', label: 'Medium · 500' },
+  { value: '600', label: 'Semibold · 600' },
+  { value: '700', label: 'Bold · 700' },
+  { value: '800', label: 'Extrabold · 800' },
+  { value: '900', label: 'Black · 900' },
+];
+
+const BORDER_STYLES = ['solid', 'dashed', 'dotted', 'double', 'none'].map((value) => ({ value, label: value }));
+
+const DISPLAY_MODES = ['block', 'inline', 'inline-block', 'flex', 'grid', 'none'].map((value) => ({ value, label: value }));
+
+const FLEX_DIRECTIONS = [
+  { value: 'row', label: 'Row', hint: '→' },
+  { value: 'column', label: 'Column', hint: '↓' },
+  { value: 'row-reverse', label: 'Row reverse', hint: '←' },
+  { value: 'column-reverse', label: 'Column reverse', hint: '↑' },
+];
+
+const ALIGN_ITEMS = ['stretch', 'flex-start', 'center', 'flex-end', 'baseline'].map((value) => ({ value, label: value }));
+
+const JUSTIFY_CONTENT = ['flex-start', 'center', 'flex-end', 'space-between', 'space-around', 'space-evenly'].map((value) => ({ value, label: value }));
+
+/** The named elevations, plus whatever the element already has — opening the list must never lose it. */
+function shadowOptions(current: string) {
+  const named = [
+    { value: 'none', label: 'None' },
+    { value: '0 1px 2px rgba(0,0,0,.08)', label: 'Subtle' },
+    { value: '0 8px 24px rgba(23,18,87,.12)', label: 'Elevated' },
+    { value: '0 20px 50px rgba(23,18,87,.18)', label: 'Floating' },
+  ];
+  if (current && !named.some((option) => option.value === current)) {
+    named.push({ value: current, label: 'Current · custom' });
+  }
+  return named;
+}
 const STATE_CLASSES = ['active', 'selected', 'disabled', 'open', 'expanded', 'loading', 'error', 'success'];
 const TEXT_ALIGNMENTS = [
   { value: 'left', label: 'Align left', Icon: AlignLeft },
@@ -1273,6 +1319,170 @@ function NumberField({ label, value, onChange, min, max, step = 1, suffix = 'px'
 function BoxSidesField({ label, property, element, onChange }: { label: string; property: 'padding' | 'margin'; element: HTMLElement; onChange: (property: string, value: string) => void }) {
   const style = getComputedStyle(element);
   return <div className="hi-box-sides-control"><span>{label}</span><div>{SIDES.map((side) => <label key={side} title={`${property}-${side}`}><small>{side[0].toUpperCase()}</small><DraftNumberInput ariaLabel={`${label} ${side}`} value={style.getPropertyValue(`${property}-${side}`)} onCommit={(value) => onChange(`${property}-${side}`, value)} /><em>px</em></label>)}</div></div>;
+}
+
+/**
+ * Which way a menu should open.
+ *
+ * The panel scrolls, so a list opening downward from a field near its foot is a list nobody can
+ * read. Measured when it opens rather than assumed from position, because the panel can be docked
+ * either side, resized by the browser window, or scrolled between one opening and the next.
+ */
+function useMenuPlacement(open: boolean, anchor: { current: HTMLElement | null }, estimatedHeight = 240) {
+  const [up, setUp] = useState(false);
+
+  useEffect(() => {
+    if (!open || !anchor.current) return;
+    const rect = anchor.current.getBoundingClientRect();
+    const below = window.innerHeight - rect.bottom;
+    setUp(below < estimatedHeight && rect.top > below);
+  }, [open, anchor, estimatedHeight]);
+
+  return up;
+}
+
+/**
+ * A list you can pick from, built rather than borrowed.
+ *
+ * A native `<select>` renders its list in the operating system, outside the panel's world: it cannot
+ * be given the panel's type, spacing, blur or accent, it cannot show a check beside what is set, and
+ * on Windows it arrives as a grey box that belongs to 1998. Every dropdown in the panel is this
+ * instead — same trigger shape as the other fields, a floating card for the list, arrow keys and
+ * Enter and Escape where you would expect them.
+ */
+function SelectField({ label, value, options, onChange, compact, title }: {
+  label: string;
+  value: string;
+  options: Array<{ value: string; label: string; hint?: string }>;
+  onChange: (value: string) => void;
+  /** Narrow label column, for fields that sit two to a row. */
+  compact?: boolean;
+  title?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(0);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLDivElement | null>(null);
+  const openUp = useMenuPlacement(open, triggerRef, Math.min(264, options.length * 31 + 16));
+  const current = options.find((option) => option.value === value);
+
+  useEffect(() => {
+    if (!open) return;
+    setActive(Math.max(0, options.findIndex((option) => option.value === value)));
+    const onPointerDown = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener('pointerdown', onPointerDown, true);
+    return () => document.removeEventListener('pointerdown', onPointerDown, true);
+  }, [open, options, value]);
+
+  const choose = (next: string) => { onChange(next); setOpen(false); };
+
+  return <div className={`hi-control hi-select-field ${compact ? 'hi-compact-control' : ''}`} ref={rootRef} title={title}>
+    <span>{label}</span>
+    <div className="hi-select" ref={triggerRef}>
+      <button
+        type="button"
+        className={`hi-select-trigger ${open ? 'is-open' : ''}`}
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        aria-label={label}
+        onClick={() => setOpen((state) => !state)}
+        onKeyDown={(event) => {
+          if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+            event.preventDefault();
+            if (!open) { setOpen(true); return; }
+            setActive((index) => (index + (event.key === 'ArrowDown' ? 1 : options.length - 1)) % options.length);
+          }
+          if (open && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); choose(options[active].value); }
+          if (event.key === 'Escape' && open) { event.stopPropagation(); setOpen(false); }
+        }}
+      >
+        <span>{current?.label ?? value ?? '—'}</span>
+        <ChevronDown size={12} />
+      </button>
+      {open && <div className={`hi-select-menu ${openUp ? 'is-up' : ''}`} role="listbox" aria-label={label}>
+        {options.map((option, index) => <button
+          type="button"
+          key={option.value}
+          role="option"
+          aria-selected={option.value === value}
+          className={`${option.value === value ? 'is-active' : ''} ${index === active ? 'is-cursor' : ''}`}
+          onPointerEnter={() => setActive(index)}
+          onClick={() => choose(option.value)}
+        >
+          <Check size={12} />
+          <span>{option.label}</span>
+          {option.hint && <small>{option.hint}</small>}
+        </button>)}
+      </div>}
+    </div>
+  </div>;
+}
+
+/**
+ * A size you can type, drag, or pick — with no ceiling.
+ *
+ * This was a dropdown of fourteen sizes ending at 64px, which quietly decided that nothing on any
+ * page is ever bigger than that. A hero headline is. The value is now a real field: type 120, drag
+ * the label, or take one of the presets from the list, and the presets are a starting point rather
+ * than the whole of what is allowed.
+ */
+function SizeField({ label, value, presets, unit = 'px', min = 0, onChange, compact }: {
+  label: string;
+  value: string;
+  presets: string[];
+  unit?: string;
+  min?: number;
+  onChange: (value: string) => void;
+  compact?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const controlRef = useRef<HTMLDivElement | null>(null);
+  const openUp = useMenuPlacement(open, controlRef, Math.min(264, presets.length * 31 + 16));
+  const scrub = useScrub(value, 1, min, undefined, (next) => onChange(`${next}${unit}`));
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener('pointerdown', onPointerDown, true);
+    return () => document.removeEventListener('pointerdown', onPointerDown, true);
+  }, [open]);
+
+  return <div className={`hi-control hi-size-field ${compact ? 'hi-compact-control' : ''}`} ref={rootRef}>
+    <span className="hi-scrub-label" title="Drag to change · Shift ×10 · Alt ×0.1" {...scrub}>{label}</span>
+    <div className="hi-size-control" ref={controlRef}>
+      <div className="hi-number-field">
+        <DraftNumberInput ariaLabel={`${label} ${unit}`} value={value} min={min} onCommit={(next) => onChange(`${next}${unit}`)} />
+        <em>{unit}</em>
+      </div>
+      <button
+        type="button"
+        className={`hi-size-presets ${open ? 'is-open' : ''}`}
+        aria-label={`${label} presets`}
+        aria-expanded={open}
+        onClick={() => setOpen((state) => !state)}
+      ><ChevronDown size={12} /></button>
+      {open && <div className={`hi-select-menu hi-size-menu ${openUp ? 'is-up' : ''}`} role="listbox" aria-label={`${label} presets`}>
+        {presets.map((preset) => <button
+          type="button"
+          key={preset}
+          role="option"
+          aria-selected={preset === value}
+          className={preset === value ? 'is-active' : ''}
+          onClick={() => { onChange(preset); setOpen(false); }}
+        >
+          <Check size={12} />
+          <span>{preset}</span>
+          {/* Each preset shown at its own size: picking type from numbers alone is guesswork. */}
+          <small style={{ fontSize: `min(${preset}, 19px)` }}>Ag</small>
+        </button>)}
+      </div>}
+    </div>
+  </div>;
 }
 
 /**
@@ -4012,7 +4222,7 @@ function HandoffInspectorPanel() {
               {mode === 'design' && <>{['text', 'button', 'link', 'input'].includes(snapshot.kind) && <ToolSection title="Content" icon={Type}><label className="hi-control hi-control-stack"><span>{snapshot.kind === 'input' ? 'Value' : 'Text'}</span><DraftTextArea key={snapshot.uniquePath} ariaLabel={snapshot.kind === 'input' ? 'Value' : 'Text'} value={snapshot.rawText} onChange={applyText} /></label>{snapshot.hasMarkup && <p className="hi-empty-note hi-content-warning"><CircleAlert size={13} />This element wraps markup (line breaks, nested spans). Editing the text here replaces all of it with plain text.</p>}{snapshot.kind === 'link' && <label className="hi-control"><span>Link</span><input defaultValue={snapshot.attributes.href || ''} onBlur={(event) => applyAttribute('href', event.target.value)} /></label>}{snapshot.kind === 'input' && <><label className="hi-control"><span>Placeholder</span><input defaultValue={snapshot.attributes.placeholder || ''} onBlur={(event) => applyAttribute('placeholder', event.target.value)} /></label><label className="hi-control"><span>ARIA label</span><input defaultValue={snapshot.attributes['aria-label'] || ''} onBlur={(event) => applyAttribute('aria-label', event.target.value)} /></label></>}</ToolSection>}
               {['text', 'button', 'link', 'input'].includes(snapshot.kind) && <ToolSection title="Typography" icon={Type}>
                 <FontField label="Font" value={snapshot.styles['font-family']} projectFonts={pageFonts} onChange={(value) => applyStyle('font-family', value)} />
-                <div className="hi-control-pair"><label className="hi-control hi-compact-control"><span>Size</span><select value={snapshot.styles['font-size']} onChange={(event) => applyStyle('font-size', event.target.value)}>{FONT_SIZES.map((size) => <option key={size}>{size}</option>)}</select></label><label className="hi-control hi-compact-control"><span>Weight</span><select value={snapshot.styles['font-weight']} onChange={(event) => applyStyle('font-weight', event.target.value)}>{['300', '400', '500', '600', '700', '800', '900'].map((weight) => <option key={weight}>{weight}</option>)}</select></label></div>
+                <div className="hi-control-pair"><SizeField label="Size" compact value={snapshot.styles['font-size']} presets={FONT_SIZES} onChange={(value) => applyStyle('font-size', value)} /><SelectField label="Weight" compact value={String(cssNumber(snapshot.styles['font-weight'], 400))} options={FONT_WEIGHTS} onChange={(value) => applyStyle('font-weight', value)} /></div>
                 <div className="hi-control-pair"><NumberField label="Line" value={snapshot.styles['line-height']} onChange={(value) => applyStyle('line-height', value)} /><NumberField label="Track" value={snapshot.styles['letter-spacing']} step={0.1} onChange={(value) => applyStyle('letter-spacing', value)} /></div>
                 <div className="hi-segmented" aria-label="Text alignment">{TEXT_ALIGNMENTS.map(({ value, label, Icon }) => <button key={value} title={label} aria-label={label} className={snapshot.styles['text-align'] === value ? 'is-active' : ''} onClick={() => applyStyle('text-align', value)}><Icon size={14} /></button>)}</div>
                 <div className="hi-type-presets">{typePresets.map((recipe) => <button key={recipe.label} onClick={() => recipe.css.split(';').filter(Boolean).forEach((part) => { const [property, ...value] = part.split(':'); applyStyle(property.trim(), value.join(':').trim()); })}>{recipe.label}</button>)}</div>
@@ -4028,21 +4238,21 @@ function HandoffInspectorPanel() {
                     { id: 'stroke', label: 'Stroke', icon: Square, value: liveStyle?.borderColor ?? snapshot.styles.border, onChange: (value) => applyStyle('border-color', value) },
                   ]}
                 />
-                <div className="hi-control-pair"><NumberField label="Stroke" value={liveStyle?.borderWidth ?? 0} min={0} onChange={(value) => applyStyle('border-width', value)} /><label className="hi-control hi-compact-control"><span>Style</span><select value={liveStyle?.borderStyle ?? 'solid'} onChange={(event) => applyStyle('border-style', event.target.value)}><option>solid</option><option>dashed</option><option>dotted</option><option>double</option><option>none</option></select></label></div>
+                <div className="hi-control-pair"><NumberField label="Stroke" value={liveStyle?.borderWidth ?? 0} min={0} onChange={(value) => applyStyle('border-width', value)} /><SelectField label="Style" compact value={liveStyle?.borderStyle ?? 'solid'} options={BORDER_STYLES} onChange={(value) => applyStyle('border-style', value)} /></div>
                 <NumberField label="Corner radius" value={snapshot.styles['border-radius']} min={0} onChange={(value) => applyStyle('border-radius', value)} />
                 <NumberField label="Opacity" value={cssNumber(snapshot.styles.opacity, 1) * 100} min={0} max={100} suffix="%" onChange={(value) => applyStyle('opacity', String(Number(value) / 100))} />
               </ToolSection>
               <ToolSection title="Layout" icon={Layers3}>
-                <label className="hi-control"><span>Display</span><select value={snapshot.styles.display} onChange={(event) => applyStyle('display', event.target.value)}><option>block</option><option>inline</option><option>inline-block</option><option>flex</option><option>grid</option><option>none</option></select></label>
+                <SelectField label="Display" value={snapshot.styles.display} options={DISPLAY_MODES} onChange={(value) => applyStyle('display', value)} />
                 <div className="hi-control-pair"><NumberField label="W" value={snapshot.rect.width} onChange={(value) => applyStyle('width', value)} /><NumberField label="H" value={snapshot.rect.height} onChange={(value) => applyStyle('height', value)} /></div>
-                {snapshot.styles.display.includes('flex') && <><label className="hi-control"><span>Direction</span><select value={snapshot.styles['flex-direction']} onChange={(event) => applyStyle('flex-direction', event.target.value)}><option>row</option><option>column</option><option>row-reverse</option><option>column-reverse</option></select></label><label className="hi-control"><span>Align items</span><select value={snapshot.styles['align-items']} onChange={(event) => applyStyle('align-items', event.target.value)}><option>stretch</option><option>flex-start</option><option>center</option><option>flex-end</option><option>baseline</option></select></label><label className="hi-control"><span>Justify</span><select value={snapshot.styles['justify-content']} onChange={(event) => applyStyle('justify-content', event.target.value)}><option>flex-start</option><option>center</option><option>flex-end</option><option>space-between</option><option>space-around</option><option>space-evenly</option></select></label></>}
+                {snapshot.styles.display.includes('flex') && <><SelectField label="Direction" value={snapshot.styles['flex-direction']} options={FLEX_DIRECTIONS} onChange={(value) => applyStyle('flex-direction', value)} /><SelectField label="Align items" value={snapshot.styles['align-items']} options={ALIGN_ITEMS} onChange={(value) => applyStyle('align-items', value)} /><SelectField label="Justify" value={snapshot.styles['justify-content']} options={JUSTIFY_CONTENT} onChange={(value) => applyStyle('justify-content', value)} /></>}
                 <NumberField label="Gap" value={liveStyle?.gap ?? 0} onChange={(value) => applyStyle('gap', value)} />
                 <BoxSidesField label="Padding" property="padding" element={snapshot.element} onChange={applyStyle} />
                 <BoxSidesField label="Margin" property="margin" element={snapshot.element} onChange={applyStyle} />
                 <div className="hi-reorder"><button onClick={() => reorder(-1)}><ArrowLeft size={13} /><ArrowUp size={13} />Earlier</button><button onClick={() => reorder(1)}>Later<ArrowDown size={13} /><ArrowRight size={13} /></button></div>
               </ToolSection>
               <ToolSection title="Effects" icon={Sparkles} defaultOpen={false}>
-                <label className="hi-control"><span>Shadow</span><select value={snapshot.styles['box-shadow']} onChange={(event) => applyStyle('box-shadow', event.target.value)}><option value="none">None</option><option value="0 1px 2px rgba(0,0,0,.08)">Subtle</option><option value="0 8px 24px rgba(23,18,87,.12)">Elevated</option><option value="0 20px 50px rgba(23,18,87,.18)">Floating</option><option value={snapshot.styles['box-shadow']}>Current / custom</option></select></label>
+                <SelectField label="Shadow" value={snapshot.styles['box-shadow']} options={shadowOptions(snapshot.styles['box-shadow'])} onChange={(value) => applyStyle('box-shadow', value)} />
                 <label className="hi-control"><span>Filter</span><input value={snapshot.styles.filter} onChange={(event) => applyStyle('filter', event.target.value)} /></label>
                 <label className="hi-control"><span>Transform</span><input value={snapshot.styles.transform} onChange={(event) => applyStyle('transform', event.target.value)} /></label>
               </ToolSection></>}
