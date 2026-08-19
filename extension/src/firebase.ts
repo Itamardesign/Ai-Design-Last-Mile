@@ -1,7 +1,7 @@
 /**
- * The extension's Firebase connection.
+ * The extension's Firebase connection: the app, and the three services built on it.
  *
- * Three things about Firebase inside a Manifest V3 extension shape this file:
+ * Four things about Firebase inside a Manifest V3 extension shape this file:
  *
  * 1. The SDK is *bundled* by esbuild, never fetched. MV3 forbids remote code, so any approach that
  *    loads gtag.js or the compat scripts from a CDN is dead on arrival — which is also why
@@ -12,22 +12,20 @@
  *    `initializeApp` after a restart from throwing.
  * 3. Auth's default persistence reaches for `localStorage`, which a service worker does not have.
  *    `initializeAuth` with IndexedDB persistence and no popup/redirect resolver is the combination
- *    that works in every extension context — popup, options page and worker alike.
+ *    that works in every extension context — popup, options page and worker alike. It also means a
+ *    sign-in survives the worker being killed, which is the whole point of signing in.
+ * 4. Sign-in itself cannot use `signInWithPopup`: the redirect lands on a web origin an extension
+ *    does not have. Google's token comes from `chrome.identity` and is exchanged for a Firebase
+ *    credential — see account.ts.
  *
  * The `apiKey` is not a secret: a Firebase web key only identifies the project, and every request it
- * signs is still checked against Firestore security rules. Those rules are what actually protects
- * the data, so scope them to `request.auth.uid` before storing anything real.
+ * signs is still checked against security rules. The rules in `firebase/firestore.rules` and
+ * `firebase/storage.rules` are what actually protects the data.
  */
 import { getApp, getApps, initializeApp, type FirebaseApp } from 'firebase/app';
-import {
-  getAuth,
-  indexedDBLocalPersistence,
-  initializeAuth,
-  signInAnonymously,
-  type Auth,
-  type User,
-} from 'firebase/auth';
+import { getAuth, indexedDBLocalPersistence, initializeAuth, type Auth, type User } from 'firebase/auth';
 import { getFirestore, type Firestore } from 'firebase/firestore';
+import { getStorage, type FirebaseStorage } from 'firebase/storage';
 
 export const firebaseConfig = {
   apiKey: 'AIzaSyADi6OtFT5b4Tg1vSLtny1_STLnXHfuznY',
@@ -75,47 +73,34 @@ export function db(): Firestore {
   return firestoreInstance;
 }
 
-/**
- * Gets this install an identity, so Firestore rules have a `uid` to key on.
- *
- * Anonymous sign-in is the right shape for a devtool: nobody wants to make an account to inspect a
- * page, and the account can be upgraded to a real one later without losing its data. It has to be
- * switched on in the Firebase console (Authentication -> Sign-in method -> Anonymous); until it is,
- * this rejects with `auth/operation-not-allowed`.
- */
-export async function ensureSignedIn(): Promise<User> {
-  const auth = firebaseAuth();
-  if (auth.currentUser) return auth.currentUser;
-  // A sign-in restored from IndexedDB arrives asynchronously; wait for that before making a new one.
-  const restored = await new Promise<User | null>((resolve) => {
-    const stop = auth.onAuthStateChanged((user) => {
-      stop();
-      resolve(user);
-    });
-  });
-  if (restored) return restored;
-  const credential = await signInAnonymously(auth);
-  return credential.user;
+let storageInstance: FirebaseStorage | null = null;
+
+/** Cloud Storage, for the one thing Firestore cannot hold: the handoff screenshot. */
+export function storage(): FirebaseStorage {
+  storageInstance ??= getStorage(firebaseApp());
+  return storageInstance;
 }
 
-export type FirebaseStatus = {
-  projectId: string;
-  connected: boolean;
-  uid: string | null;
-  error: string | null;
-};
-
-/** What the options page shows: is this build actually talking to the project, and as whom. */
-export async function firebaseStatus(): Promise<FirebaseStatus> {
-  try {
-    const user = await ensureSignedIn();
-    return { projectId: firebaseConfig.projectId, connected: true, uid: user.uid, error: null };
-  } catch (error) {
-    return {
-      projectId: firebaseConfig.projectId,
-      connected: false,
-      uid: null,
-      error: (error as Error).message,
-    };
-  }
+/**
+ * The signed-in user, or null — waiting for a persisted session to be read back if it has not been.
+ *
+ * `auth.currentUser` is null for the first tick after a worker restart even when a sign-in is sitting
+ * in IndexedDB, so reading it directly would report "signed out" to anything that asked early. One
+ * `onAuthStateChanged` is the documented way to wait for that answer.
+ */
+export async function currentUser(): Promise<User | null> {
+  const auth = firebaseAuth();
+  if (auth.currentUser) return auth.currentUser;
+  return new Promise<User | null>((resolve) => {
+    const stop = auth.onAuthStateChanged(
+      (user) => {
+        stop();
+        resolve(user);
+      },
+      () => {
+        stop();
+        resolve(null);
+      },
+    );
+  });
 }

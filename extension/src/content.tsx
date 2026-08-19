@@ -15,6 +15,8 @@ import type { DesignTokens } from '../../src/types.js';
 import type { PageMessage } from './messages.js';
 import { loadGoogleFamilies } from './webfont.js';
 import { startNoteMirror } from './notes.js';
+import { startEditMirror } from './edits.js';
+import type { HandoffDocument } from './handoff.js';
 import { coachCss, showCoachMarks } from './coach.js';
 
 const HOST_TAG = 'meraki-design-inspector';
@@ -173,6 +175,10 @@ function ensureClipboard(): void {
   Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
 }
 
+type CloudHost = typeof window & {
+  __merakiInspectorCloud?: { save: (doc: HandoffDocument) => Promise<{ ok: boolean; error?: string }> };
+};
+
 function boot(): InspectorApi {
   ensureClipboard();
   // The panel is set in Inter; nearly no site has it installed, and the tool should not change
@@ -198,8 +204,52 @@ function boot(): InspectorApi {
     }
   };
 
-  // Notes are mirrored into extension storage, so a site clearing its own storage cannot take a
-  // review with it. The count rides on the toolbar icon.
+  /*
+   * The second capability, published the same way and for the same reason: keeping a handoff needs an
+   * account, which is the extension's business. Absent — rather than present and failing — when the
+   * designer chose to stay local, so the panel never offers to save somewhere that does not exist.
+   *
+   * Asked on every boot rather than cached, because the answer changes when somebody signs in or out
+   * in the settings page, and a stale "yes" here would be a button that reports an error for the rest
+   * of the session.
+   */
+  const publishCloud = (signedIn: boolean) => {
+    if (!signedIn) {
+      delete (window as CloudHost).__merakiInspectorCloud;
+      return;
+    }
+    (window as CloudHost).__merakiInspectorCloud = {
+      save: async (document: HandoffDocument) => {
+        try {
+          const answer = await chrome.runtime.sendMessage({ type: 'handoff:save', document });
+          return (answer as { ok: boolean; error?: string } | undefined) ?? { ok: false, error: 'No answer from the extension.' };
+        } catch (error) {
+          return { ok: false, error: (error as Error).message };
+        }
+      },
+    };
+  };
+
+  void (async () => {
+    try {
+      const account = await chrome.runtime.sendMessage({ type: 'account' });
+      publishCloud((account as { mode?: string } | undefined)?.mode === 'cloud');
+    } catch {
+      // The worker is between lives. The button stays absent for this mount, which is the honest
+      // answer: nothing could be saved right now anyway.
+    }
+  })();
+
+  // Signing in on the settings page has to reach a panel that is already open, or the button would be
+  // missing on every tab until each one was reloaded. The panel re-renders constantly as you select
+  // things, so it picks the capability up on its own once it is there.
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local' || !changes.account) return;
+    publishCloud((changes.account.newValue as { mode?: string } | undefined)?.mode === 'cloud');
+  });
+
+  // Notes and unfinished edits are mirrored into extension storage, so a site clearing its own storage
+  // cannot take a review or an edit pass with it. The note count rides on the toolbar icon.
   const mirror = startNoteMirror((open) => {
     void (async () => {
       try {
@@ -211,8 +261,12 @@ function boot(): InspectorApi {
     })();
   });
 
+  const editMirror = startEditMirror();
+
   return {
-    notesReady: mirror.ready,
+    // Both mirrors have to land before the panel mounts: it reads the notes and the restorable session
+    // as it opens, and a restore written a tick later would be found by nobody until the next reload.
+    notesReady: Promise.all([mirror.ready, editMirror.ready]).then((): void => undefined),
     shadow,
     setActive: (active) => controller.run((inner) => inner.setActive(active)),
     setTokens: (tokens) => controller.run((inner) => inner.setTokens(tokens)),

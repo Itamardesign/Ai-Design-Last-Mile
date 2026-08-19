@@ -17,6 +17,8 @@ import {
 } from './storage.js';
 import { normalizeDesignTokens } from './tokens.js';
 import { notesAsMarkdown, openNoteCount, readAllNotes, writeAllNotes, type NotePage } from './notes.js';
+import type { Account } from './account.js';
+import type { KeptHandoff } from './sync.js';
 
 const el = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
 
@@ -33,6 +35,9 @@ const autoEmpty = el<HTMLParagraphElement>('auto-empty');
 const relax = el<HTMLInputElement>('relax');
 const notesList = el<HTMLDivElement>('notes');
 const notesEmpty = el<HTMLParagraphElement>('notes-empty');
+const accountPanel = el<HTMLDivElement>('account');
+const handoffsList = el<HTMLDivElement>('handoffs');
+const handoffsEmpty = el<HTMLParagraphElement>('handoffs-empty');
 const tabPaste = el<HTMLButtonElement>('tab-paste');
 const tabUrl = el<HTMLButtonElement>('tab-url');
 
@@ -253,6 +258,164 @@ function render(): void {
  * Copying is markdown rather than a download: a review that needs a file opened is a review that
  * does not get read, and every tool a designer hands work to takes a paste.
  */
+/**
+ * The account panel: sign in, skip, or see what is syncing.
+ *
+ * Deliberately three lines and two buttons. The interesting decisions are all in account.ts; what is
+ * left here is making the state legible — including the awkward one, where the stored intent says
+ * "cloud" and Google has since revoked the token, which reads as signed in everywhere else and is a
+ * mirror that has silently stopped.
+ */
+async function renderAccount(): Promise<void> {
+  accountPanel.replaceChildren();
+
+  const card = document.createElement('div');
+  card.className = 'system';
+  const head = document.createElement('div');
+  head.className = 'between';
+
+  const title = document.createElement('div');
+  title.className = 'stack';
+  title.style.gap = '2px';
+  const heading = document.createElement('div');
+  heading.className = 'row';
+  const label = document.createElement('h3');
+  label.style.fontSize = '12.5px';
+  label.textContent = 'Checking…';
+  heading.append(label);
+  const meta = document.createElement('p');
+  meta.className = 'faint truncate';
+  const detail = document.createElement('p');
+  detail.className = 'faint';
+  title.append(heading, meta, detail);
+
+  const actions = document.createElement('div');
+  actions.className = 'row';
+  head.append(title, actions);
+  card.append(head);
+  accountPanel.append(card);
+
+  const account = (await chrome.runtime.sendMessage({ type: 'account' })) as Account | undefined;
+  if (!account) {
+    label.textContent = 'Unavailable';
+    detail.textContent = 'The extension’s service worker did not answer. Reload the extension and try again.';
+    return;
+  }
+
+  const signIn = (text: string) =>
+    button(text, 'primary', async () => {
+      label.textContent = 'Opening Google…';
+      actions.replaceChildren();
+      await chrome.runtime.sendMessage({ type: 'account:signIn' });
+      await renderAccount();
+      await renderHandoffs();
+      // Signing in merges the cloud copy into this machine, so what is on screen is now stale.
+      settings = await readSettings();
+      render();
+      await renderNotes();
+    });
+
+  if (account.mode === 'cloud' && account.profile) {
+    const pill = document.createElement('span');
+    pill.className = account.error ? 'pill warn' : 'pill on';
+    pill.textContent = account.error ? 'not syncing' : 'syncing';
+    label.textContent = account.profile.name || account.profile.email || 'Signed in';
+    heading.append(pill);
+    meta.textContent = account.profile.email ?? '';
+    detail.textContent = account.error
+      ? account.error
+      : account.syncedAt
+        ? `Notes, edits and handoffs last saved to your account ${new Date(account.syncedAt).toLocaleString()}.`
+        : 'Notes, edits and handoffs will be saved to your account as you work.';
+    if (account.error) actions.append(signIn('Sign in again'));
+    actions.append(
+      button('Sign out', 'ghost', async () => {
+        await chrome.runtime.sendMessage({ type: 'account:signOut' });
+        await renderAccount();
+        await renderHandoffs();
+      }, 'Stops syncing. Nothing on this machine is deleted.'),
+    );
+    return;
+  }
+
+  if (account.mode === 'local') {
+    label.textContent = 'This machine only';
+    meta.textContent = 'Nothing is sent anywhere.';
+    // A sign-in that failed leaves its reason on an account still in `local`, and saying nothing here
+    // would make the button look like it did nothing at all.
+    detail.textContent =
+      account.error ?? 'Your notes and edits are kept in extension storage, which survives a site clearing its own.';
+    if (account.error) {
+      const pill = document.createElement('span');
+      pill.className = 'pill warn';
+      pill.textContent = 'sign-in failed';
+      heading.append(pill);
+    }
+    actions.append(signIn('Sign in with Google'));
+    return;
+  }
+
+  label.textContent = 'Not signed in';
+  meta.textContent = 'Choose once — you can change it here whenever you like.';
+  detail.textContent = account.error ?? 'Sign in to keep your work across machines, or skip to keep it here.';
+  actions.append(
+    signIn('Sign in with Google'),
+    button('Skip', 'ghost', async () => {
+      await chrome.runtime.sendMessage({ type: 'account:skip' });
+      await renderAccount();
+    }, 'Skip — keep everything on this machine'),
+  );
+}
+
+/** The kept handoffs. Empty and silent when there is no account — there is nothing to have kept. */
+async function renderHandoffs(): Promise<void> {
+  handoffsList.replaceChildren();
+  const answer = (await chrome.runtime.sendMessage({ type: 'handoffs' })) as { handoffs?: KeptHandoff[] } | undefined;
+  const handoffs = answer?.handoffs ?? [];
+  handoffsEmpty.classList.toggle('hidden', handoffs.length > 0);
+
+  for (const handoff of handoffs) {
+    const card = document.createElement('div');
+    card.className = 'system';
+
+    const head = document.createElement('div');
+    head.className = 'between';
+    const title = document.createElement('div');
+    title.className = 'stack';
+    title.style.gap = '2px';
+
+    const label = document.createElement('h3');
+    label.style.fontSize = '12.5px';
+    label.textContent = handoff.title || handoff.url;
+
+    const meta = document.createElement('p');
+    meta.className = 'faint mono truncate';
+    meta.textContent = handoff.url;
+
+    const when = document.createElement('p');
+    when.className = 'faint';
+    const by = handoff.author ? `${handoff.author} · ` : '';
+    when.textContent = `${by}${handoff.changeCount} change${handoff.changeCount === 1 ? '' : 's'} · ${handoff.noteCount} note${handoff.noteCount === 1 ? '' : 's'} · ${handoff.issueCount} a11y · ${new Date(handoff.savedAt).toLocaleString()}`;
+
+    title.append(label, meta, when);
+
+    const actions = document.createElement('div');
+    actions.className = 'row';
+    actions.append(
+      button('Copy markdown', 'ghost', () => void navigator.clipboard.writeText(handoff.markdown)),
+      button('Open page', 'ghost', () => void chrome.tabs.create({ url: handoff.url })),
+    );
+    if (handoff.screenshotUrl) {
+      const shot = handoff.screenshotUrl;
+      actions.append(button('Screenshot', 'ghost', () => void chrome.tabs.create({ url: shot })));
+    }
+
+    head.append(title, actions);
+    card.append(head);
+    handoffsList.append(card);
+  }
+}
+
 async function renderNotes(): Promise<void> {
   const pages = await readAllNotes();
   const entries = Object.entries(pages).sort(([, a], [, b]) => b.savedAt - a.savedAt);
@@ -434,9 +597,14 @@ void (async () => {
   settings = await readSettings();
   render();
   await renderNotes();
+  await renderAccount();
+  await renderHandoffs();
 })();
 
 // Notes arrive while the page is open — a review happening in another tab should show up here.
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes.notes) void renderNotes();
+  // The mirror stamps `syncedAt` on the account as it pushes, so the “last saved” line stays
+  // true while this page is open in another tab.
+  if (area === 'local' && changes.account) void renderAccount();
 });

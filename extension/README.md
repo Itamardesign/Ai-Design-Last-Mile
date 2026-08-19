@@ -278,9 +278,11 @@ changes to the service worker or the content script.
 npm run test:extension
 ```
 
-Builds, then runs the token-format tests, the note-mirror tests (restore after a site clears its
-storage, open counts, markdown export) and the service-worker tests (injection, re-injection after a
-navigation, header rules, per-site tokens).
+Builds, then runs five suites: the token formats, the note mirror (restore after a site clears its
+storage, open counts, markdown export), the edits mirror (the same, for an unfinished style pass), the
+merge rules (a local review is never lost to an empty cloud, notes from two machines are both kept),
+and the service worker (injection, re-injection after a navigation, header rules, per-site tokens, and
+the account — skip is remembered, and nothing reaches for a Google token unless asked).
 
 There is also a harness page for looking at the panel without installing anything — a deliberately
 hostile host page with its own resets, fonts and `!important` rules:
@@ -290,7 +292,9 @@ node extension/test/server.mjs
 ```
 
 Then open `http://localhost:5177/` and press **inspector: on**. `/preview/options` and
-`/preview/popup` render the extension's own two pages against a fake `chrome`.
+`/preview/popup` render the extension's own two pages against a fake `chrome` — including the account
+panel, where **Skip** genuinely works and **Sign in with Google** reports what a page with no
+`chrome.identity` can do about it.
 
 ### How it is put together
 
@@ -303,6 +307,11 @@ Then open `http://localhost:5177/` and press **inspector: on**. `/preview/option
 | `src/popup.*`, `src/options.*` | The extension's own two pages |
 | `src/webfont.ts` | Loads webfonts as bytes, so a strict site's CSP cannot block previews |
 | `src/notes.ts` | Mirrors review notes into extension storage, counts open ones, exports markdown |
+| `src/edits.ts` | The same, for an unfinished style pass |
+| `src/account.ts` | Signed in with Google, staying local, or not asked yet — and the Google token dance |
+| `src/firebase.ts` | The app, auth, Firestore and Storage, wired for a service worker |
+| `src/sync.ts` | What leaves the machine and when: notes, edits, kept handoffs |
+| `src/merge.ts` | How two copies of a review are reconciled. No network, so it is all testable |
 | `src/coach.ts` | The one-time "the inspector is on" card shown on first activation |
 | `build.mjs` | esbuild bundle; compiles `../src` directly, so component and extension never drift |
 

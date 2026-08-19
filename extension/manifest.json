@@ -16,8 +16,13 @@
     "storage",
     "scripting",
     "tabs",
+    "identity",
     "declarativeNetRequestWithHostAccess"
   ],
+  "oauth2": {
+    "client_id": "REPLACE_ME.apps.googleusercontent.com",
+    "scopes": ["openid", "email", "profile"]
+  },
   "host_permissions": ["<all_urls>"],
   "commands": {
     "toggle-inspector": {

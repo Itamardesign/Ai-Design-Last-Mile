@@ -28,8 +28,35 @@ const TYPES = {
  * system appear.
  */
 const CHROME_SHIM = `<script>
-  const store = { settings: undefined };
+  const store = { settings: undefined, account: { mode: 'undecided', profile: null } };
   const noop = async () => undefined;
+  const tabState = (active) => ({
+    tabId: 1,
+    origin: 'https://example.com',
+    active,
+    systemName: null,
+    systemId: '__detect__',
+    autoStart: false,
+    relaxCsp: true,
+  });
+  /*
+   * The account, as far as a browser tab can model it.
+   *
+   * Skip is the whole flow and works here. Signing in cannot: it needs chrome.identity and a real
+   * OAuth client, so it answers with the same message a build that has not been set up yet would give
+   * — which is the state most people looking at this page will actually be in.
+   */
+  const account = async (message) => {
+    if (message.type === 'account:skip') store.account = { mode: 'local', profile: null };
+    if (message.type === 'account:signOut') store.account = { mode: 'local', profile: null };
+    if (message.type === 'account:signIn') {
+      store.account = {
+        ...store.account,
+        error: 'Google sign-in needs the real extension: this preview has no chrome.identity.',
+      };
+    }
+    return store.account;
+  };
   window.chrome = {
     storage: {
       local: {
@@ -38,20 +65,14 @@ const CHROME_SHIM = `<script>
       },
       onChanged: { addListener: noop },
     },
-    tabs: { query: async () => [{ id: 1, url: 'https://example.com/pricing' }] },
+    tabs: { query: async () => [{ id: 1, url: 'https://example.com/pricing' }], create: noop },
     runtime: {
-      sendMessage: async (message) =>
-        message.type === 'state' || message.type === 'toggle'
-          ? {
-              tabId: 1,
-              origin: 'https://example.com',
-              active: message.type === 'toggle',
-              systemName: null,
-              systemId: '__detect__',
-              autoStart: false,
-              relaxCsp: true,
-            }
-          : { ok: true },
+      sendMessage: async (message) => {
+        if (message.type === 'state' || message.type === 'toggle') return tabState(message.type === 'toggle');
+        if (message.type.startsWith('account')) return account(message);
+        if (message.type === 'handoffs') return { handoffs: [] };
+        return { ok: true };
+      },
       openOptionsPage: noop,
     },
     commands: { getAll: async () => [{ name: 'toggle-inspector', shortcut: 'Alt+Shift+D' }] },

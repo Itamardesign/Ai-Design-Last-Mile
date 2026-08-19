@@ -16,7 +16,8 @@ import {
   writeSettings,
 } from './storage.js';
 import type { PageMessage, PopupRequest, TabState } from './messages.js';
-import { firebaseStatus } from './firebase.js';
+import type { StoredEdits } from './merge.js';
+import type { NotePage } from './notes.js';
 import type { DesignTokens } from '../../src/types.js';
 
 const ACTIVE_TABS_KEY = 'activeTabs';
@@ -254,11 +255,55 @@ chrome.runtime.onMessage.addListener((message: PopupRequest & { type: string }, 
         respond({ ok: true });
         return;
       }
-      case 'firebase':
-        // Signing in lives in the worker, not in the options page: one identity per install, and it
-        // survives the page being closed mid-handshake.
-        respond(await firebaseStatus());
+      /*
+       * The account, and everything that depends on it.
+       *
+       * All four of these live in the worker rather than in the page that asked, for one reason: there
+       * is one identity per install and one mirror pushing on its behalf, and both have to outlive the
+       * settings page being closed mid-handshake.
+       *
+       * `./account.js` and `./sync.js` are imported inside the cases, not at the top of the file,
+       * because the Firebase SDK does real work as it loads and the worker is started again for every
+       * navigation and every badge repaint — almost none of which have anything to do with the cloud.
+       * esbuild keeps the modules in this same bundle and only evaluates them on the first `await`.
+       */
+      case 'account': {
+        const { resolveAccount } = await import('./account.js');
+        respond(await resolveAccount());
         return;
+      }
+      case 'account:signIn': {
+        const { signInWithGoogle } = await import('./account.js');
+        const account = await signInWithGoogle();
+        // Merge straight away. Signing in and then finding your own machine's review missing until
+        // some later event would be the worst possible first impression of the feature.
+        if (account.mode === 'cloud' && !account.error) {
+          const { pullEverything } = await import('./sync.js');
+          await pullEverything().catch((): null => null);
+        }
+        respond(account);
+        return;
+      }
+      case 'account:skip': {
+        const { stayLocal } = await import('./account.js');
+        respond(await stayLocal());
+        return;
+      }
+      case 'account:signOut': {
+        const { signOutAccount } = await import('./account.js');
+        respond(await signOutAccount());
+        return;
+      }
+      case 'handoff:save': {
+        const { saveHandoff } = await import('./sync.js');
+        respond(await saveHandoff(message.document));
+        return;
+      }
+      case 'handoffs': {
+        const { listHandoffs } = await import('./sync.js');
+        respond({ handoffs: await listHandoffs() });
+        return;
+      }
       case 'reload':
         await chrome.tabs.reload(message.tabId);
         respond({ ok: true });
@@ -300,6 +345,88 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
   await setTabActive(tabId, false);
   await setHeaderRules(tabId, false);
 });
+
+/* ===========================================================================
+   The cloud mirror.
+
+   Extension storage is the source of truth and this only follows it, so every
+   feature works identically with the account signed out. Two problems shape the
+   code below.
+
+   A burst. One drag of a slider commits many edits, and each one rewrites the
+   same page — so pushes are coalesced on a short timer and the *oldest* baseline
+   in the burst is the one compared against, which is what makes the push send
+   one document instead of thirty.
+
+   Eviction. A service worker can be killed between the change and the flush,
+   taking the timer with it and losing the push silently. So the intent to push
+   is recorded in `chrome.storage.session` first and only cleared once the push
+   lands; a worker waking up with that flag still set pushes everything rather
+   than leaving a machine quietly out of date.
+   =========================================================================== */
+
+const DIRTY_KEY = 'syncDirty';
+const PUSH_DELAY = 1200;
+
+/** The oldest value seen since the last flush — the baseline a burst is diffed against. */
+let noteBaseline: Record<string, NotePage> | undefined;
+let editBaseline: Record<string, StoredEdits> | undefined;
+let flushTimer: ReturnType<typeof setTimeout> | undefined;
+
+async function flushMirror(): Promise<void> {
+  flushTimer = undefined;
+  const notesFrom = noteBaseline;
+  const editsFrom = editBaseline;
+  noteBaseline = undefined;
+  editBaseline = undefined;
+  if (!notesFrom && !editsFrom) return;
+
+  const { readAccount } = await import('./account.js');
+  if ((await readAccount()).mode !== 'cloud') {
+    await chrome.storage.session.remove(DIRTY_KEY);
+    return;
+  }
+
+  const sync = await import('./sync.js');
+  const stored = await chrome.storage.local.get(['notes', 'edits']);
+  try {
+    if (notesFrom) await sync.pushNotes(notesFrom, (stored.notes ?? {}) as Record<string, NotePage>);
+    if (editsFrom) await sync.pushEdits(editsFrom, (stored.edits ?? {}) as Record<string, StoredEdits>);
+    await chrome.storage.session.remove(DIRTY_KEY);
+  } catch {
+    // Offline, or rules refused the write. The dirty flag stays set, so the next change — or the next
+    // time this worker starts — sends everything. Nothing is lost locally either way.
+  }
+}
+
+function scheduleMirror(): void {
+  void chrome.storage.session.set({ [DIRTY_KEY]: true });
+  if (flushTimer !== undefined) clearTimeout(flushTimer);
+  flushTimer = setTimeout(() => void flushMirror(), PUSH_DELAY);
+}
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local') return;
+  if (!changes.notes && !changes.edits) return;
+  if (changes.notes) noteBaseline ??= (changes.notes.oldValue ?? {}) as Record<string, NotePage>;
+  if (changes.edits) editBaseline ??= (changes.edits.oldValue ?? {}) as Record<string, StoredEdits>;
+  scheduleMirror();
+});
+
+/**
+ * A push that was lost to eviction, sent now.
+ *
+ * Runs on every worker start, which is often — the storage read is two keys and the whole thing exits
+ * immediately unless a previous flush actually failed to land.
+ */
+void (async () => {
+  if (!(await chrome.storage.session.get(DIRTY_KEY))[DIRTY_KEY]) return;
+  // No baseline survived, so everything is compared against nothing and every page with content is
+  // re-sent. Wasteful once, correct always.
+  noteBaseline = {};
+  editBaseline = {};
+  await flushMirror();
+})();
 
 chrome.runtime.onInstalled.addListener(async (details) => {
   await writeSettings(await readSettings());

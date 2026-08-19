@@ -129,13 +129,27 @@
 
       <section class="card">
         <div class="section-head">
-          <h2>Cloud account</h2>
+          <h2>Your account</h2>
           <p class="muted">
-            This install signs in to the Firebase project anonymously, which is what gives your notes and
-            connected systems somewhere to live beyond this machine. No email, no password.
+            Sign in and your review notes, unfinished edits and kept handoffs follow you to any machine
+            you use. Skip and everything stays on this one — the tool works the same either way.
           </p>
         </div>
-        <div class="stack" id="firebase"></div>
+        <div class="stack" id="account"></div>
+      </section>
+
+      <section class="card">
+        <div class="section-head">
+          <h2>Kept handoffs</h2>
+          <p class="muted">
+            Handoffs you saved from the panel, newest first. Each one is the document as it read when you
+            handed it over, so a page that changed later cannot rewrite what you said about it.
+          </p>
+        </div>
+        <div class="stack" id="handoffs"></div>
+        <p class="faint hidden" id="handoffs-empty">
+          Nothing kept yet. Open the Handoff tab in the panel and choose “Save to my account”.
+        </p>
       </section>
 
       <section class="card">

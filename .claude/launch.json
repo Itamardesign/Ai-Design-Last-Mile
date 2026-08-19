@@ -5,7 +5,8 @@
       "name": "inspector-harness",
       "runtimeExecutable": "node",
       "runtimeArgs": ["extension/test/server.mjs"],
-      "port": 5177
+      "port": 5177,
+      "autoPort": true
     }
   ]
 }

@@ -39,7 +39,7 @@
     "dev:extension": "node extension/build.mjs --watch",
     "typecheck:extension": "tsc -p extension/tsconfig.json",
     "pack:extension": "node extension/build.mjs && node extension/zip.mjs",
-    "test:extension": "node extension/build.mjs && node extension/test/tokens.test.mjs && node extension/test/notes.test.mjs && node extension/test/background.test.mjs"
+    "test:extension": "node extension/build.mjs && node extension/test/tokens.test.mjs && node extension/test/notes.test.mjs && node extension/test/merge.test.mjs && node extension/test/edits.test.mjs && node extension/test/background.test.mjs"
   },
   "peerDependencies": {
     "react": ">=18",
