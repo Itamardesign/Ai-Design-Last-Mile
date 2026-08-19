@@ -1903,3 +1903,20 @@
 .hi-comment-bubble-actions button:disabled { opacity: .4; cursor: default; }
 .hi-comment-bubble-actions .is-quiet { margin-right: auto; color: var(--hi-muted); background: transparent; }
 .hi-comment-bubble-actions .is-quiet:hover { color: var(--hi-accent); background: rgba(139, 92, 246, .1); }
+
+/* --- drag a label to change its number ------------------------------------
+   The interaction every design tool has: grab the value and pull, watching the
+   page respond, instead of select-type-tab for a two-pixel adjustment. Styled to
+   stay quiet until the pointer is on it, so it adds no chrome to the panel. */
+.hi-control--scrub > .hi-scrub-label {
+  width: fit-content;
+  border-bottom: 1px dashed transparent;
+  cursor: ew-resize;
+  touch-action: none;
+  user-select: none;
+  transition: color .15s ease, border-color .15s ease;
+}
+.hi-control--scrub > .hi-scrub-label:hover {
+  border-bottom-color: rgba(124, 60, 255, .45);
+  color: var(--hi-accent, #7c3cff);
+}

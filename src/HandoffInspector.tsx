@@ -1209,8 +1209,65 @@ function DraftTextArea({ value, onChange, ariaLabel }: { key?: string; value: st
   />;
 }
 
+/**
+ * Drag the label to change the number.
+ *
+ * The one interaction every design tool has and every inspector-style panel forgets: you should be
+ * able to grab a value and pull it, watching the page respond, rather than select-type-tab for every
+ * two-pixel adjustment. Pointer capture keeps the drag alive outside the label, Shift moves in tens
+ * and Alt in tenths, and a plain click still puts the caret in the field.
+ */
+function useScrub(value: string | number, step: number, min: number | undefined, max: number | undefined, onChange: (value: string) => void) {
+  const state = useRef({ pointer: 0, start: 0, moved: false, dragging: false });
+
+  return {
+    onPointerDown: (event: ReactPointerEvent<HTMLElement>) => {
+      if (event.button !== 0) return;
+      state.current = { pointer: event.clientX, start: cssNumber(value), moved: false, dragging: true };
+      // Capture keeps the drag alive past the edge of a 60px label. It can refuse (a pointer that
+      // has already been released, a synthetic event), and a drag that works is worth more than a
+      // captured one — so the flag above, not the capture, is what says a drag is in progress.
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId);
+      } catch {
+        // Uncaptured: the drag still tracks while the pointer stays over the label.
+      }
+    },
+    onPointerMove: (event: ReactPointerEvent<HTMLElement>) => {
+      if (!state.current.dragging) return;
+      const travelled = event.clientX - state.current.pointer;
+      // Two pixels of travel per tick: fine enough to land on a value, fast enough to cross a range.
+      const ticks = Math.trunc(travelled / 2);
+      if (!ticks && !state.current.moved) return;
+      state.current.moved = true;
+      const scale = event.shiftKey ? 10 : event.altKey ? 0.1 : 1;
+      const raw = state.current.start + ticks * step * scale;
+      const clamped = Math.min(max ?? Number.POSITIVE_INFINITY, Math.max(min ?? Number.NEGATIVE_INFINITY, raw));
+      onChange(String(Math.round(clamped * 100) / 100));
+    },
+    onPointerUp: (event: ReactPointerEvent<HTMLElement>) => {
+      state.current.dragging = false;
+      try {
+        if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+      } catch {
+        // Nothing to release.
+      }
+      // A click that never moved belongs to the input, not to the drag.
+      if (!state.current.moved) (event.currentTarget.parentElement?.querySelector('input') as HTMLInputElement | null)?.focus();
+    },
+    onPointerCancel: () => { state.current.dragging = false; },
+  };
+}
+
 function NumberField({ label, value, onChange, min, max, step = 1, suffix = 'px' }: { label: string; value: string | number; onChange: (value: string) => void; min?: number; max?: number; step?: number; suffix?: string }) {
-  return <label className="hi-control"><span>{label}</span><div className="hi-number-field"><DraftNumberInput ariaLabel={`${label} ${suffix}`} value={value} min={min} max={max} step={step} onCommit={onChange} /><em>{suffix}</em></div></label>;
+  const scrub = useScrub(value, step, min, max, onChange);
+  return <label className="hi-control hi-control--scrub">
+    <span className="hi-scrub-label" title={`Drag to change · Shift ×10 · Alt ×0.1`} {...scrub}>{label}</span>
+    <div className="hi-number-field">
+      <DraftNumberInput ariaLabel={`${label} ${suffix}`} value={value} min={min} max={max} step={step} onCommit={onChange} />
+      <em>{suffix}</em>
+    </div>
+  </label>;
 }
 
 function BoxSidesField({ label, property, element, onChange }: { label: string; property: 'padding' | 'margin'; element: HTMLElement; onChange: (property: string, value: string) => void }) {
