@@ -55,6 +55,7 @@ import {
   X,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import {
   CUSTOM_DESIGN_TOKENS_STORAGE_KEY,
   defaultDeviceForKind,
@@ -1322,23 +1323,106 @@ function BoxSidesField({ label, property, element, onChange }: { label: string; 
 }
 
 /**
- * Which way a menu should open.
+ * Where to draw a menu so that it is fully visible.
  *
- * The panel scrolls, so a list opening downward from a field near its foot is a list nobody can
- * read. Measured when it opens rather than assumed from position, because the panel can be docked
- * either side, resized by the browser window, or scrolled between one opening and the next.
+ * Two problems, one answer. The panel body scrolls, and a list drawn inside a scrolling box is
+ * clipped by it — which is why these menus arrived cut in half. And a list opening downward from a
+ * field near the foot of the panel runs off the screen even when nothing clips it.
+ *
+ * So the menu is positioned in viewport coordinates, outside the scroll box's reach, measured from
+ * the trigger each time it opens and re-measured while the panel scrolls underneath it.
  */
-function useMenuPlacement(open: boolean, anchor: { current: HTMLElement | null }, estimatedHeight = 240) {
-  const [up, setUp] = useState(false);
+function useMenuAnchor(open: boolean, anchor: { current: HTMLElement | null }, estimatedHeight = 240) {
+  const [box, setBox] = useState<{ top: number; left: number; width: number; maxHeight: number } | null>(null);
 
   useEffect(() => {
-    if (!open || !anchor.current) return;
-    const rect = anchor.current.getBoundingClientRect();
-    const below = window.innerHeight - rect.bottom;
-    setUp(below < estimatedHeight && rect.top > below);
+    if (!open) { setBox(null); return; }
+
+    const place = () => {
+      const node = anchor.current;
+      if (!node) return;
+      const rect = node.getBoundingClientRect();
+      const gap = 6;
+      const below = window.innerHeight - rect.bottom - gap;
+      const above = rect.top - gap;
+      // Open downward unless the room is genuinely better upward.
+      const up = below < Math.min(estimatedHeight, 160) && above > below;
+      const maxHeight = Math.max(120, Math.min(estimatedHeight, up ? above : below));
+      setBox({
+        top: up ? Math.max(gap, rect.top - gap - maxHeight) : rect.bottom + gap,
+        left: rect.left,
+        width: rect.width,
+        maxHeight,
+      });
+    };
+
+    place();
+    // The panel scrolls under the menu, and the window can be resized with it open.
+    window.addEventListener('scroll', place, true);
+    window.addEventListener('resize', place);
+    return () => {
+      window.removeEventListener('scroll', place, true);
+      window.removeEventListener('resize', place);
+    };
   }, [open, anchor, estimatedHeight]);
 
-  return up;
+  return box;
+}
+
+/**
+ * Closes a menu when the next press lands somewhere else.
+ *
+ * `event.target` is the wrong thing to test here. The panel lives in a shadow root, and an event
+ * observed from `document` is retargeted to the shadow host — so a press *inside* the open menu
+ * looked, from the outside, exactly like a press somewhere else, and the menu closed before the
+ * click could land. That was the whole of "the dropdowns do nothing when pressed".
+ * `composedPath()` reports the real path through the shadow tree.
+ *
+ * Several elements count as "inside" because the menu is portalled away from its field.
+ */
+function useDismissOnOutsidePress(open: boolean, insides: Array<{ current: HTMLElement | null }>, onDismiss: () => void) {
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const path = event.composedPath();
+      if (insides.some((ref) => ref.current && path.includes(ref.current))) return;
+      onDismiss();
+    };
+    document.addEventListener('pointerdown', onPointerDown, true);
+    return () => document.removeEventListener('pointerdown', onPointerDown, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, onDismiss]);
+}
+
+/**
+ * Somewhere to draw a menu that the panel cannot clip or capture.
+ *
+ * The panel is glass: it has a `backdrop-filter` and an entrance `transform`, and either of those
+ * makes it the containing block for `position: fixed` descendants — so a menu inside it is measured
+ * against the panel, not the screen, and then cropped by the panel's own `overflow: hidden`. That is
+ * why the lists arrived cut off. The fix is not to fight the glass but to render outside it, in a
+ * plain container at the root of the inspector's shadow tree, where fixed means fixed.
+ */
+function usePortalTarget(source: { current: HTMLElement | null }, active: boolean): HTMLElement | null {
+  const [target, setTarget] = useState<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (!active) return;
+    const node = source.current;
+    if (!node) return;
+    const root = node.getRootNode() as ShadowRoot | Document;
+    const host = (root as ShadowRoot).querySelector?.('.hi-root') ?? (root as Document).body ?? null;
+    if (!host) return;
+    let layer = host.querySelector<HTMLElement>(':scope > .hi-menu-layer');
+    if (!layer) {
+      layer = host.ownerDocument.createElement('div');
+      layer.className = 'hi-menu-layer';
+      host.appendChild(layer);
+    }
+    setTarget(layer);
+  }, [source, active]);
+
+  return target;
 }
 
 /**
@@ -1363,18 +1447,16 @@ function SelectField({ label, value, options, onChange, compact, title }: {
   const [active, setActive] = useState(0);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLDivElement | null>(null);
-  const openUp = useMenuPlacement(open, triggerRef, Math.min(264, options.length * 31 + 16));
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const menuBox = useMenuAnchor(open, triggerRef, Math.min(264, options.length * 31 + 16));
+  const portal = usePortalTarget(triggerRef, open);
   const current = options.find((option) => option.value === value);
 
   useEffect(() => {
-    if (!open) return;
-    setActive(Math.max(0, options.findIndex((option) => option.value === value)));
-    const onPointerDown = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
-    };
-    document.addEventListener('pointerdown', onPointerDown, true);
-    return () => document.removeEventListener('pointerdown', onPointerDown, true);
+    if (open) setActive(Math.max(0, options.findIndex((option) => option.value === value)));
   }, [open, options, value]);
+
+  useDismissOnOutsidePress(open, [rootRef, menuRef], useCallback(() => setOpen(false), []));
 
   const choose = (next: string) => { onChange(next); setOpen(false); };
 
@@ -1401,7 +1483,13 @@ function SelectField({ label, value, options, onChange, compact, title }: {
         <span>{current?.label ?? value ?? '—'}</span>
         <ChevronDown size={12} />
       </button>
-      {open && <div className={`hi-select-menu ${openUp ? 'is-up' : ''}`} role="listbox" aria-label={label}>
+      {open && menuBox && portal && createPortal(<div
+        ref={menuRef}
+        className="hi-select-menu"
+        role="listbox"
+        aria-label={label}
+        style={{ top: menuBox.top, left: menuBox.left, width: menuBox.width, maxHeight: menuBox.maxHeight }}
+      >
         {options.map((option, index) => <button
           type="button"
           key={option.value}
@@ -1415,7 +1503,7 @@ function SelectField({ label, value, options, onChange, compact, title }: {
           <span>{option.label}</span>
           {option.hint && <small>{option.hint}</small>}
         </button>)}
-      </div>}
+      </div>, portal)}
     </div>
   </div>;
 }
@@ -1440,17 +1528,12 @@ function SizeField({ label, value, presets, unit = 'px', min = 0, onChange, comp
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const controlRef = useRef<HTMLDivElement | null>(null);
-  const openUp = useMenuPlacement(open, controlRef, Math.min(264, presets.length * 31 + 16));
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const menuBox = useMenuAnchor(open, controlRef, Math.min(264, presets.length * 31 + 16));
+  const portal = usePortalTarget(controlRef, open);
   const scrub = useScrub(value, 1, min, undefined, (next) => onChange(`${next}${unit}`));
 
-  useEffect(() => {
-    if (!open) return;
-    const onPointerDown = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
-    };
-    document.addEventListener('pointerdown', onPointerDown, true);
-    return () => document.removeEventListener('pointerdown', onPointerDown, true);
-  }, [open]);
+  useDismissOnOutsidePress(open, [rootRef, menuRef], useCallback(() => setOpen(false), []));
 
   return <div className={`hi-control hi-size-field ${compact ? 'hi-compact-control' : ''}`} ref={rootRef}>
     <span className="hi-scrub-label" title="Drag to change · Shift ×10 · Alt ×0.1" {...scrub}>{label}</span>
@@ -1466,7 +1549,13 @@ function SizeField({ label, value, presets, unit = 'px', min = 0, onChange, comp
         aria-expanded={open}
         onClick={() => setOpen((state) => !state)}
       ><ChevronDown size={12} /></button>
-      {open && <div className={`hi-select-menu hi-size-menu ${openUp ? 'is-up' : ''}`} role="listbox" aria-label={`${label} presets`}>
+      {open && menuBox && portal && createPortal(<div
+        ref={menuRef}
+        className="hi-select-menu hi-size-menu"
+        role="listbox"
+        aria-label={`${label} presets`}
+        style={{ top: menuBox.top, left: menuBox.left, width: Math.max(menuBox.width, 148), maxHeight: menuBox.maxHeight }}
+      >
         {presets.map((preset) => <button
           type="button"
           key={preset}
@@ -1480,7 +1569,7 @@ function SizeField({ label, value, presets, unit = 'px', min = 0, onChange, comp
           {/* Each preset shown at its own size: picking type from numbers alone is guesswork. */}
           <small style={{ fontSize: `min(${preset}, 19px)` }}>Ag</small>
         </button>)}
-      </div>}
+      </div>, portal)}
     </div>
   </div>;
 }
@@ -1496,33 +1585,37 @@ function SizeField({ label, value, presets, unit = 'px', min = 0, onChange, comp
 function FontField({ label, value, projectFonts, onChange }: { label: string; value: string; projectFonts: FontOption[]; onChange: (value: string) => void }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const pickerRef = useRef<HTMLDivElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const menuBox = useMenuAnchor(open, pickerRef, 320);
+  const portal = usePortalTarget(pickerRef, open);
   const groups = useMemo(() => buildFontGroups(projectFonts), [projectFonts]);
   const current = primaryFontFamily(value) || 'Inherited';
+
+  useDismissOnOutsidePress(open, [rootRef, menuRef], useCallback(() => setOpen(false), []));
 
   useEffect(() => {
     if (!open) return;
     // Only reaches the network once the user actually opens the list.
     ensureGoogleFontsLoaded();
-    const onPointerDown = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
-    };
     const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.stopPropagation(); setOpen(false); } };
-    document.addEventListener('pointerdown', onPointerDown, true);
     document.addEventListener('keydown', onKey, true);
-    return () => {
-      document.removeEventListener('pointerdown', onPointerDown, true);
-      document.removeEventListener('keydown', onKey, true);
-    };
+    return () => document.removeEventListener('keydown', onKey, true);
   }, [open]);
 
   return <div className="hi-control hi-font-field" ref={rootRef}>
     <span>{label}</span>
-    <div className="hi-font-picker">
+    <div className="hi-font-picker" ref={pickerRef}>
       <button type="button" className="hi-font-trigger" aria-expanded={open} aria-haspopup="listbox" onClick={() => setOpen((state) => !state)}>
         <span className="hi-font-current" style={{ fontFamily: value || undefined }}>{current}</span>
         <ChevronDown size={13} />
       </button>
-      {open && <div className="hi-font-menu" role="listbox">
+      {open && menuBox && portal && createPortal(<div
+        ref={menuRef}
+        className="hi-font-menu"
+        role="listbox"
+        style={{ top: menuBox.top, left: menuBox.left, width: Math.max(menuBox.width, 232), maxHeight: menuBox.maxHeight }}
+      >
         {groups.map((group) => <section key={group.id}>
           <header><strong>{group.label}</strong><small>{group.hint}</small></header>
           {group.fonts.map((font) => {
@@ -1541,7 +1634,7 @@ function FontField({ label, value, projectFonts, onChange }: { label: string; va
             </button>;
           })}
         </section>)}
-      </div>}
+      </div>, portal)}
     </div>
   </div>;
 }

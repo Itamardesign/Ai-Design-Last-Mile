@@ -1245,8 +1245,9 @@
 .hi-font-current { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 
 .hi-font-menu {
-  position: absolute; z-index: 40; top: calc(100% + 6px); right: 0; left: 0;
-  max-height: 310px; overflow-y: auto; padding: 6px;
+  /* Fixed, not absolute: the panel body scrolls, and a list drawn inside a scrolling box gets
+     clipped by it. Coordinates come from the trigger — see `useMenuAnchor`. */
+  position: fixed; z-index: 2147483645; overflow-y: auto; padding: 6px;
   border: 1px solid var(--hi-border-strong); border-radius: 13px;
   background: var(--hi-surface-strong, #fff);
   box-shadow: 0 18px 44px rgba(31, 33, 68, .18);
@@ -1966,13 +1967,10 @@
 
 /* The list: a card of its own, floating clear of the field. */
 .hi-select-menu {
-  position: absolute;
-  z-index: 30;
-  top: calc(100% + 6px);
-  right: 0;
-  left: 0;
+  /* Same reasoning as the font menu: positioned against the viewport so nothing clips it. */
+  position: fixed;
+  z-index: 2147483645;
   display: grid;
-  max-height: 264px;
   padding: 5px;
   overflow-y: auto;
   gap: 1px;
@@ -2029,9 +2027,14 @@
 }
 .hi-size-presets:hover { color: var(--hi-accent); border-color: var(--hi-border-strong); background: #fff; }
 .hi-size-presets.is-open { color: #fff; border-color: transparent; background: var(--hi-accent); }
-.hi-size-menu { left: auto; width: 148px; }
+.hi-size-menu button > span { font-variant-numeric: tabular-nums; }
 /* Every preset previewed at its own size — picking type from numbers alone is guesswork. */
 .hi-size-menu button > small { color: var(--hi-muted); font-size: 11px; line-height: 1; }
 
-/* A list with no room below it opens above the field instead. */
-.hi-select-menu.is-up { top: auto; bottom: calc(100% + 6px); }
+/* Width comes from the trigger; the preset list needs a floor of its own. */
+.hi-size-menu { min-width: 148px; }
+
+/* The layer menus are drawn in — outside the panel, where fixed positioning still means the
+   viewport. It must never intercept a pointer of its own; only the menus inside it do. */
+.hi-menu-layer { position: static; pointer-events: none; }
+.hi-menu-layer > * { pointer-events: auto; }
