@@ -44,6 +44,23 @@ a:hover { text-decoration: underline; }
 
 .brand { display: flex; align-items: center; gap: 8px; }
 
+/* The hub's table of contents: chips, so it reads as a set of places rather than a paragraph of links. */
+.hub-nav { display: flex; flex-wrap: wrap; gap: 6px; }
+.hub-nav a {
+  padding: 5px 10px;
+  border: 1px solid var(--tool-border);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--tool-muted);
+  font-size: 11px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: border-color .16s ease, color .16s ease;
+}
+.hub-nav a:hover { border-color: var(--tool-accent); color: var(--tool-accent); text-decoration: none; }
+/* Jumped-to sections must not land under the sticky heading, and must be findable when they do. */
+section[id] { scroll-margin-top: 14px; }
+
 .brand-mark {
   display: grid;
   width: 26px;

@@ -31,6 +31,8 @@ export type PopupRequest =
   | { type: 'handoffs' }
   /** Sent by the page: keep this handoff in the account. */
   | { type: 'handoff:save'; document: HandoffDocument }
+  /** Sent by the panel: open the settings page. A page cannot navigate to it on its own. */
+  | { type: 'openOptions' }
   /** Sent by the page, not the popup: how many notes on it are still open. */
   | { type: 'notes'; open: number }
   /** Sent by the page: photograph this tab for the handoff document. */

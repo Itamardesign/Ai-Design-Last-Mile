@@ -209,10 +209,13 @@ autoToggle.addEventListener('change', async () => {
   paint(await ask<TabState>({ type: 'setAutoStart', tabId: tab.id, autoStart: autoToggle.checked }));
 });
 
-el('options').addEventListener('click', () => {
-  void chrome.runtime.openOptionsPage();
-  window.close();
-});
+/** Two ways to the hub: the button that says so, and the account line the hub explains. */
+for (const id of ['options', 'account-open']) {
+  el(id).addEventListener('click', () => {
+    void chrome.runtime.openOptionsPage();
+    window.close();
+  });
+}
 
 el('reload').addEventListener('click', async () => {
   const tab = await currentTab();

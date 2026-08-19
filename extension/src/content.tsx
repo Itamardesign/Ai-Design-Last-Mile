@@ -179,6 +179,8 @@ type CloudHost = typeof window & {
   __merakiInspectorCloud?: { save: (doc: HandoffDocument) => Promise<{ ok: boolean; error?: string }> };
 };
 
+type HubHost = typeof window & { __merakiInspectorHub?: () => void };
+
 function boot(): InspectorApi {
   ensureClipboard();
   // The panel is set in Inter; nearly no site has it installed, and the tool should not change
@@ -247,6 +249,19 @@ function boot(): InspectorApi {
     if (area !== 'local' || !changes.account) return;
     publishCloud((changes.account.newValue as { mode?: string } | undefined)?.mode === 'cloud');
   });
+
+  /*
+   * The way back to the settings page.
+   *
+   * Everything a designer accumulates — connected systems, every page's notes, kept handoffs, the
+   * account — lives there, and the panel is where they are when they want it. A page cannot navigate
+   * to a `chrome-extension://` URL, so this asks the worker to open it.
+   */
+  (window as HubHost).__merakiInspectorHub = () => {
+    void chrome.runtime.sendMessage({ type: 'openOptions' }).catch(() => {
+      // The worker is between lives; the toolbar icon is still there.
+    });
+  };
 
   // Notes and unfinished edits are mirrored into extension storage, so a site clearing its own storage
   // cannot take a review or an edit pass with it. The note count rides on the toolbar icon.

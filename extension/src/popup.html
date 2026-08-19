@@ -17,6 +17,12 @@
       }
       .account .lines { min-width: 0; }
       .account .lines strong { display: block; font-size: 11.5px; }
+      /* A button that has to read as the line of text it wraps, because that is what it is. */
+      .as-text {
+        padding: 0; border: 0; background: none; font: inherit; color: inherit;
+        text-align: start; cursor: pointer;
+      }
+      .as-text:hover strong { color: var(--tool-accent); }
       .account button { flex: none; }
       .shortcut kbd {
         padding: 1px 5px;
@@ -78,7 +84,7 @@
         </label>
 
         <div class="between">
-          <button class="ghost" id="options">Manage design systems</button>
+          <button class="ghost" id="options" title="Design systems, every page's notes, kept handoffs and your account">Open your hub</button>
           <button class="ghost" id="reload" title="Reload with the inspector's network rules already in place">Reload page</button>
         </div>
 
@@ -97,10 +103,10 @@
       -->
       <div class="account row" id="account-row">
         <span class="avatar" id="account-avatar">?</span>
-        <span class="lines grow truncate">
+        <button class="lines grow truncate as-text" id="account-open" title="Open your hub">
           <strong id="account-title">Checking…</strong>
           <span class="faint" id="account-detail" style="font-size: 10px"></span>
-        </span>
+        </button>
         <button class="ghost hidden" id="account-skip">Skip</button>
         <button class="primary hidden" id="account-signin">Sign in</button>
       </div>

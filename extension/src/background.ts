@@ -304,6 +304,12 @@ chrome.runtime.onMessage.addListener((message: PopupRequest & { type: string }, 
         respond({ handoffs: await listHandoffs() });
         return;
       }
+      case 'openOptions':
+        // A `chrome-extension://` URL is not navigable from a page, so the panel asks for this rather
+        // than opening it itself.
+        await chrome.runtime.openOptionsPage();
+        respond({ ok: true });
+        return;
       case 'reload':
         await chrome.tabs.reload(message.tabId);
         respond({ ok: true });

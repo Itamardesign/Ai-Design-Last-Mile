@@ -135,6 +135,18 @@ from the popup — useful when the marketing site and the product are different 
 
 ---
 
+## The hub
+
+Everything the tool keeps for you lives on one page: the design systems you connect, where each one
+applies, every review you have left, the handoffs you kept, and your account. Three ways in —
+
+- the **gear in the panel header**, which is where you are when you want it;
+- **Open your hub** in the popup, or the account line above it;
+- right-click the toolbar icon → **Options**.
+
+It also opens itself once, on install. The page is one scroll with a row of jump links at the top,
+rather than five screens to click between.
+
 ## Your account, or not
 
 The extension asks once, on the settings page, and both answers are real answers:

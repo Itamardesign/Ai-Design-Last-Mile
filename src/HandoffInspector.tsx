@@ -42,6 +42,7 @@ import {
   RotateCcw,
   RotateCw,
   ScanSearch,
+  Settings,
   ShieldCheck,
   Smartphone,
   Sparkles,
@@ -1518,6 +1519,17 @@ type CloudHost = typeof window & {
 };
 
 const cloudAvailable = () => typeof window !== 'undefined' && typeof (window as CloudHost).__merakiInspectorCloud?.save === 'function';
+
+/**
+ * The third published capability: the way to wherever the host keeps everything else.
+ *
+ * In the extension that is the settings page — connected systems, every page's notes, kept handoffs,
+ * the account. An app rendering this component has its own settings screen and no need of ours, so the
+ * button is absent there rather than pointing somewhere that does not exist.
+ */
+type HubHost = typeof window & { __merakiInspectorHub?: () => void };
+
+const hubAvailable = () => typeof window !== 'undefined' && typeof (window as HubHost).__merakiInspectorHub === 'function';
 
 /**
  * A short name for an element, for the handoff report.
@@ -4449,7 +4461,7 @@ function HandoffInspectorPanel() {
               <button className={dock === 'left' ? 'is-active' : ''} aria-pressed={dock === 'left'} onClick={() => setDock('left')} title="Move panel to left"><PanelLeft size={15} /></button>
               <button className={dock === 'right' ? 'is-active' : ''} aria-pressed={dock === 'right'} onClick={() => setDock('right')} title="Move panel to right"><PanelRight size={15} /></button>
             </div>
-            <div className="hi-header-actions">{locked && <button onClick={unlock} title="Unlock"><Unlock size={15} /></button>}<button onClick={() => setOpen(false)} title="Close"><X size={15} /></button></div>
+            <div className="hi-header-actions">{locked && <button onClick={unlock} title="Unlock"><Unlock size={15} /></button>}{hubAvailable() && <button onClick={() => (window as HubHost).__merakiInspectorHub?.()} title="Your systems, notes, handoffs and account"><Settings size={15} /></button>}<button onClick={() => setOpen(false)} title="Close"><X size={15} /></button></div>
           </div>
         </header>
         {/* Only worth saying before anything is selected; afterwards the outline and the
