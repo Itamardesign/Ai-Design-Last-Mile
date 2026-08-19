@@ -13,6 +13,7 @@ import {
   ChevronDown,
   CircleAlert,
   Clipboard,
+  Cloud,
   Code2,
   Component,
   Crosshair,
@@ -37,7 +38,6 @@ import {
   PanelLeft,
   PanelRight,
   Plus,
-  Radar,
   RefreshCw,
   RotateCcw,
   RotateCw,
@@ -165,6 +165,8 @@ type DesignChange = {
   priorityBefore?: string;
   /** How many elements the edit landed on — one, or every variant of a component. */
   appliedTo?: number;
+  /** The screen this was decided at — see `ViewportContext`. */
+  viewport?: ViewportContext;
   kind: 'css' | 'content' | 'attribute' | 'asset' | 'layout' | 'state' | 'token';
   /** Handoff note explaining what a designer or developer has to do in the source of truth. */
   instruction?: string;
@@ -313,8 +315,15 @@ type StoredChange = {
 
 type StoredSession = { savedAt: string; variables: Array<[string, string]>; changes: StoredChange[] };
 
-/** What was there before one reversible edit — enough to put it back exactly, priority included. */
-type StyleReceipt = { element: HTMLElement; property: string; inlineBefore: string; priorityBefore: string };
+/**
+ * The screen a decision was made at.
+ *
+ * Without this, a note written while looking at the phone preview and an edit made on the desktop
+ * page arrive in the handoff looking identical — and "the padding is too tight" means different
+ * things at 390px and at 1440px. Recorded at the moment of the edit, because it cannot be recovered
+ * afterwards: the preview may since have been closed, rotated or switched to another device.
+ */
+type ViewportContext = { width: number; height: number; label: string };
 
 /**
  * The inspector only ever does anything in a browser, but the module still gets imported and
@@ -353,6 +362,8 @@ type PageComment = {
   createdAt: string;
   /** Who left it. Blank until someone signs their notes — see `readCommentAuthor`. */
   author?: string;
+  /** The screen it was written at — a remark about spacing means different things at 390px and 1440px. */
+  viewport?: ViewportContext;
   /** What the element looked like, for finding it again after the markup moves. Absent on older notes. */
   anchor?: CommentAnchor;
   /** Kept rather than deleted, so a review reads as a list of decisions rather than a list of gaps. */
@@ -539,6 +550,7 @@ function readStoredComments(): PageComment[] {
  * nobody is listening, which is the usual case.
  */
 const COMMENTS_CHANGE_EVENT = 'meraki-inspector-comments-change';
+const SESSION_CHANGE_EVENT = 'meraki-inspector-session-change';
 
 function writeStoredComments(comments: PageComment[]): void {
   if (!isBrowser) return;
@@ -551,6 +563,22 @@ function writeStoredComments(comments: PageComment[]): void {
     window.dispatchEvent(new CustomEvent(COMMENTS_CHANGE_EVENT, { detail: { comments } }));
   } catch {
     // Older engines without CustomEvent constructors: the notes are still saved.
+  }
+}
+
+/**
+ * The same announcement, for the unfinished session.
+ *
+ * `null` means the log went empty — everything was undone or reset — and a listener mirroring this
+ * has to hear that as clearly as it hears a save, or a page would keep offering to restore edits that
+ * no longer exist.
+ */
+function announceSession(session: StoredSession | null): void {
+  if (!isBrowser) return;
+  try {
+    window.dispatchEvent(new CustomEvent(SESSION_CHANGE_EVENT, { detail: { session } }));
+  } catch {
+    // Older engines without CustomEvent constructors: the session is still saved.
   }
 }
 
@@ -1465,6 +1493,46 @@ type CaptureHost = typeof window & { __merakiInspectorCapture?: () => Promise<st
 
 const captureAvailable = () => typeof window !== 'undefined' && typeof (window as CaptureHost).__merakiInspectorCapture === 'function';
 
+/**
+ * Keeping a handoff needs an account, which is the extension's business and not this component's.
+ *
+ * Published the same way as the screenshot capability, and for the same reason: the button appears
+ * where there is somewhere to save to, and is absent — not broken, not offering to sign anybody in —
+ * when the component is rendered by an app or by a designer who chose to stay local.
+ */
+export type HandoffDocument = {
+  url: string;
+  title: string;
+  author: string;
+  markdown: string;
+  css: string;
+  changeCount: number;
+  noteCount: number;
+  issueCount: number;
+  /** A PNG data URL, when one was captured. Uploaded separately; it is far too big for a document. */
+  screenshot: string | null;
+};
+
+type CloudHost = typeof window & {
+  __merakiInspectorCloud?: { save: (doc: HandoffDocument) => Promise<{ ok: boolean; error?: string }> };
+};
+
+const cloudAvailable = () => typeof window !== 'undefined' && typeof (window as CloudHost).__merakiInspectorCloud?.save === 'function';
+
+/**
+ * A short name for an element, for the handoff report.
+ *
+ * Cheaper on purpose than the panel's component-family lookup, which queries the whole document per
+ * element — this only has to be recognisable, not authoritative.
+ */
+function describeElement(element: HTMLElement): string {
+  const tag = element.tagName.toLowerCase();
+  const className = Array.from(element.classList).find((name) => name.length < 24 && !name.includes(':'));
+  if (className) return `${tag}.${className}`;
+  const role = element.getAttribute('role') ?? element.getAttribute('data-testid');
+  return role ? `${tag}[${role}]` : tag;
+}
+
 /* ===========================================================================
    The handoff report.
 
@@ -1483,6 +1551,8 @@ type HandoffGroup = {
   changes: HandoffChange[];
   notes: PageComment[];
   issues: AccessibilityFinding[];
+  /** The screens this element's work was decided at, narrowest first. */
+  viewports: string[];
 };
 
 type HandoffReport = {
@@ -1493,6 +1563,27 @@ type HandoffReport = {
   noteCount: number;
   issueCount: number;
 };
+
+/** "390px · iPhone 15", or just the width when it was the browser window. */
+function viewportLabel(viewport: ViewportContext | undefined): string | undefined {
+  if (!viewport) return undefined;
+  return viewport.label === 'Browser window' ? `${viewport.width}px` : `${viewport.width}px · ${viewport.label}`;
+}
+
+/**
+ * Every screen the work on one element was decided at.
+ *
+ * Worth stating on the group as well as the row: "this button was reviewed at 390 and at 1440" is
+ * the sentence a developer needs before they read a word of the detail.
+ */
+function viewportsFor(group: { changes: readonly DesignChange[]; notes: readonly PageComment[] }): string[] {
+  const seen = new Map<number, string>();
+  for (const entry of [...group.changes, ...group.notes]) {
+    const label = viewportLabel(entry.viewport);
+    if (entry.viewport && label) seen.set(entry.viewport.width, label);
+  }
+  return [...seen.entries()].sort((a, b) => a[0] - b[0]).map(([, label]) => label);
+}
 
 /** Which token, if any, a value is — so the handoff can say `brand/500` instead of only `#7C3CFF`. */
 function tokenNameFor(property: string, value: string, colorTokens: readonly BrandColorToken[], customTokens: readonly CustomDesignToken[]): string | undefined {
@@ -1518,7 +1609,14 @@ function mergedCss(groups: readonly HandoffGroup[]): string {
       const declarations = group.changes.filter((change) => change.kind === 'css');
       if (!declarations.length) return '';
       const body = declarations
-        .map((change) => `  ${change.property}: ${change.after}${change.forced ? ' !important' : ''};${change.token ? ` /* ${change.token} */` : ''}`)
+        .map((change) => {
+          // The annotation is a comment rather than a media query on purpose: the edit was applied to
+          // the element at every width, and inventing a breakpoint the designer never asked for
+          // would be the tool putting words in their mouth. It says where it was decided; the
+          // developer decides whether that makes it conditional.
+          const notes = [change.token, viewportLabel(change.viewport) && `at ${viewportLabel(change.viewport)}`].filter(Boolean).join(' · ');
+          return `  ${change.property}: ${change.after}${change.forced ? ' !important' : ''};${notes ? ` /* ${notes} */` : ''}`;
+        })
         .join('\n');
       return `${group.selector} {\n${body}\n}`;
     })
@@ -1544,12 +1642,14 @@ function handoffMarkdown(report: Omit<HandoffReport, 'markdown'>, extras: { url:
 
   for (const [index, group] of report.groups.entries()) {
     lines.push(`## ${index + 1}. ${group.label}`, '', `\`${group.selector}\``, '');
+    if (group.viewports.length) lines.push(`_Reviewed at ${group.viewports.join(', ')}_`, '');
 
     if (group.notes.length) {
       lines.push('**Notes**', '');
       for (const note of group.notes) {
         const who = note.author ? `${note.author}, ` : '';
-        lines.push(`- ${note.resolved ? '~~' : ''}${note.text}${note.resolved ? '~~' : ''} — _${who}${relativeTime(note.createdAt)}_${note.resolved ? ' (resolved)' : ''}`);
+        const at = viewportLabel(note.viewport);
+        lines.push(`- ${note.resolved ? '~~' : ''}${note.text}${note.resolved ? '~~' : ''} — _${who}${relativeTime(note.createdAt)}${at ? `, at ${at}` : ''}_${note.resolved ? ' (resolved)' : ''}`);
       }
       lines.push('');
     }
@@ -1559,7 +1659,8 @@ function handoffMarkdown(report: Omit<HandoffReport, 'markdown'>, extras: { url:
       for (const change of group.changes) {
         const scope = change.appliedTo && change.appliedTo > 1 ? ` · applied to ${change.appliedTo} matching elements` : '';
         const token = change.token ? ` — token \`${change.token}\`` : '';
-        lines.push(`- \`${change.property}\`: ${change.before || '—'} → **${change.after}**${token}${scope}`);
+        const at = viewportLabel(change.viewport);
+        lines.push(`- \`${change.property}\`: ${change.before || '—'} → **${change.after}**${token}${at ? ` · decided at ${at}` : ''}${scope}`);
         if (change.instruction) lines.push(`  - ${change.instruction}`);
       }
       lines.push('');
@@ -1599,7 +1700,7 @@ function buildHandoff(
   const groupFor = (element: HTMLElement, selector: string, label: string) => {
     const existing = groups.get(element);
     if (existing) return existing;
-    const created: HandoffGroup = { element, selector, label, changes: [], notes: [], issues: [] };
+    const created: HandoffGroup = { element, selector, label, changes: [], notes: [], issues: [], viewports: [] };
     groups.set(element, created);
     return created;
   };
@@ -1626,6 +1727,8 @@ function buildHandoff(
       // An element that cannot be measured contributes no findings rather than breaking the report.
     }
   }
+
+  for (const group of groups.values()) group.viewports = viewportsFor(group);
 
   const ordered = [...groups.values()];
   const partial: Omit<HandoffReport, 'markdown'> = {
@@ -1658,6 +1761,33 @@ function HandoffTab({ report, author, onSelect, onUndoChange, onToggleResolved, 
 }) {
   const [shot, setShot] = useState<string | null>(null);
   const [capturing, setCapturing] = useState(false);
+  const [keeping, setKeeping] = useState(false);
+  const [kept, setKept] = useState<string | null>(null);
+
+  const keep = async () => {
+    setKeeping(true);
+    setKept(null);
+    try {
+      const answer = await (window as CloudHost).__merakiInspectorCloud?.save({
+        url: window.location.href,
+        title: document.title,
+        author,
+        markdown: report.markdown,
+        css: report.css,
+        changeCount: report.changeCount,
+        noteCount: report.noteCount,
+        issueCount: report.issueCount,
+        // Whatever is on screen goes with it: a handoff read next week is far more use with the
+        // picture of what was being handed over than without it.
+        screenshot: shot,
+      });
+      setKept(answer?.ok ? 'Saved to your account.' : (answer?.error ?? 'Could not save.'));
+    } catch (error) {
+      setKept((error as Error).message);
+    } finally {
+      setKeeping(false);
+    }
+  };
 
   const capture = async () => {
     setCapturing(true);
@@ -1697,7 +1827,9 @@ function HandoffTab({ report, author, onSelect, onUndoChange, onToggleResolved, 
       <CopyButton value={report.css} label="Copy CSS" />
       <button onClick={() => downloadFile(`${fileStem}.md`, report.markdown)}><Download size={13} />Download .md</button>
       {captureAvailable() && <button onClick={capture} disabled={capturing}><ImageIcon size={13} />{capturing ? 'Capturing…' : 'Screenshot'}</button>}
+      {cloudAvailable() && <button onClick={keep} disabled={keeping}><Cloud size={13} />{keeping ? 'Saving…' : 'Save to my account'}</button>}
     </div>
+    {kept && <p className="hi-handoff-kept">{kept}</p>}
 
     {shot && <figure className="hi-handoff-shot">
       <img src={shot} alt="The page as handed over" />
@@ -1716,13 +1848,16 @@ function HandoffTab({ report, author, onSelect, onUndoChange, onToggleResolved, 
             <strong>{group.label}</strong>
             <code>{group.selector}</code>
           </button>
+          {group.viewports.length > 0 && <span className="hi-handoff-screens" title={`Reviewed at ${group.viewports.join(', ')}`}>
+            <Monitor size={11} />{group.viewports.join(' · ')}
+          </span>}
         </header>
 
         {group.notes.length > 0 && <div className="hi-handoff-notes">
           {group.notes.map((note) => <article key={note.id} className={note.resolved ? 'is-resolved' : ''}>
             <p>{note.text}</p>
             <footer>
-              <span>{note.author || 'Unsigned'} · {relativeTime(note.createdAt)}</span>
+              <span>{note.author || 'Unsigned'} · {relativeTime(note.createdAt)}{viewportLabel(note.viewport) ? ` · ${viewportLabel(note.viewport)}` : ''}</span>
               <button title={note.resolved ? 'Reopen' : 'Mark resolved'} aria-pressed={Boolean(note.resolved)} onClick={() => onToggleResolved(note.id)}><Check size={12} /></button>
               <button title="Delete this note" onClick={() => onDeleteNote(note.id)}><Trash2 size={12} /></button>
             </footer>
@@ -1734,6 +1869,7 @@ function HandoffTab({ report, author, onSelect, onUndoChange, onToggleResolved, 
             <span className="hi-handoff-property">{change.property}</span>
             <span className="hi-handoff-value"><del>{change.before || '—'}</del> {change.after}</span>
             {change.token && <em className="hi-handoff-token" title="This value is a token in the connected design system">{change.token}</em>}
+            {viewportLabel(change.viewport) && <em className="hi-handoff-at" title={`Decided while looking at ${viewportLabel(change.viewport)}`}>{change.viewport!.width}px</em>}
             {change.appliedTo && change.appliedTo > 1 && <em className="hi-handoff-scope" title="This edit was applied to every matching variant">×{change.appliedTo}</em>}
             <button className="hi-handoff-undo" title="Undo just this change" onClick={() => onUndoChange(change)}><X size={12} /></button>
             {change.instruction && <p className="hi-handoff-instruction"><Wand2 size={11} />{change.instruction}</p>}
@@ -2965,248 +3101,6 @@ function auditPage(colorTokens: readonly BrandColorToken[], customTokens: readon
   return { scanned, groups };
 }
 
-/* ===========================================================================
-   System check — the design system, drawn on the page.
-   The audit panel answers "how tokenised is this page"; this answers "where",
-   which is the question a designer actually has, and it answers it in the one
-   place the answer is useful: on top of the thing that drifted.
-   =========================================================================== */
-
-type DriftIssue = {
-  /** The CSS property that drifted, ready to hand back to `applyStyle`. */
-  property: string;
-  label: string;
-  category: CustomDesignToken['category'];
-  value: string;
-  nearest: TokenSuggestion | null;
-};
-
-type DriftTarget = { element: HTMLElement; label: string; issues: DriftIssue[]; rect: DOMRect };
-type DriftReport = {
-  targets: DriftTarget[];
-  scanned: number;
-  bound: number;
-  near: number;
-  loose: number;
-  /** Elements the walk stopped short of, and drifting spots past the drawing limit. A score that
-   *  covered only part of a page has to say so, or it is just a confident wrong number. */
-  skippedElements: number;
-  hiddenTargets: number;
-};
-
-const DRIFT_PROPERTIES: Array<{ property: string; label: string; category: CustomDesignToken['category'] }> = [
-  { property: 'color', label: 'Text', category: 'color' },
-  { property: 'background-color', label: 'Fill', category: 'color' },
-  { property: 'border-top-color', label: 'Border', category: 'color' },
-  { property: 'font-size', label: 'Type size', category: 'typography' },
-  { property: 'border-top-left-radius', label: 'Radius', category: 'radius' },
-  { property: 'padding-top', label: 'Padding top', category: 'spacing' },
-  { property: 'padding-left', label: 'Padding left', category: 'spacing' },
-  { property: 'gap', label: 'Gap', category: 'spacing' },
-];
-
-/**
- * A short name for a box on the X-ray.
- *
- * Cheaper on purpose than the panel's component-family lookup, which queries the whole document per
- * element — this runs for hundreds of elements and only has to be recognisable, not authoritative.
- */
-function describeElement(element: HTMLElement): string {
-  const tag = element.tagName.toLowerCase();
-  const className = Array.from(element.classList).find((name) => name.length < 24 && !name.includes(':'));
-  if (className) return `${tag}.${className}`;
-  const role = element.getAttribute('role') ?? element.getAttribute('data-testid');
-  return role ? `${tag}[${role}]` : tag;
-}
-
-/**
- * Walks the page once and asks of every value: is this a token, near a token, or nobody's idea?
- *
- * Capped deliberately. A full walk of a large page is thousands of `getComputedStyle` calls, and
- * the point is a fast, repeatable read a designer can leave running — not a complete census. The
- * cap is on elements examined, so the score stays honest for the part of the page it did look at.
- */
-const DRIFT_ELEMENT_LIMIT = 900;
-const DRIFT_BOX_LIMIT = 140;
-
-function scanForDrift(colorTokens: readonly BrandColorToken[], customTokens: readonly CustomDesignToken[]): DriftReport {
-  const candidates = Array.from(document.body.querySelectorAll<HTMLElement>('*'))
-    .filter((element) => !element.closest(IGNORED_SELECTOR));
-  const elements = candidates.slice(0, DRIFT_ELEMENT_LIMIT);
-
-  const targets: DriftTarget[] = [];
-  let scanned = 0;
-  let bound = 0;
-  let near = 0;
-  let loose = 0;
-
-  for (const element of elements) {
-    const style = getComputedStyle(element);
-    if (style.display === 'none' || style.visibility === 'hidden') continue;
-    const rect = element.getBoundingClientRect();
-    if (rect.width < 4 || rect.height < 4) continue;
-    scanned += 1;
-
-    const issues: DriftIssue[] = [];
-    for (const { property, label, category } of DRIFT_PROPERTIES) {
-      const value = style.getPropertyValue(property).trim();
-      if (!value || value === 'normal' || value === 'none' || value === 'auto') continue;
-      // Values that say nothing: a transparent fill, a zero radius, no padding, an invisible border.
-      if (category === 'color') {
-        const parsed = parseColor(value);
-        if (!parsed || parsed[3] < 0.03) continue;
-        if (property === 'border-top-color' && (Number.parseFloat(style.borderTopWidth) || 0) === 0) continue;
-      } else if (cssNumber(value) === 0) continue;
-
-      if (matchToken(category, value, colorTokens, customTokens)) { bound += 1; continue; }
-      const nearest = findNearestToken({ category, value }, colorTokens, customTokens);
-      if (nearest) near += 1;
-      else loose += 1;
-      issues.push({ property, label, category, value, nearest });
-    }
-
-    if (issues.length) targets.push({ element, label: describeElement(element), issues, rect });
-  }
-
-  // Busiest first: the boxes that matter are the ones drifting in several ways at once.
-  targets.sort((a, b) => b.issues.length - a.issues.length);
-  return {
-    targets: targets.slice(0, DRIFT_BOX_LIMIT),
-    scanned,
-    bound,
-    near,
-    loose,
-    skippedElements: Math.max(0, candidates.length - elements.length),
-    hiddenTargets: Math.max(0, targets.length - DRIFT_BOX_LIMIT),
-  };
-}
-
-/**
- * The X-ray itself.
- *
- * Off-system boxes are outlined where they sit, colour-coded by how far off they are, and every
- * near miss carries its own fix. Snapping goes through the normal edit path, so a snap is an
- * ordinary tracked change: it shows up in Designer changes, copies out as CSS, and resets with
- * everything else.
- */
-function SystemCheckOverlay({ colorTokens, connected, onSelect, onSnap, onUndo, onClose }: {
-  colorTokens: readonly BrandColorToken[];
-  connected: boolean;
-  onSelect: (element: HTMLElement) => void;
-  /** Applies one snap and hands back what was there before, so it can be taken back. */
-  onSnap: (element: HTMLElement, property: string, value: string) => StyleReceipt;
-  /** Offers the undo, with the receipts for everything the gesture changed. */
-  onUndo: (label: string, receipts: StyleReceipt[]) => void;
-  onClose: () => void;
-}) {
-  const [report, setReport] = useState<DriftReport | null>(null);
-  const [openIndex, setOpenIndex] = useState<number | null>(null);
-  const [snapped, setSnapped] = useState(0);
-  const [scanning, setScanning] = useState(true);
-
-  const scan = useCallback(() => {
-    setScanning(true);
-    // Yield first: the walk is synchronous, and the overlay should paint its scanning state before
-    // the main thread disappears for a moment.
-    window.setTimeout(() => {
-      setReport(scanForDrift(colorTokens, readCustomDesignTokens()));
-      setScanning(false);
-    }, 16);
-  }, [colorTokens]);
-
-  useEffect(() => { scan(); }, [scan]);
-
-  // Rects go stale the moment the page scrolls; recompute them without re-walking the DOM.
-  useEffect(() => {
-    const reposition = () => {
-      setReport((current) => current && {
-        ...current,
-        targets: current.targets.map((target) => ({ ...target, rect: target.element.getBoundingClientRect() })),
-      });
-    };
-    window.addEventListener('scroll', reposition, true);
-    window.addEventListener('resize', reposition);
-    return () => {
-      window.removeEventListener('scroll', reposition, true);
-      window.removeEventListener('resize', reposition);
-    };
-  }, []);
-
-  const total = report ? report.bound + report.near + report.loose : 0;
-  const score = total ? Math.round((report!.bound / total) * 100) : 100;
-  const fixable = report?.targets.flatMap((target) => target.issues.filter((issue) => issue.nearest).map((issue) => ({ target, issue }))) ?? [];
-
-  const snapAll = () => {
-    const receipts = fixable.map(({ target, issue }) => onSnap(target.element, issue.property, issue.nearest!.value));
-    setSnapped(receipts.length);
-    onUndo(`${receipts.length} value${receipts.length === 1 ? '' : 's'} snapped to the system`, receipts);
-    window.setTimeout(scan, 220);
-  };
-
-  return <>
-    <div className="hi-xray" aria-hidden="true">
-      {report?.targets.map((target, index) => {
-        const worst = target.issues.some((issue) => !issue.nearest) ? 'is-loose' : 'is-near';
-        const open = openIndex === index;
-        if (target.rect.bottom < -80 || target.rect.top > window.innerHeight + 80) return null;
-        return <div key={index} className={`hi-xray-box ${worst} ${open ? 'is-open' : ''}`} style={{ top: target.rect.top, left: target.rect.left, width: target.rect.width, height: target.rect.height }}>
-          <button
-            className="hi-xray-badge"
-            title={`${target.label} · ${target.issues.length} off-system value${target.issues.length > 1 ? 's' : ''}`}
-            onClick={() => { setOpenIndex(open ? null : index); onSelect(target.element); }}
-          >{target.issues.length}</button>
-
-          {open && <div className="hi-xray-card">
-            <header><strong>{target.label}</strong><button title="Close" onClick={() => setOpenIndex(null)}><X size={12} /></button></header>
-            {target.issues.map((issue) => <div key={issue.property} className="hi-xray-issue">
-              {issue.category === 'color'
-                ? <i className="hi-xray-chip" style={{ background: issue.value }} />
-                : <i className="hi-xray-chip is-metric">{cssNumber(issue.value)}</i>}
-              <span><strong>{issue.label}</strong><small>{issue.value}</small></span>
-              {issue.nearest
-                ? <button
-                    className="hi-xray-snap"
-                    title={`Snap to ${issue.nearest.name} (${issue.nearest.value})`}
-                    onClick={() => {
-                      const receipt = onSnap(target.element, issue.property, issue.nearest!.value);
-                      setSnapped((count) => count + 1);
-                      onUndo(`${issue.label} snapped to ${issue.nearest!.name}`, [receipt]);
-                      window.setTimeout(scan, 200);
-                    }}
-                  >Snap to {issue.nearest.name}</button>
-                : <em title="No token in the system is close enough to suggest">one-off</em>}
-            </div>)}
-          </div>}
-        </div>;
-      })}
-    </div>
-
-    <div className="hi-xray-hud">
-      <div className="hi-xray-score" style={{ '--hi-score': `${score}%` } as CSSProperties}>
-        <strong>{scanning ? '···' : `${score}%`}</strong>
-        <span>on system</span>
-      </div>
-      <div className="hi-xray-legend">
-        <span className="is-bound"><i />{report?.bound ?? 0} on token</span>
-        <span className="is-near"><i />{report?.near ?? 0} near a token</span>
-        <span className="is-loose"><i />{report?.loose ?? 0} one-off</span>
-        {!connected && <small>Measured against values detected from the page — connect a design system for the real answer.</small>}
-        {connected && snapped > 0 && <small className="is-good"><Check size={11} />{snapped} value{snapped === 1 ? '' : 's'} snapped to the system</small>}
-        {/* A partial walk that keeps quiet about being partial is a wrong number stated confidently. */}
-        {report && (report.skippedElements > 0 || report.hiddenTargets > 0) && <small className="is-capped" title={`This page is larger than one pass covers. The first ${DRIFT_ELEMENT_LIMIT} elements were measured and the ${DRIFT_BOX_LIMIT} busiest are drawn; the score describes that part of the page.`}>
-          <CircleAlert size={11} />
-          {report.skippedElements > 0 ? `${report.scanned} of ${report.scanned + report.skippedElements} elements measured` : `${report.targets.length} of ${report.targets.length + report.hiddenTargets} spots drawn`}
-        </small>}
-      </div>
-      <div className="hi-xray-actions">
-        <button disabled={scanning || !fixable.length} onClick={snapAll}><Wand2 size={13} />Snap all {fixable.length ? `(${fixable.length})` : ''}</button>
-        <button onClick={scan} disabled={scanning}><RefreshCw size={13} />{scanning ? 'Scanning…' : 'Rescan'}</button>
-        <button className="hi-xray-close" onClick={onClose} title="Close system check"><X size={14} /></button>
-      </div>
-    </div>
-  </>;
-}
-
 function PageTokenAudit({ colorTokens, onSelect }: { colorTokens: readonly BrandColorToken[]; onSelect: (element: HTMLElement) => void }) {
   const [report, setReport] = useState<{ scanned: number; groups: AuditGroup[] } | null>(null);
   const [scanning, setScanning] = useState(false);
@@ -3450,10 +3344,8 @@ function HandoffInspectorPanel() {
   const [stateResetSignal, setStateResetSignal] = useState(0);
   const [devicePreset, setDevicePreset] = useState<DevicePresetId>('iphone-15');
   const [deviceOpen, setDeviceOpen] = useState(false);
-  /** The X-ray of design-system drift, drawn over the page. Off by default — it is a mode, not a mood. */
-  const [systemCheck, setSystemCheck] = useState(false);
   /** The one confirmation on screen, if any. Ids let a repeat gesture restart its own timer. */
-  const [toast, setToast] = useState<{ id: number; label: string; receipts: StyleReceipt[] } | null>(null);
+  const [toast, setToast] = useState<{ id: number; label: string } | null>(null);
   // The frame stays mounted after the first open so reopening does not reboot the app and replay every reveal.
   const [deviceMounted, setDeviceMounted] = useState(false);
   const [editVersion, setEditVersion] = useState(0);
@@ -3631,6 +3523,18 @@ function HandoffInspectorPanel() {
     };
   }, [open, syncCommentMarkers]);
 
+  /**
+   * The screen the tool is currently speaking about.
+   *
+   * The device preview is the honest answer whenever it is open — that is the width being looked at,
+   * whatever size the browser window happens to be. Otherwise it is the page itself.
+   */
+  const currentViewport = useCallback((): ViewportContext => {
+    const preset = inspectorDevicePresets.find((item) => item.id === devicePreset);
+    if (deviceOpen && preset) return { width: preset.width, height: preset.height, label: preset.label };
+    return { width: window.innerWidth, height: window.innerHeight, label: 'Browser window' };
+  }, [deviceOpen, devicePreset]);
+
   const addComment = useCallback((text: string) => {
     const trimmed = text.trim();
     if (!trimmed || !snapshot) return;
@@ -3643,9 +3547,10 @@ function HandoffInspectorPanel() {
       text: trimmed,
       createdAt: new Date().toISOString(),
       author: commentAuthor.trim() || undefined,
+      viewport: currentViewport(),
     }]);
     setCommentDraft('');
-  }, [commentAuthor, snapshot]);
+  }, [commentAuthor, currentViewport, snapshot]);
 
   const removeComment = useCallback((id: string) => {
     setComments((current) => current.filter((comment) => comment.id !== id));
@@ -3670,8 +3575,9 @@ function HandoffInspectorPanel() {
       text: trimmed,
       createdAt: new Date().toISOString(),
       author: readCommentAuthor().trim() || undefined,
+      viewport: currentViewport(),
     }]);
-  }, []);
+  }, [currentViewport]);
 
   const toggleCommentResolved = useCallback((id: string) => {
     setComments((current) => current.map((comment) => (comment.id === id ? { ...comment, resolved: !comment.resolved } : comment)));
@@ -3730,11 +3636,10 @@ function HandoffInspectorPanel() {
       // A drag or an inline edit consumes Escape itself; unlocking underneath it would lose the element.
       if (canvasBusyRef.current) return;
       // Escape peels one layer at a time, innermost first — an open note, then the selection, then
-      // the X-ray, then the tool. Closing the whole thing because a bubble was open is a small
-      // betrayal of the key everyone reaches for.
+      // the tool. Closing the whole thing because a bubble was open is a small betrayal of the key
+      // everyone reaches for.
       if (openThread) { setOpenThread(null); return; }
       if (locked) { setLocked(false); selectedRef.current = null; }
-      else if (systemCheck) setSystemCheck(false);
       else setOpen(false);
     };
     const onViewport = () => refresh();
@@ -3751,7 +3656,7 @@ function HandoffInspectorPanel() {
       window.removeEventListener('resize', onViewport);
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
-  }, [deviceOpen, locked, open, openThread, refresh, systemCheck]);
+  }, [deviceOpen, locked, open, openThread, refresh]);
 
   useEffect(() => {
     if (open) return;
@@ -3871,7 +3776,11 @@ function HandoffInspectorPanel() {
     // and StrictMode runs them twice — so clearing unconditionally would delete the saved session
     // before the restore prompt ever sees it.
     if (!storable.length) {
-      if (hasSavedRef.current) { window.localStorage.removeItem(key); hasSavedRef.current = false; }
+      if (hasSavedRef.current) {
+        window.localStorage.removeItem(key);
+        hasSavedRef.current = false;
+        announceSession(null);
+      }
       return;
     }
     const payload: StoredSession = {
@@ -3892,6 +3801,7 @@ function HandoffInspectorPanel() {
       window.localStorage.setItem(key, JSON.stringify(payload));
       hasSavedRef.current = true;
     } catch { /* Storage is full or blocked. */ }
+    announceSession(payload);
   }, [changes]);
 
   useEffect(() => {
@@ -4026,6 +3936,7 @@ function HandoffInspectorPanel() {
         inlineBefore,
         priorityBefore,
         appliedTo: targets.length,
+        viewport: currentViewport(),
       });
     });
     mirrorToDevice(targets, (node) => setPropertyVisibly(node, property, value));
@@ -4033,24 +3944,6 @@ function HandoffInspectorPanel() {
   };
 
   const applyStyle = (property: string, rawValue: string) => applyStyleTo(currentTargets(), property, rawValue);
-
-  /**
-   * One reversible style edit, for callers that offer to take it back.
-   *
-   * `Reset all` already undoes everything, but "everything" is the wrong unit when a single gesture
-   * changed thirty values — so the *inline* value is captured (not the computed one, which would
-   * bake a resolved colour in where there was previously nothing) and handed back as a receipt.
-   */
-  const applyStyleReversibly = (element: HTMLElement, property: string, value: string): StyleReceipt => {
-    const receipt = {
-      element,
-      property,
-      inlineBefore: element.style.getPropertyValue(property),
-      priorityBefore: element.style.getPropertyPriority(property),
-    };
-    applyStyleTo([element], property, value);
-    return receipt;
-  };
 
   /**
    * Takes back a single edit.
@@ -4078,27 +3971,7 @@ function HandoffInspectorPanel() {
       }
     }
     setChanges((current) => current.filter((entry) => !(entry.element === change.element && entry.property === change.property)));
-    setToast({ id: Date.now(), label: `${change.property} put back`, receipts: [] });
-    window.setTimeout(() => refresh(snapshotRef.current?.element), 0);
-  };
-
-  /** Puts back exactly what was there — an inline value if there was one, nothing if there was not. */
-  const revertStyles = (receipts: readonly StyleReceipt[]) => {
-    receipts.forEach(({ element, property, inlineBefore, priorityBefore }) => {
-      if (inlineBefore) element.style.setProperty(property, inlineBefore, priorityBefore);
-      else element.style.removeProperty(property);
-    });
-    mirrorToDevice(receipts.map((receipt) => receipt.element), (node, source) => {
-      const receipt = receipts.find((entry) => entry.element === source);
-      if (!receipt) return;
-      if (receipt.inlineBefore) node.style.setProperty(receipt.property, receipt.inlineBefore, receipt.priorityBefore);
-      else node.style.removeProperty(receipt.property);
-    });
-    // The change log has to forget them too, or a copied stylesheet still carries edits the page no
-    // longer has.
-    setChanges((current) => current.filter((change) => !receipts.some(
-      (receipt) => receipt.element === change.element && receipt.property === change.property,
-    )));
+    setToast({ id: Date.now(), label: `${change.property} put back` });
     window.setTimeout(() => refresh(snapshotRef.current?.element), 0);
   };
 
@@ -4515,21 +4388,7 @@ function HandoffInspectorPanel() {
     {!open && <button className="hi-launcher" onClick={toggleInspector} aria-label="Open inspector"><ScanSearch size={16} /><span>Inspect</span></button>}
 
     {/* Pins live outside the panel so they sit over the page, next to what they refer to. */}
-    {open && !deviceOpen && systemCheck && <SystemCheckOverlay
-      colorTokens={colorTokens}
-      connected={designSystemConnected}
-      onSelect={selectElement}
-      onSnap={applyStyleReversibly}
-      onUndo={(label, receipts) => setToast({ id: Date.now(), label, receipts })}
-      onClose={() => setSystemCheck(false)}
-    />}
-
-    {toast && <InspectorToast
-      key={toast.id}
-      toast={toast}
-      onUndo={() => { revertStyles(toast.receipts); setToast({ id: Date.now(), label: 'Put back', receipts: [] }); }}
-      onDismiss={() => setToast(null)}
-    />}
+    {toast && <InspectorToast key={toast.id} toast={toast} onDismiss={() => setToast(null)} />}
 
     {!deviceOpen && commentMarkers.length > 0 && <CommentPinLayer
       markers={commentMarkers}
@@ -4566,9 +4425,9 @@ function HandoffInspectorPanel() {
       {!deviceOpen && overlaySnapshot && overlayRect && <div className={`hi-selection ${locked ? 'is-locked' : ''} ${canvasSize ? 'is-resizing' : ''}`} style={{ top: overlayRect.top, left: overlayRect.left, width: overlayRect.width, height: overlayRect.height }}>
         <span>{overlaySnapshot.family.label} · {round(overlayRect.width)} × {round(overlayRect.height)}</span>
         {locked && !canvasHandlesVisible && <i><Lock size={10} /></i>}
-        {/* Offered right where the selection is, so commenting is one click from picking
-            rather than a hunt down the panel for the right section. */}
-        {locked && <button
+        {/* Offered right where the selection is, so commenting is one click from picking rather
+            than a hunt down the panel — but only in the tab where commenting is the job. */}
+        {locked && commentMode && <button
           className="hi-selection-comment"
           title={selectedCommentCount ? `${selectedCommentCount} comment${selectedCommentCount > 1 ? 's' : ''} — open the thread` : 'Comment on this element'}
           onClick={(event) => { event.stopPropagation(); setFocusComposer((count) => count + 1); }}
@@ -4586,26 +4445,6 @@ function HandoffInspectorPanel() {
                 <button className={secondaryCollectionActive ? 'is-active' : ''} aria-pressed={secondaryCollectionActive} onClick={() => setSecondaryCollectionActive(true)} title={designTokens.collections[1]?.name}>{designTokens.collections[1]?.name ?? 'Secondary'}</button>
               </div>
             )}
-            {/* What am I editing against? Without this the answer is a guess — the swatches look the
-                same whether they came from a real system or from the page, and only one of those is
-                worth trusting. */}
-            <span
-              className={`hi-system-chip ${designSystemConnected ? 'is-connected' : ''}`}
-              title={designSystemConnected
-                ? `Editing against ${activeCollection?.name ?? 'your design system'} — ${activeCollection?.colors.length ?? 0} colours, ${activeCollection?.typography.length ?? 0} text styles, ${designTokens.spacing.length} spacing, ${designTokens.radius.length} radii`
-                : 'No design system connected — colours, type and spacing are read from this page'}
-            >
-              <i />{designSystemConnected ? (activeCollection?.name ?? 'Design system') : 'Detected'}
-            </span>
-
-            {/* Lives in the header, next to the panel-side switch, because it changes what the whole
-                page looks like rather than anything about the current selection. */}
-            <button
-              className={`hi-xray-toggle ${systemCheck ? 'is-active' : ''}`}
-              aria-pressed={systemCheck}
-              title={systemCheck ? 'Hide system check' : 'System check — show every value on this page that drifts from the design system'}
-              onClick={() => { setSystemCheck((current) => !current); setDeviceOpen(false); }}
-            ><Radar size={15} /></button>
             <div className="hi-dock-switch" role="group" aria-label="Panel side">
               <button className={dock === 'left' ? 'is-active' : ''} aria-pressed={dock === 'left'} onClick={() => setDock('left')} title="Move panel to left"><PanelLeft size={15} /></button>
               <button className={dock === 'right' ? 'is-active' : ''} aria-pressed={dock === 'right'} onClick={() => setDock('right')} title="Move panel to right"><PanelRight size={15} /></button>
@@ -4656,7 +4495,7 @@ function HandoffInspectorPanel() {
               </div></div>
               {canvasNote && <div className="hi-restore is-note"><CircleAlert size={16} /><span><small>{canvasNote}</small></span><div><button onClick={() => setCanvasNote(null)}>Dismiss</button></div></div>}
               <div className="hi-reset-row"><button onClick={resetElement} disabled={!currentTargets().some((element) => originalsRef.current.has(element))}><RotateCcw size={13} />Reset selection</button><button onClick={resetAll} disabled={!changes.length}><RotateCcw size={13} />Reset all</button></div></>}
-              {<ToolSection title={`Comments · ${elementComments.length}`} icon={MessageSquare} openWhen={commentMode || focusComposer > 0 || elementComments.length > 0}>
+              {commentMode && <ToolSection title={`Comments · ${elementComments.length}`} icon={MessageSquare} openWhen={commentMode || focusComposer > 0 || elementComments.length > 0}>
                 <div className="hi-comment-composer">
                   <textarea
                     ref={composerRef}
@@ -4758,7 +4597,7 @@ function HandoffInspectorPanel() {
                 <label className="hi-control"><span>Filter</span><input value={snapshot.styles.filter} onChange={(event) => applyStyle('filter', event.target.value)} /></label>
                 <label className="hi-control"><span>Transform</span><input value={snapshot.styles.transform} onChange={(event) => applyStyle('transform', event.target.value)} /></label>
               </ToolSection></>}
-              <ToolSection title="Device preview" icon={Monitor} defaultOpen={false}><ResponsiveLauncher activeKind={activeDeviceKind} onOpen={openDevice} /></ToolSection>
+              {mode === 'design' && <ToolSection title="Device preview" icon={Monitor} defaultOpen={false}><ResponsiveLauncher activeKind={activeDeviceKind} onOpen={openDevice} /></ToolSection>}
               {mode === 'design' && <>{snapshot.assets.length > 0 && <ToolSection title={`Assets · ${snapshot.assets.length}`} icon={ImageIcon}><div className="hi-design-assets">{snapshot.assets.map((asset) => <article key={asset.id}><div className="hi-asset-head"><img src={asset.src} alt="" /><span><strong>{asset.label}</strong><small>{asset.type} · {asset.id}</small></span><a href={asset.src} download={`${asset.id}.${asset.type === 'svg' ? 'svg' : 'png'}`} title="Download the current asset"><Download size={14} /></a></div><label><span>Replace by URL</span><input placeholder="https://…" onKeyDown={(event) => { if (event.key === 'Enter') applyAsset(asset, event.currentTarget.value, 'URL replacement'); }} /></label><label className="hi-upload"><input type="file" accept="image/*,.svg" onChange={(event) => onAssetFile(asset, event.target.files?.[0])} />Upload image or SVG</label>{asset.type === 'svg' && <div className="hi-icon-library">{ICON_LIBRARY.map((icon) => <button key={icon.label} title={icon.label} onClick={() => applyAsset(asset, icon.svg, `${icon.label} icon`)} dangerouslySetInnerHTML={{ __html: icon.svg }} />)}</div>}</article>)}</div></ToolSection>}
               <ToolSection title="Component states · 6" icon={MousePointer2} defaultOpen={false}>
                 <ComponentStatesEditor snapshot={snapshot} colorTokens={colorTokens} resetSignal={stateResetSignal} onStateChange={recordStateChange} />
@@ -4804,9 +4643,8 @@ function HandoffInspectorPanel() {
  * were willing to lose every other edit with it. This says what happened and offers to take back
  * exactly that, for as long as anyone is plausibly still looking at it.
  */
-function InspectorToast({ toast, onUndo, onDismiss }: {
-  toast: { id: number; label: string; receipts: StyleReceipt[] };
-  onUndo: () => void;
+function InspectorToast({ toast, onDismiss }: {
+  toast: { id: number; label: string };
   onDismiss: () => void;
 }) {
   useEffect(() => {
@@ -4818,7 +4656,6 @@ function InspectorToast({ toast, onUndo, onDismiss }: {
   return <div className="hi-toast" role="status">
     <Check size={13} />
     <span>{toast.label}</span>
-    {toast.receipts.length > 0 && <button onClick={onUndo}><RotateCcw size={12} />Undo</button>}
     <button className="hi-toast-close" aria-label="Dismiss" onClick={onDismiss}><X size={12} /></button>
   </div>;
 }

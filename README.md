@@ -97,9 +97,6 @@ That's the whole install. If the button doesn't appear, see [Troubleshooting](#t
 ## Using it
 
 - **Click any element** to select it — including elements nested inside other elements.
-- **See where the page leaves your system** — the radar button in the header outlines every value
-  that is not a token, and snaps the near misses onto it in one click, with an undo for the whole
-  gesture.
 - **Edit** its content, typography, fill and layout from the panel on the right.
 - **Preview** the page at real device sizes from the *Device preview* section.
 - **Check accessibility** — contrast, touch targets, readable type, focus states.

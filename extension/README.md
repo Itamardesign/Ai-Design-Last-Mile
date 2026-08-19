@@ -43,26 +43,6 @@ Everything the package does, the extension does: click any element to select it,
 typography, fill and layout, preview the page at real device sizes, run the accessibility checks,
 leave notes, and copy your changes out as CSS or as written handoff instructions.
 
-### System check — where the page leaves the system
-
-The radar button in the panel header draws the design system **on the page**. Every value that is
-not a token is outlined where it sits: amber for near a token, red for genuinely one-off. A badge on
-each box opens the list of what drifted, and any value close enough to a token carries a
-**Snap to <token>** button — one click puts it on the system.
-
-**Snap all** does the whole page at once, and says so with an **Undo** you have nine seconds to
-take — undoing puts back exactly what was there, including nothing where there was nothing. Every
-snap is also an ordinary tracked change: it shows up in *Designer changes*, copies out as CSS, and
-resets with everything else.
-
-The score describes the part of the page it measured. One pass covers 900 elements and draws the 140
-busiest spots; past that the HUD says how much it left out, because a partial score stated
-confidently is just a wrong number.
-
-Without a connected design system this measures against the values detected from the page, which is
-useful for spotting inconsistency but is not the same question. Connect real tokens for the real
-answer.
-
 ### The Handoff tab
 
 The third tab is the document the session produces, arranged the way the person receiving it reads:
@@ -130,7 +110,7 @@ spacing. That is a good guess and it is enough to work with.
 
 Connecting real tokens does two things: the swatches and text styles become *yours*, and the three
 features that need a source of truth unlock — **token binding**, the **page token audit**, and
-**apply to all variants**.
+**apply to all variants**. The handoff then names the token behind each value it hands over.
 
 Open **Manage design systems** from the popup (or right-click the toolbar icon → Options) and either
 paste a tokens file or point at a URL. These are all read:
@@ -155,6 +135,111 @@ from the popup — useful when the marketing site and the product are different 
 
 ---
 
+## Your account, or not
+
+The extension asks once, on the settings page, and both answers are real answers:
+
+- **Sign in with Google** — review notes, unfinished style edits and kept handoffs are mirrored to
+  Firebase under your own id. Open the same page on another machine, signed in as the same person, and
+  the review is there.
+- **Skip** — nothing ever leaves the machine. Notes and edits are still kept in extension storage, so a
+  site clearing its own `localStorage` cannot take them; they just stay here. The choice is remembered,
+  not re-asked, and you can change it on the settings page whenever you like.
+
+Everything works identically either way. Local storage is the source of truth and the cloud follows
+it — nothing in the panel waits on a network round-trip, and a failed push is retried rather than
+shown to you as an error.
+
+### What syncs
+
+| | Synced | Why |
+| --- | --- | --- |
+| Review notes | yes | The one thing you cannot recreate. Notes from two machines are merged, never replaced. |
+| Unfinished style edits | yes | So a half-finished pass resumes where you left it. |
+| Kept handoffs | yes | **Save to my account** in the Handoff tab keeps the document as it read when you handed it over, with its screenshot. |
+| Connected design systems | no | They are tens of kilobytes of tokens and usually come from a URL your build already publishes; the settings page is the right place to connect them per machine. |
+
+**How a conflict is settled.** Notes merge per note: two machines that each left different notes end up
+with both. When the *same* note differs — a resolved tick moved elsewhere — the more recently saved copy
+wins. Style edits do not merge; the newer page replaces the older, because two values for the same
+`padding` are alternatives rather than additions and half of each is a state nobody produced. The rules
+live in `extension/src/merge.ts` and are tested in `extension/test/merge.test.mjs`.
+
+**Signing in never costs you work.** Reviewing twenty pages before you ever sign in is the expected
+path: on sign-in the cloud copy is merged into this machine and the result pushed back, so an empty
+account cannot wipe a week of notes.
+
+### Signing in — the one-time setup
+
+Google sign-in needs an OAuth client, and an OAuth client is tied to a fixed extension id. Neither can
+be created from the repo, so `extension/manifest.json` ships a placeholder and the settings page says
+so plainly until it is replaced. **Skip works immediately; only sign-in is gated on this.**
+
+1. **Fix the extension id.** Load `extension/dist` unpacked at `chrome://extensions` and copy the id.
+   To keep that id across machines and reinstalls, press **Pack extension** once, keep the generated
+   `.pem` somewhere safe, and add its public key to the manifest as `key`:
+
+   ```bash
+   openssl rsa -in your-extension.pem -pubout -outform DER | openssl base64 -A
+   ```
+
+2. **Create the OAuth client** in the Google Cloud console for **the same project as Firebase**
+   (`ai-last-mile`) — Firebase only accepts a Google token whose audience is a client in its own
+   project. *APIs & Services → Credentials → Create credentials → OAuth client ID*, application type
+   **Chrome Extension**, item id the one from step 1.
+3. **Paste the client id** into `oauth2.client_id` in `extension/manifest.json`, replacing
+   `REPLACE_ME.apps.googleusercontent.com`.
+4. **Enable the provider** in the Firebase console: *Authentication → Sign-in method → Google*.
+5. **Deploy the security rules** (below). Do this before anybody signs in, not after.
+
+Sign-in uses `chrome.identity.getAuthToken`, which reuses the Google account already signed in to
+Chrome — usually no password prompt at all — and trades that token for a Firebase credential.
+`signInWithPopup` is not an option: it needs a web origin to redirect back to, and an extension does
+not have one.
+
+### The rules are the security
+
+The `apiKey` in `extension/src/firebase.ts` is not a secret — every Firebase web key is public, and all
+it does is identify the project. What actually protects one designer's review from everyone else is:
+
+```bash
+firebase deploy --only firestore:rules,storage
+```
+
+`firebase/firestore.rules` and `firebase/storage.rules` allow a signed-in user to read and write their
+own workspace and nothing else. Both files carry the reasoning inline, including the one line that
+changes when a workspace becomes a shared, team-wide thing.
+
+### The shape of it
+
+    workspaces/{workspaceId}/notes/{pageId}      one page's review notes
+    workspaces/{workspaceId}/edits/{pageId}      one page's unfinished style edits
+    workspaces/{workspaceId}/handoffs/{docId}    a kept handoff
+    handoffs/{workspaceId}/{docId}.png           its screenshot, in Cloud Storage
+
+`workspaceId` is your own uid today. It exists as a named concept rather than `users/{uid}` so that
+sharing a review with a team later changes what that value *is*, not the shape of any path — a value
+change and one rules function, instead of migrating every document.
+
+Four constraints shape the code, all of them Manifest V3:
+
+- The SDK is **bundled**, never fetched — MV3 forbids remote code. That is also why
+  `firebase/analytics` is not used: it injects a remote script and needs a `document`, and the service
+  worker has neither.
+- **Auth uses `initializeAuth` with IndexedDB persistence**, because the default persistence chain
+  starts at `localStorage`, which a service worker does not have.
+- **The worker imports Firebase lazily.** It restarts for every navigation and badge repaint, almost
+  none of which have anything to do with the cloud.
+- **The screenshot goes to Cloud Storage, not Firestore.** A document is capped at 1MiB and a
+  full-page PNG routinely beats that.
+
+Pushes are coalesced on a short timer, because one drag of a slider commits many edits to the same
+page. A worker evicted between the change and the push leaves a marker in `chrome.storage.session`, and
+the next worker to start finds it and sends everything — so an eviction costs a redundant write rather
+than a machine that is quietly out of date.
+
+---
+
 ## What it does to the page
 
 Worth knowing, because it runs on sites you do not own.
@@ -173,8 +258,10 @@ Worth knowing, because it runs on sites you do not own.
   notes on the page are still open, and **Copy review** in the popup puts the whole thing on the
   clipboard as markdown.
 - **It contacts `fonts.googleapis.com`** for the panel's own typeface, and again for the ten Google
-  families when you open the font picker. Nothing else leaves the machine: tokens, comments and
-  edits are all local.
+  families when you open the font picker.
+- **It sends your notes, edits and kept handoffs to Firebase** — only if you signed in, and only your
+  own. Skip on the settings page and nothing leaves the machine at all. Connected design systems are
+  never uploaded either way.
 
 ---
 

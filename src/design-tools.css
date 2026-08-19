@@ -1748,174 +1748,6 @@
 .hi-comment-list footer button.is-active { color: #12a150; }
 .hi-comment-list footer button:first-of-type:hover { color: #12a150; background: rgba(18, 161, 80, .12); }
 
-/* ===========================================================================
-   System check — design-system drift, drawn on the page.
-   Two states only: near a token (fixable, amber) and one-off (red). Anything
-   already on a token is left alone, because a page lit up everywhere says
-   nothing about where to look.
-   =========================================================================== */
-.hi-xray { position: fixed; z-index: 2147481500; inset: 0; pointer-events: none; }
-
-.hi-xray-box {
-  position: absolute; border-radius: 4px; pointer-events: none;
-  animation: hi-xray-in .22s ease-out both;
-}
-.hi-xray-box.is-near { outline: 1px dashed rgba(217, 119, 6, .85); background: rgba(245, 158, 11, .07); }
-.hi-xray-box.is-loose { outline: 1px dashed rgba(217, 45, 32, .85); background: rgba(217, 45, 32, .07); }
-.hi-xray-box.is-open { z-index: 2; outline-style: solid; }
-
-@keyframes hi-xray-in { from { opacity: 0; } to { opacity: 1; } }
-
-.hi-xray-badge {
-  position: absolute; top: -9px; left: -9px; display: grid; width: 18px; height: 18px;
-  place-items: center; border: 1.5px solid #fff; border-radius: 999px;
-  color: #fff; background: #d97706; font: inherit; font-size: 10px; font-weight: 700;
-  cursor: pointer; pointer-events: auto; box-shadow: 0 3px 9px rgba(31, 33, 68, .28);
-  transition: transform .16s cubic-bezier(.2, .9, .3, 1.4);
-}
-.hi-xray-box.is-loose > .hi-xray-badge { background: #d92d20; }
-.hi-xray-badge:hover { transform: scale(1.15); }
-
-.hi-xray-card {
-  position: absolute; top: -6px; left: 14px; z-index: 3; width: 262px; padding: 4px;
-  border: 1px solid var(--hi-border); border-radius: 11px; background: #fff;
-  box-shadow: 0 18px 44px rgba(31, 33, 68, .26); pointer-events: auto;
-  animation: hi-pop .16s cubic-bezier(.2, .9, .3, 1.2);
-}
-.hi-xray-card > header { display: flex; padding: 5px 6px 7px 8px; align-items: center; justify-content: space-between; gap: 6px; }
-.hi-xray-card > header strong { overflow: hidden; color: var(--hi-text); font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
-.hi-xray-card > header button { display: grid; width: 20px; height: 20px; flex: none; place-items: center; border: 0; border-radius: 5px; color: var(--hi-muted); background: transparent; cursor: pointer; }
-.hi-xray-card > header button:hover { background: rgba(23, 32, 51, .07); }
-
-.hi-xray-issue { display: flex; padding: 5px 6px; align-items: center; gap: 8px; border-radius: 8px; }
-.hi-xray-issue:hover { background: rgba(23, 32, 51, .04); }
-.hi-xray-issue > span { display: grid; flex: 1; min-width: 0; }
-.hi-xray-issue strong { color: var(--hi-text); font-size: 11px; font-weight: 600; }
-.hi-xray-issue small { overflow: hidden; color: var(--hi-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.hi-xray-issue em { color: var(--hi-faint); font-size: 10px; font-style: normal; }
-.hi-xray-chip { width: 20px; height: 20px; flex: none; border: 1px solid rgba(0, 0, 0, .1); border-radius: 6px; }
-.hi-xray-chip.is-metric {
-  display: grid; place-items: center; color: var(--hi-muted); background: rgba(23, 32, 51, .05);
-  font-size: 9px; font-style: normal; font-weight: 700;
-}
-.hi-xray-snap {
-  max-width: 118px; overflow: hidden; flex: none; padding: 4px 8px; border: 0; border-radius: 7px;
-  color: #fff; background: var(--hi-accent, #7c3cff); font: inherit; font-size: 10.5px; font-weight: 600;
-  text-overflow: ellipsis; white-space: nowrap; cursor: pointer;
-}
-.hi-xray-snap:hover { background: #6a2ee0; }
-
-/* --- the heads-up display ------------------------------------------------- */
-.hi-xray-hud {
-  position: fixed; bottom: 18px; left: 50%; z-index: 2147481600; display: flex;
-  padding: 9px 10px 9px 12px; align-items: center; gap: 14px; transform: translateX(-50%);
-  border: 1px solid var(--hi-border); border-radius: 14px; background: rgba(255, 255, 255, .97);
-  box-shadow: 0 18px 44px rgba(31, 33, 68, .28); pointer-events: auto;
-  animation: hi-pop .2s cubic-bezier(.2, .9, .3, 1.2);
-}
-.hi-xray-score { display: grid; padding-right: 13px; border-right: 1px solid var(--hi-border); }
-.hi-xray-score strong {
-  background: linear-gradient(90deg, #12a150 var(--hi-score), var(--hi-faint) var(--hi-score));
-  color: transparent; font-size: 19px; font-weight: 700; letter-spacing: -.02em;
-  -webkit-background-clip: text; background-clip: text;
-}
-.hi-xray-score span { color: var(--hi-muted); font-size: 9.5px; letter-spacing: .05em; text-transform: uppercase; }
-.hi-xray-legend { display: grid; gap: 2px; }
-.hi-xray-legend > span { display: flex; align-items: center; gap: 5px; color: var(--hi-muted); font-size: 10.5px; }
-.hi-xray-legend i { width: 7px; height: 7px; border-radius: 2px; }
-.hi-xray-legend .is-bound i { background: #12a150; }
-.hi-xray-legend .is-near i { background: #d97706; }
-.hi-xray-legend .is-loose i { background: #d92d20; }
-.hi-xray-legend small { max-width: 260px; color: var(--hi-faint); font-size: 10px; }
-.hi-xray-legend small.is-good { display: flex; align-items: center; gap: 4px; color: #12a150; }
-.hi-xray-actions { display: flex; align-items: center; gap: 6px; }
-.hi-xray-actions button {
-  display: inline-flex; min-height: 28px; padding: 0 10px; align-items: center; gap: 5px;
-  border: 1px solid var(--hi-border); border-radius: 8px; color: var(--hi-text);
-  background: #fff; font: inherit; font-size: 11px; font-weight: 600; cursor: pointer;
-}
-.hi-xray-actions button:hover:not(:disabled) { border-color: var(--hi-accent); color: var(--hi-accent); }
-.hi-xray-actions button:disabled { color: var(--hi-faint); cursor: default; opacity: .6; }
-.hi-xray-actions .hi-xray-close { padding: 0 8px; color: var(--hi-muted); }
-
-/* --- the toggle in the header --------------------------------------------- */
-.hi-xray-toggle {
-  display: grid; width: 30px; height: 30px; flex: none; place-items: center;
-  border: 1px solid var(--hi-border); border-radius: 9px; color: var(--hi-muted);
-  background: rgba(255, 255, 255, .7); cursor: pointer; transition: color .15s ease, background .15s ease;
-}
-.hi-xray-toggle:hover { color: var(--hi-accent); border-color: var(--hi-accent); }
-.hi-xray-toggle.is-active { color: #fff; border-color: transparent; background: var(--hi-accent, #7c3cff); }
-
-/* --- which design system is live ------------------------------------------ */
-.hi-system-chip {
-  display: inline-flex; max-width: 132px; min-height: 26px; padding: 0 9px; align-items: center;
-  gap: 6px; overflow: hidden; border: 1px solid var(--hi-border); border-radius: 999px;
-  color: var(--hi-muted); background: rgba(255, 255, 255, .7);
-  font-size: 10.5px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; cursor: default;
-}
-.hi-system-chip > i { width: 6px; height: 6px; flex: none; border-radius: 999px; background: var(--hi-faint); }
-.hi-system-chip.is-connected { color: #0d6b36; border-color: rgba(18, 161, 80, .3); background: rgba(18, 161, 80, .08); }
-.hi-system-chip.is-connected > i { background: #12a150; box-shadow: 0 0 0 3px rgba(18, 161, 80, .18); }
-
-/* --- confirmation with a way out ------------------------------------------ */
-.hi-toast {
-  position: fixed; bottom: 92px; left: 50%; z-index: 2147483100; display: flex;
-  padding: 9px 9px 9px 13px; align-items: center; gap: 9px; transform: translateX(-50%);
-  border-radius: 12px; color: #fff; background: #27212d;
-  font-size: 11.5px; font-weight: 500; box-shadow: 0 16px 40px rgba(31, 33, 68, .38);
-  pointer-events: auto; animation: hi-toast-in .24s cubic-bezier(.2, .9, .3, 1.3) both;
-}
-.hi-toast > svg { color: #4ade80; }
-.hi-toast > span { white-space: nowrap; }
-.hi-toast button {
-  display: inline-flex; min-height: 26px; padding: 0 10px; align-items: center; gap: 5px;
-  border: 1px solid rgba(255, 255, 255, .22); border-radius: 8px; color: #fff;
-  background: rgba(255, 255, 255, .1); font: inherit; font-size: 11px; font-weight: 600; cursor: pointer;
-}
-.hi-toast button:hover { background: rgba(255, 255, 255, .2); }
-.hi-toast .hi-toast-close { min-height: 24px; padding: 0 6px; border-color: transparent; background: transparent; opacity: .65; }
-.hi-toast .hi-toast-close:hover { opacity: 1; background: rgba(255, 255, 255, .12); }
-
-@keyframes hi-toast-in {
-  from { opacity: 0; transform: translate(-50%, 12px) scale(.96); }
-  to { opacity: 1; transform: translate(-50%, 0) scale(1); }
-}
-
-/* The X-ray owns the bottom of the screen while it is open, so the toast sits above it. */
-.hi-xray-legend small.is-capped { display: flex; align-items: center; gap: 4px; color: #b45309; }
-
-/* --- replying where you are reading --------------------------------------- */
-.hi-comment-bubble-composer { display: grid; padding: 8px; gap: 6px; border-top: 1px solid var(--hi-border); }
-.hi-comment-bubble-composer textarea {
-  padding: 7px 8px; border: 1px solid var(--hi-border); border-radius: 8px;
-  color: var(--hi-text); background: rgba(255, 255, 255, .8); font: inherit; font-size: 11.5px;
-  line-height: 1.45; resize: vertical;
-}
-.hi-comment-bubble-composer textarea:focus {
-  border-color: var(--hi-accent); outline: 0; box-shadow: 0 0 0 2px rgba(139, 92, 246, .14);
-}
-.hi-comment-bubble-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
-.hi-comment-bubble-actions button {
-  display: inline-flex; min-height: 26px; padding: 0 11px; align-items: center; gap: 5px;
-  border: 0; border-radius: 7px; color: #fff; background: var(--hi-accent, #7c3cff);
-  font: inherit; font-size: 11px; font-weight: 600; cursor: pointer;
-}
-.hi-comment-bubble-actions button:disabled { opacity: .4; cursor: default; }
-.hi-comment-bubble-actions .is-quiet { margin-right: auto; color: var(--hi-muted); background: transparent; }
-.hi-comment-bubble-actions .is-quiet:hover { color: var(--hi-accent); background: rgba(139, 92, 246, .1); }
-
-/* --- drag a label to change its number ------------------------------------
-   The interaction every design tool has: grab the value and pull, watching the
-   page respond, instead of select-type-tab for a two-pixel adjustment. Styled to
-   stay quiet until the pointer is on it, so it adds no chrome to the panel. */
-.hi-control--scrub > .hi-scrub-label {
-  width: fit-content;
-  border-bottom: 1px dashed transparent;
-  cursor: ew-resize;
-  touch-action: none;
-  user-select: none;
-  transition: color .15s ease, border-color .15s ease;
 }
 .hi-control--scrub > .hi-scrub-label:hover {
   border-bottom-color: rgba(124, 60, 255, .45);
@@ -2068,6 +1900,7 @@
 .hi-handoff-exports .hi-copy:first-child { border-color: transparent; color: #fff; background: var(--hi-accent); }
 .hi-handoff-exports .hi-copy:first-child:hover { color: #fff; background: #6b2ee6; }
 .hi-handoff-exports button:disabled { color: var(--hi-faint); cursor: default; }
+.hi-handoff-kept { margin: 0; color: var(--hi-muted); font-size: 10.5px; }
 
 /* --- the screenshot ------------------------------------------------------- */
 .hi-handoff-shot { margin: 0; overflow: hidden; border: 1px solid var(--hi-border); border-radius: 12px; background: #fff; }
@@ -2124,7 +1957,7 @@
 .hi-handoff-changes { display: grid; margin: 0; padding: 0; gap: 2px; list-style: none; }
 .hi-handoff-changes li {
   display: grid; min-height: 26px; padding: 3px 4px 3px 7px; align-items: center;
-  grid-template-columns: minmax(64px, auto) minmax(0, 1fr) auto auto 22px; gap: 6px;
+  grid-template-columns: minmax(64px, auto) minmax(0, 1fr) auto auto auto 22px; gap: 6px;
   border-radius: 8px;
 }
 .hi-handoff-changes li:hover { background: rgba(23, 32, 51, .04); }
@@ -2172,3 +2005,14 @@
 }
 .hi-handoff-empty h2 { margin: 4px 0 0; color: var(--hi-text); font-size: 13px; }
 .hi-handoff-empty p { margin: 0; max-width: 260px; color: var(--hi-muted); font-size: 11px; line-height: 1.55; }
+
+/* --- which screen a decision was made at ----------------------------------- */
+.hi-handoff-screens {
+  display: inline-flex; flex: none; padding: 2px 7px; align-items: center; gap: 4px;
+  border-radius: 999px; color: var(--hi-muted); background: rgba(23, 32, 51, .06);
+  font-size: 9px; font-weight: 600;
+}
+.hi-handoff-at {
+  padding: 2px 5px; border-radius: 999px; color: #1f6f8b; background: rgba(31, 111, 139, .12);
+  font-size: 9px; font-style: normal; font-weight: 600; font-variant-numeric: tabular-nums;
+}
