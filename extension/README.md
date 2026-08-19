@@ -68,9 +68,10 @@ answer.
 Notes are pinned to the elements they are about, and numbered — "note 3" means the same thing in the
 panel, on the page and inside the device preview.
 
-- **Hover a pin** to read the note without opening anything.
-- **Click a pin** for the whole thread — read it, reply to it and resolve it without leaving the
-  page. Enter posts, Shift + Enter breaks the line.
+- **Hover a pin** and the note opens next to it — the text, who wrote it, when, and an **Open note**
+  button. It stays put while you move onto it, so you can read a long note or click through.
+- **Click a pin** (or **Open note**) for the whole thread over a dimmed page — read it, reply to it
+  and resolve it without leaving. Enter posts, Shift + Enter breaks the line, Esc closes.
 - **Resolve** rather than delete, so a review reads as a list of decisions.
 - **Sign your notes** once in the composer and every later note carries your name.
 - **Pins stay visible with the panel closed**, so walking up to a page shows what has already been said.
@@ -78,6 +79,14 @@ panel, on the page and inside the device preview.
   its stable classes, the nearest named ancestor — so when the markup moves underneath it, the note
   finds its element again and quietly rewrites its own address. Pins also follow the page live: a
   modal opening or a route changing moves them with it.
+
+### Sites that fight back
+
+Plenty of real sites write `!important` in their own stylesheets, and an inline style loses to one —
+which used to mean clicking a colour swatch did nothing at all while the tool cheerfully recorded
+the change. Every style edit now checks whether the page declares that property `!important` for
+that element, and outranks it when it does. The copied CSS carries the same `!important`, so what
+you paste reproduces what you saw.
 
 Edits are live-preview only. Reload and they are gone — copy anything you want to keep.
 

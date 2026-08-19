@@ -157,6 +157,8 @@ type DesignChange = {
   property: string;
   before: string;
   after: string;
+  /** True when the site's own CSS had to be outranked to make the edit visible — see `applyStyleTo`. */
+  forced?: boolean;
   kind: 'css' | 'content' | 'attribute' | 'asset' | 'layout' | 'state' | 'token';
   /** Handoff note explaining what a designer or developer has to do in the source of truth. */
   instruction?: string;
@@ -259,8 +261,8 @@ type StoredChange = {
 
 type StoredSession = { savedAt: string; variables: Array<[string, string]>; changes: StoredChange[] };
 
-/** What was there before one reversible edit — enough to put it back exactly. */
-type StyleReceipt = { element: HTMLElement; property: string; inlineBefore: string };
+/** What was there before one reversible edit — enough to put it back exactly, priority included. */
+type StyleReceipt = { element: HTMLElement; property: string; inlineBefore: string; priorityBefore: string };
 
 /**
  * The inspector only ever does anything in a browser, but the module still gets imported and
@@ -685,6 +687,103 @@ function getAccessibilityFindings(snapshot: ElementSnapshot): AccessibilityFindi
   findings.push({ id: 'font', label: 'Readable type', detail: `${fontSize}px · recommended ${inspectorAccessibilityThresholds.minimumReadableText}px or larger`, status: !snapshot.text || fontSize >= inspectorAccessibilityThresholds.minimumReadableText ? 'pass' : fontSize >= 12 ? 'warning' : 'error' });
   if (snapshot.kind === 'image') findings.push({ id: 'alt', label: 'Alternative text', detail: element.getAttribute('alt') || element.getAttribute('aria-label') || 'Image has no alt text', status: element.hasAttribute('alt') || element.hasAttribute('aria-label') ? 'pass' : 'error' });
   return findings;
+}
+
+/*
+ * An inline style loses to an `!important` rule, and a fair number of real sites write them —
+ * themes, resets, utility frameworks, anything that has ever lost a specificity argument. Without
+ * this, clicking a colour swatch on such a site did nothing at all while the tool cheerfully
+ * recorded the change: the single worst way for an editor to fail.
+ */
+const forcedSelectorCache = new Map<string, string[]>();
+let forcedCacheSignature = '';
+
+/**
+ * Every selector on the page that declares this property `!important`.
+ *
+ * Walking every rule in every stylesheet is not something to do on each keystroke of a slider, so
+ * the answer is cached per property. The cache is keyed on how many sheets and rules the document
+ * has, which is enough to notice a stylesheet being added or swapped without paying to check
+ * properly on a path this hot.
+ */
+function forcedSelectorsFor(doc: Document, property: string): string[] {
+  const sheets = Array.from(doc.styleSheets);
+  const signature = sheets.map((sheet) => {
+    try {
+      return sheet.cssRules.length;
+    } catch {
+      return 'x';
+    }
+  }).join(',');
+
+  if (signature !== forcedCacheSignature) {
+    forcedSelectorCache.clear();
+    forcedCacheSignature = signature;
+  }
+
+  const cached = forcedSelectorCache.get(property);
+  if (cached) return cached;
+
+  const selectors: string[] = [];
+  for (const sheet of sheets) {
+    let rules: CSSRuleList;
+    try {
+      rules = sheet.cssRules;
+    } catch {
+      continue; // Cross-origin: unreadable, and the applied-value check downstream still catches it.
+    }
+    for (const rule of Array.from(rules)) {
+      // Media and support blocks hold the declarations that actually apply at this width.
+      const nested = rule instanceof CSSMediaRule || rule instanceof CSSSupportsRule ? Array.from(rule.cssRules) : [rule];
+      for (const candidate of nested) {
+        if (candidate instanceof CSSStyleRule && candidate.style.getPropertyPriority(property) === 'important') {
+          selectors.push(candidate.selectorText);
+        }
+      }
+    }
+  }
+
+  forcedSelectorCache.set(property, selectors);
+  return selectors;
+}
+
+/**
+ * Does the page declare this property `!important` for this element?
+ */
+function pageForcesProperty(element: HTMLElement, property: string): boolean {
+  return forcedSelectorsFor(element.ownerDocument, property).some((selector) => {
+    try {
+      return element.matches(selector);
+    } catch {
+      // Selectors this engine cannot parse (`:has` in older browsers, vendor pseudo-elements).
+      return false;
+    }
+  });
+}
+
+/** Did the value actually land? Colours are compared as colours, since `#12A150` computes to `rgb(...)`. */
+function valueApplied(element: HTMLElement, property: string, value: string): boolean {
+  const computed = getComputedStyle(element).getPropertyValue(property).trim();
+  if (!computed) return true;
+  const wanted = parseColor(value);
+  const got = parseColor(computed);
+  if (wanted && got) return wanted.every((channel, index) => Math.abs(channel - got[index]) < 0.02);
+  return computed.replace(/["'\s]/g, '').toLowerCase() === value.replace(/["'\s]/g, '').toLowerCase();
+}
+
+/**
+ * Sets a property so that it is actually visible.
+ *
+ * Tries the polite way first, because a plain inline value is what a designer expects to see in
+ * devtools and what the exported CSS should read like. Only when the page fights back does the edit
+ * escalate — and the caller is told, so the copied stylesheet can carry the same `!important` and
+ * reproduce what was on screen.
+ */
+function setPropertyVisibly(element: HTMLElement, property: string, value: string): boolean {
+  element.style.setProperty(property, value);
+  if (!pageForcesProperty(element, property) && valueApplied(element, property, value)) return false;
+  element.style.setProperty(property, value, 'important');
+  return true;
 }
 
 /**
@@ -3038,7 +3137,7 @@ function HandoffInspectorPanel() {
       if (!change.element.isConnected) return;
       const node = doc.querySelector<HTMLElement>(getUniquePath(change.element));
       if (!node) return;
-      if (change.kind === 'css') node.style.setProperty(change.property, change.after);
+      if (change.kind === 'css') node.style.setProperty(change.property, change.after, change.forced ? 'important' : '');
       if (change.kind === 'content') {
         if (isFieldNode(node)) node.value = change.after;
         else node.textContent = change.after;
@@ -3110,7 +3209,7 @@ function HandoffInspectorPanel() {
       try { element = document.querySelector<HTMLElement>(entry.path); } catch { element = null; }
       if (!element || element.closest(IGNORED_SELECTOR)) { missing += 1; return; }
       storeOriginal(element);
-      if (entry.kind === 'css') element.style.setProperty(entry.property, entry.after);
+      if (entry.kind === 'css') setPropertyVisibly(element, entry.property, entry.after);
       if (entry.kind === 'content') { if (isFieldNode(element)) element.value = entry.after; else element.textContent = entry.after; }
       if (entry.kind === 'attribute') element.setAttribute(entry.property.replace(/^@/, ''), entry.after);
       restored.push({ element, selector: entry.selector, property: entry.property, before: entry.before, after: entry.after, kind: entry.kind, instruction: entry.instruction, cssVariable: entry.cssVariable });
@@ -3196,10 +3295,10 @@ function HandoffInspectorPanel() {
     targets.forEach((element) => {
       storeOriginal(element);
       const before = getComputedStyle(element).getPropertyValue(property);
-      element.style.setProperty(property, value);
-      recordChange({ element, selector: getSelector(element), property, before, after: value, kind: 'css' });
+      const forced = setPropertyVisibly(element, property, value);
+      recordChange({ element, selector: getSelector(element), property, before, after: value, kind: 'css', forced });
     });
-    mirrorToDevice(targets, (node) => node.style.setProperty(property, value));
+    mirrorToDevice(targets, (node) => setPropertyVisibly(node, property, value));
     window.setTimeout(() => refresh(snapshotRef.current?.element), 0);
   };
 
@@ -3213,21 +3312,26 @@ function HandoffInspectorPanel() {
    * bake a resolved colour in where there was previously nothing) and handed back as a receipt.
    */
   const applyStyleReversibly = (element: HTMLElement, property: string, value: string): StyleReceipt => {
-    const receipt = { element, property, inlineBefore: element.style.getPropertyValue(property) };
+    const receipt = {
+      element,
+      property,
+      inlineBefore: element.style.getPropertyValue(property),
+      priorityBefore: element.style.getPropertyPriority(property),
+    };
     applyStyleTo([element], property, value);
     return receipt;
   };
 
   /** Puts back exactly what was there — an inline value if there was one, nothing if there was not. */
   const revertStyles = (receipts: readonly StyleReceipt[]) => {
-    receipts.forEach(({ element, property, inlineBefore }) => {
-      if (inlineBefore) element.style.setProperty(property, inlineBefore);
+    receipts.forEach(({ element, property, inlineBefore, priorityBefore }) => {
+      if (inlineBefore) element.style.setProperty(property, inlineBefore, priorityBefore);
       else element.style.removeProperty(property);
     });
     mirrorToDevice(receipts.map((receipt) => receipt.element), (node, source) => {
       const receipt = receipts.find((entry) => entry.element === source);
       if (!receipt) return;
-      if (receipt.inlineBefore) node.style.setProperty(receipt.property, receipt.inlineBefore);
+      if (receipt.inlineBefore) node.style.setProperty(receipt.property, receipt.inlineBefore, receipt.priorityBefore);
       else node.style.removeProperty(receipt.property);
     });
     // The change log has to forget them too, or a copied stylesheet still carries edits the page no
@@ -3563,7 +3667,9 @@ function HandoffInspectorPanel() {
     if (!snapshot) return false;
     return scope === 'component' ? snapshot.family.elements.includes(change.element) : change.element === snapshot.element;
   });
-  const directCssDiff = changes.filter((change) => change.kind === 'css').map((change) => `${change.selector} {\n  ${change.property}: ${change.after};\n}`).join('\n\n');
+  // `!important` is carried through: these are the edits the page's own CSS was overriding, and CSS
+  // copied without it would not reproduce what the designer is looking at.
+  const directCssDiff = changes.filter((change) => change.kind === 'css').map((change) => `${change.selector} {\n  ${change.property}: ${change.after}${change.forced ? ' !important' : ''};\n}`).join('\n\n');
   const stateCssDiff = changes.filter((change) => change.kind === 'state').map((change) => {
     const [, state, ...propertyParts] = change.property.split(':');
     return `${change.selector}${STATE_SELECTOR[state as ComponentStateId]} {\n  ${propertyParts.join(':')}: ${change.after};\n}`;
@@ -3946,9 +4052,29 @@ function CommentPinLayer({ markers, openPath, author, onOpenPath, onSelect, onPo
 }) {
   const [peeked, setPeeked] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
+  const leaveTimer = useRef(0);
 
   // A draft belongs to the thread it was typed into; switching pins must not carry it along.
   useEffect(() => { setDraft(''); }, [openPath]);
+
+  /**
+   * Hovering a pin opens its note and *keeps it open* long enough to reach.
+   *
+   * A preview that vanishes the moment the pointer leaves the pin is a preview you can look at but
+   * never touch — you cannot scroll a long note, select a line of it, or click through to the
+   * thread. The grace period is the difference between a tooltip and something usable.
+   */
+  const hold = (path: string) => {
+    window.clearTimeout(leaveTimer.current);
+    setPeeked(path);
+  };
+
+  const release = () => {
+    window.clearTimeout(leaveTimer.current);
+    leaveTimer.current = window.setTimeout(() => setPeeked(null), 260);
+  };
+
+  useEffect(() => () => window.clearTimeout(leaveTimer.current), []);
 
   return <div className="hi-comment-pins">
     {markers.map((marker) => {
@@ -3960,8 +4086,8 @@ function CommentPinLayer({ markers, openPath, author, onOpenPath, onSelect, onPo
         key={marker.path}
         className={`hi-comment-pin-anchor ${flip ? 'is-flipped' : ''}`}
         style={{ top: marker.top, left: marker.left }}
-        onMouseEnter={() => setPeeked(marker.path)}
-        onMouseLeave={() => setPeeked(null)}
+        onMouseEnter={() => hold(marker.path)}
+        onMouseLeave={release}
       >
         <button
           className={`hi-comment-pin ${marker.resolved ? 'is-resolved' : ''} ${open ? 'is-open' : ''}`}
@@ -3977,12 +4103,22 @@ function CommentPinLayer({ markers, openPath, author, onOpenPath, onSelect, onPo
           {marker.comments.length > 1 && <em>{marker.comments.length}</em>}
         </button>
 
-        {peeking && <div className="hi-comment-peek">
-          <strong>{marker.comments[0].author || 'Note'}</strong>
-          <p>{marker.comments[0].text}</p>
-          {marker.comments.length > 1 && <small>+{marker.comments.length - 1} more · click to open</small>}
+        {peeking && <div className="hi-comment-peek" onMouseEnter={() => hold(marker.path)} onMouseLeave={release}>
+          <header>
+            <strong>Note {marker.index}</strong>
+            <span>{marker.resolved ? 'Resolved' : marker.label}</span>
+          </header>
+          {marker.comments.slice(0, 2).map((comment) => <article key={comment.id}>
+            <p>{comment.text}</p>
+            <small>{comment.author || 'Unsigned'} · {relativeTime(comment.createdAt)}</small>
+          </article>)}
+          {marker.comments.length > 2 && <small className="hi-comment-peek-more">+{marker.comments.length - 2} more in this thread</small>}
+          <button onClick={(event) => { event.stopPropagation(); onOpenPath(marker.path); onSelect(marker.path); }}>
+            <MessageSquare size={12} />Open note
+          </button>
         </div>}
 
+        {open && <div className="hi-comment-scrim" onClick={() => onOpenPath(null)} />}
         {open && <div className="hi-comment-bubble" onMouseDown={(event) => event.stopPropagation()}>
           <header>
             <strong>Note {marker.index}</strong>

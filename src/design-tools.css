@@ -1547,20 +1547,41 @@
   background: #27212d; color: #fff; font-size: 8.5px; font-style: normal; line-height: 1;
 }
 
-/* Hover preview: the note itself, one hover away. */
+/* Hover preview: the note itself, one hover away — and reachable, not a tooltip that flees. */
 .hi-comment-peek {
-  position: absolute; top: -10px; left: 16px; z-index: 2; width: 214px; padding: 8px 10px;
-  border: 1px solid var(--hi-border); border-radius: 10px;
-  background: #fff; box-shadow: 0 10px 26px rgba(31, 33, 68, .18);
-  pointer-events: none; animation: hi-pop .14s ease-out;
+  position: absolute; top: -10px; left: 16px; z-index: 2; width: 244px; padding: 9px 10px 8px;
+  border: 1px solid var(--hi-border); border-radius: 11px;
+  background: #fff; box-shadow: 0 14px 34px rgba(31, 33, 68, .22);
+  pointer-events: auto; animation: hi-pop .14s ease-out;
 }
 .is-flipped .hi-comment-peek { left: auto; right: 16px; }
-.hi-comment-peek strong { display: block; color: var(--hi-accent); font-size: 10px; letter-spacing: .04em; text-transform: uppercase; }
-.hi-comment-peek p {
-  display: -webkit-box; overflow: hidden; margin: 3px 0 0; color: var(--hi-text); font-size: 11.5px; line-height: 1.45;
-  -webkit-box-orient: vertical; -webkit-line-clamp: 3;
+.hi-comment-peek > header { display: flex; margin-bottom: 5px; align-items: baseline; justify-content: space-between; gap: 8px; }
+.hi-comment-peek > header strong { color: var(--hi-accent); font-size: 10px; letter-spacing: .04em; text-transform: uppercase; }
+.hi-comment-peek > header span {
+  overflow: hidden; color: var(--hi-faint); font-size: 10px; text-overflow: ellipsis; white-space: nowrap;
 }
-.hi-comment-peek small { display: block; margin-top: 4px; color: var(--hi-faint); font-size: 10px; }
+.hi-comment-peek article + article { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--hi-border); }
+.hi-comment-peek p {
+  display: -webkit-box; overflow: hidden; margin: 0; color: var(--hi-text); font-size: 11.5px; line-height: 1.45;
+  -webkit-box-orient: vertical; -webkit-line-clamp: 4;
+}
+.hi-comment-peek small { display: block; margin-top: 3px; color: var(--hi-faint); font-size: 10px; }
+.hi-comment-peek-more { color: var(--hi-muted) !important; }
+.hi-comment-peek > button {
+  display: flex; width: 100%; margin-top: 8px; min-height: 26px; align-items: center;
+  justify-content: center; gap: 5px; border: 0; border-radius: 8px;
+  color: var(--hi-accent); background: rgba(139, 92, 246, .1);
+  font: inherit; font-size: 11px; font-weight: 600; cursor: pointer;
+}
+.hi-comment-peek > button:hover { color: #fff; background: var(--hi-accent, #7c3cff); }
+
+/* An open thread is the one thing being attended to; the page steps back behind it. */
+.hi-comment-scrim {
+  position: fixed; inset: 0; z-index: 1; background: rgba(23, 32, 51, .28);
+  backdrop-filter: blur(1px); pointer-events: auto; animation: hi-fade .16s ease-out;
+}
+
+@keyframes hi-fade { from { opacity: 0; } to { opacity: 1; } }
 
 /* Click: the whole thread, in place. */
 .hi-comment-bubble {
