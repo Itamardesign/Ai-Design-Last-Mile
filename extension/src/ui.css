@@ -1,0 +1,185 @@
+/**
+ * Chrome for the extension's own two pages (the popup and the settings page).
+ *
+ * Deliberately the same palette, radii and type as the inspector panel itself — a designer should
+ * not be able to tell that one of these surfaces is React inside a shadow root on somebody's site
+ * and the other is a browser page.
+ */
+
+:root {
+  --tool-bg: #f7f7f8;
+  --tool-panel: #ffffff;
+  --tool-border: #e5e5e8;
+  --tool-border-strong: #d7d7dc;
+  --tool-text: #202124;
+  --tool-muted: #6e6e78;
+  --tool-faint: #9999a3;
+  --tool-accent: #8b5cf6;
+  --tool-accent-soft: #f1ebff;
+  --tool-orange: #ff5511;
+  --tool-danger: #e5484d;
+  --tool-green: #12a150;
+  color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  color: var(--tool-text);
+  background: var(--tool-bg);
+  font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 12px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3 { margin: 0; font-weight: 600; letter-spacing: -0.01em; }
+h1 { font-size: 15px; }
+h2 { font-size: 12px; }
+h3 { font-size: 11px; }
+p { margin: 0; }
+a { color: var(--tool-accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+.brand { display: flex; align-items: center; gap: 8px; }
+
+.brand-mark {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  flex: none;
+  place-items: center;
+  border-radius: 7px;
+  color: #fff;
+  background: #27212d;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.muted { color: var(--tool-muted); }
+.faint { color: var(--tool-faint); }
+.mono { font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace; font-size: 10.5px; }
+.row { display: flex; align-items: center; gap: 8px; }
+.between { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.stack { display: grid; gap: 8px; }
+.grow { flex: 1; min-width: 0; }
+.truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hidden { display: none !important; }
+
+.card {
+  padding: 14px;
+  border: 1px solid var(--tool-border);
+  border-radius: 12px;
+  background: var(--tool-panel);
+}
+
+.field { display: grid; gap: 5px; }
+
+label.field > span,
+.label {
+  color: var(--tool-muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+input[type='text'],
+input[type='url'],
+select,
+textarea {
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid var(--tool-border-strong);
+  border-radius: 8px;
+  color: var(--tool-text);
+  background: #fff;
+  font-family: inherit;
+  font-size: 12px;
+}
+
+textarea {
+  min-height: 190px;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+button:focus-visible {
+  outline: 2px solid var(--tool-accent);
+  outline-offset: 1px;
+}
+
+button {
+  display: inline-flex;
+  padding: 7px 12px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid var(--tool-border-strong);
+  border-radius: 8px;
+  color: var(--tool-text);
+  background: #fff;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) { border-color: var(--tool-faint); background: #fbfbfc; }
+button:disabled { color: var(--tool-faint); cursor: not-allowed; opacity: 0.7; }
+
+button.primary {
+  border-color: transparent;
+  color: #fff;
+  background: var(--tool-accent);
+}
+button.primary:hover:not(:disabled) { background: #7c4ceb; }
+
+button.ghost { border-color: transparent; background: transparent; color: var(--tool-muted); }
+button.ghost:hover:not(:disabled) { background: #efeff1; color: var(--tool-text); }
+button.danger { color: var(--tool-danger); }
+button.wide { width: 100%; }
+
+.pill {
+  display: inline-flex;
+  padding: 2px 7px;
+  align-items: center;
+  gap: 5px;
+  border-radius: 999px;
+  background: #efeff1;
+  color: var(--tool-muted);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.pill.on { background: var(--tool-accent-soft); color: #6d31d8; }
+.pill.warn { background: #fff1e8; color: #b23c00; }
+.pill.bad { background: #fdecec; color: #b4292d; }
+
+.dot { width: 6px; height: 6px; border-radius: 999px; background: var(--tool-faint); }
+.dot.on { background: var(--tool-green); }
+
+.switch { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.switch input { width: 14px; height: 14px; accent-color: var(--tool-accent); }
+
+.swatches { display: flex; gap: 3px; flex-wrap: wrap; }
+.swatch { width: 14px; height: 14px; border: 1px solid rgba(0, 0, 0, 0.08); border-radius: 4px; }
+
+.divider { height: 1px; background: var(--tool-border); }
+
+.notice {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #fff8ee;
+  color: #7a4b00;
+  font-size: 11px;
+}
+
+.notice.bad { background: #fdecec; color: #b4292d; }
+.notice.good { background: #eefaf2; color: #0d6b36; }

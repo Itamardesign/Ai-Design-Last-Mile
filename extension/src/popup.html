@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Meraki Design Inspector</title>
+    <link rel="stylesheet" href="ui.css" />
+    <style>
+      body { width: 320px; padding: 14px; }
+      .site { padding: 7px 9px; border: 1px solid var(--tool-border); border-radius: 8px; background: #fff; }
+      .shortcut kbd {
+        padding: 1px 5px;
+        border: 1px solid var(--tool-border-strong);
+        border-bottom-width: 2px;
+        border-radius: 4px;
+        background: #fff;
+        font-family: inherit;
+        font-size: 10px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="stack" style="gap: 12px">
+      <div class="between">
+        <div class="brand">
+          <span class="brand-mark">M</span>
+          <div>
+            <h1>Design Inspector</h1>
+            <p class="faint" style="font-size: 10.5px">Inspect · edit · hand off</p>
+          </div>
+        </div>
+        <span id="status" class="pill"><i class="dot"></i><span id="status-text">Off</span></span>
+      </div>
+
+      <div class="site row">
+        <i class="dot" id="site-dot"></i>
+        <span class="grow truncate mono" id="site">…</span>
+      </div>
+
+      <button class="primary wide" id="toggle" disabled>Inspect this page</button>
+
+      <div id="unsupported" class="notice hidden">
+        Chrome does not allow extensions to run here. Open a normal <span class="mono">http</span> or
+        <span class="mono">https</span> page and try again.
+      </div>
+
+      <div class="stack" id="controls">
+        <label class="field">
+          <span>Design system for this site</span>
+          <select id="system"></select>
+        </label>
+        <p class="faint" id="system-detail" style="font-size: 10.5px"></p>
+        <div class="swatches" id="system-swatches"></div>
+
+        <div class="divider"></div>
+
+        <div class="between hidden" id="notes-row">
+          <span class="row" style="gap: 6px">
+            <i class="dot" id="notes-dot"></i>
+            <span id="notes-summary" class="muted"></span>
+          </span>
+          <button class="ghost" id="copy-notes">Copy review</button>
+        </div>
+
+        <label class="switch">
+          <input type="checkbox" id="auto" />
+          <span class="grow">Start automatically on this site</span>
+        </label>
+
+        <div class="between">
+          <button class="ghost" id="options">Manage design systems</button>
+          <button class="ghost" id="reload" title="Reload with the inspector's network rules already in place">Reload page</button>
+        </div>
+
+        <p class="faint shortcut" style="font-size: 10.5px">
+          Toggle anywhere with <kbd id="shortcut">Alt</kbd> <kbd>Shift</kbd> <kbd>D</kbd>
+        </p>
+      </div>
+    </div>
+    <script src="popup.js"></script>
+  </body>
+</html>

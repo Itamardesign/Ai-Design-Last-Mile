@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Meraki Design Inspector — settings</title>
+    <link rel="stylesheet" href="ui.css" />
+    <style>
+      body { padding: 28px 20px 64px; }
+      main { display: grid; max-width: 760px; margin: 0 auto; gap: 18px; }
+      header { display: grid; gap: 4px; }
+      section { display: grid; gap: 10px; }
+      .section-head { display: grid; gap: 2px; }
+      .tabs { display: flex; gap: 4px; padding: 3px; border-radius: 9px; background: #efeff1; width: fit-content; }
+      .tabs button { border: 0; background: transparent; color: var(--tool-muted); padding: 5px 12px; }
+      .tabs button[aria-selected='true'] { background: #fff; color: var(--tool-text); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08); }
+      .system { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--tool-border); border-radius: 10px; background: #fff; }
+      .system.is-default { border-color: var(--tool-accent); box-shadow: 0 0 0 3px var(--tool-accent-soft); }
+      table { width: 100%; border-collapse: collapse; }
+      td { padding: 6px 0; border-bottom: 1px solid var(--tool-border); vertical-align: middle; }
+      tr:last-child td { border-bottom: 0; }
+      td.pick { width: 220px; }
+      td.act { width: 40px; text-align: right; }
+      pre {
+        margin: 0;
+        padding: 10px;
+        overflow-x: auto;
+        border-radius: 8px;
+        background: #f4f4f6;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 10.5px;
+        line-height: 1.5;
+      }
+      .examples { display: grid; gap: 10px; grid-template-columns: 1fr 1fr; }
+      @media (max-width: 620px) { .examples { grid-template-columns: 1fr; } }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header class="between">
+        <div class="brand">
+          <span class="brand-mark">M</span>
+          <div>
+            <h1>Design Inspector</h1>
+            <p class="muted">Connect the design system you edit against, and choose where it applies.</p>
+          </div>
+        </div>
+      </header>
+
+      <section class="card">
+        <div class="section-head">
+          <h2>Connect a design system</h2>
+          <p class="muted">
+            Paste a tokens file or point at a URL. Inspector tokens, DTCG / Style Dictionary, Tokens Studio, a
+            Tailwind config or a plain <span class="mono">{ "colors": … }</span> object all work.
+          </p>
+        </div>
+
+        <div class="tabs" role="tablist">
+          <button role="tab" id="tab-paste" aria-selected="true">Paste JSON</button>
+          <button role="tab" id="tab-url" aria-selected="false">From a URL</button>
+        </div>
+
+        <label class="field">
+          <span>Name</span>
+          <input type="text" id="name" placeholder="Acme product system" />
+        </label>
+
+        <label class="field" id="paste-field">
+          <span>Tokens</span>
+          <textarea id="raw" spellcheck="false" placeholder='{ "colors": { "brand": { "500": "#7C3CFF" } }, "spacing": { "sm": "8px" } }'></textarea>
+        </label>
+
+        <label class="field hidden" id="url-field">
+          <span>Tokens URL</span>
+          <input type="url" id="url" placeholder="https://design.acme.com/tokens.json" />
+        </label>
+
+        <div id="preview" class="notice hidden"></div>
+
+        <div class="row">
+          <button class="primary" id="connect">Connect system</button>
+          <button class="ghost" id="clear">Clear</button>
+        </div>
+      </section>
+
+      <section>
+        <div class="section-head">
+          <h2>Connected systems</h2>
+          <p class="muted">The one marked default applies to every site without a rule of its own.</p>
+        </div>
+        <div class="stack" id="systems"></div>
+      </section>
+
+      <section class="card">
+        <div class="section-head">
+          <h2>Where systems apply</h2>
+          <p class="muted">Per-site rules win over the default. Sites are matched by origin.</p>
+        </div>
+        <label class="field">
+          <span>Default for all sites</span>
+          <select id="default-system"></select>
+        </label>
+        <div class="divider"></div>
+        <h3 class="label">Per-site rules</h3>
+        <table id="sites"></table>
+        <p class="faint" id="sites-empty">No per-site rules yet. Set one from the popup while you are on the site.</p>
+      </section>
+
+      <section class="card">
+        <div class="section-head">
+          <h2>Starts automatically on</h2>
+          <p class="muted">The inspector mounts itself on these sites as soon as a page finishes loading.</p>
+        </div>
+        <table id="auto"></table>
+        <p class="faint" id="auto-empty">Nothing yet. Turn on “Start automatically on this site” in the popup.</p>
+      </section>
+
+      <section class="card">
+        <div class="section-head">
+          <h2>Review notes</h2>
+          <p class="muted">
+            Every note you leave is kept here as well as on the page, so a site clearing its own storage
+            cannot take a review with it.
+          </p>
+        </div>
+        <div class="stack" id="notes"></div>
+        <p class="faint" id="notes-empty">No notes yet. Open the inspector, click an element, and leave one.</p>
+      </section>
+
+      <section class="card">
+        <div class="section-head">
+          <h2>Advanced</h2>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="relax" />
+          <span class="grow">
+            Relax <span class="mono">Content-Security-Policy</span> and <span class="mono">X-Frame-Options</span>
+            while inspecting
+            <span class="faint" style="display: block">
+              Only on the tab you turn the inspector on, and dropped the moment you turn it off. Without this, the
+              device preview cannot frame the page and font previews will not download on strict sites.
+            </span>
+          </span>
+        </label>
+      </section>
+
+      <section class="card">
+        <div class="section-head">
+          <h2>Accepted formats</h2>
+          <p class="muted">All of these describe the same thing, and all of them are read.</p>
+        </div>
+        <div class="examples">
+          <div class="stack">
+            <h3 class="label">Plain / hand-written</h3>
+            <pre>{
+  "name": "Acme",
+  "colors": {
+    "brand-500": "#7C3CFF",
+    "text-body": "#172033",
+    "surface": "#F6F8FF"
+  },
+  "spacing": { "sm": "8px", "md": "16px" },
+  "radius": { "card": "12px" },
+  "typography": {
+    "h1": { "fontSize": "32px", "fontWeight": 600 }
+  }
+}</pre>
+          </div>
+          <div class="stack">
+            <h3 class="label">DTCG / Style Dictionary</h3>
+            <pre>{
+  "color": {
+    "brand": {
+      "500": { "$value": "#7C3CFF", "$type": "color" }
+    }
+  },
+  "spacing": {
+    "md": { "$value": "16px", "$type": "dimension" }
+  }
+}</pre>
+          </div>
+          <div class="stack">
+            <h3 class="label">Tailwind config (as JSON)</h3>
+            <pre>{
+  "theme": {
+    "extend": {
+      "colors": { "brand": { "500": "#7C3CFF" } },
+      "borderRadius": { "card": "12px" },
+      "fontSize": { "xl": ["24px", { "lineHeight": "1.3" }] }
+    }
+  }
+}</pre>
+          </div>
+          <div class="stack">
+            <h3 class="label">Inspector tokens (exact shape)</h3>
+            <pre>{
+  "collections": [{
+    "id": "product",
+    "name": "Product",
+    "colors": [{ "label": "Brand", "value": "#7C3CFF", "usage": "accent" }],
+    "typography": [{ "label": "H1", "sample": "Heading", "css": "font-size: 32px" }]
+  }],
+  "spacing": [{ "name": "md", "value": "16px" }],
+  "radius": [{ "name": "card", "value": "12px" }]
+}</pre>
+          </div>
+        </div>
+        <p class="faint">
+          Connecting a real system also unlocks token binding, the page token audit and “apply to all variants” —
+          the three features that need a source of truth rather than a guess.
+        </p>
+      </section>
+    </main>
+    <script src="options.js"></script>
+  </body>
+</html>

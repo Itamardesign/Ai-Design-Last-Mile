@@ -37,6 +37,7 @@ import {
   PanelLeft,
   PanelRight,
   Plus,
+  Radar,
   RefreshCw,
   RotateCcw,
   RotateCw,
@@ -285,9 +286,85 @@ const MODES: Array<{ id: InspectorMode; label: string; hint: string }> = [
 ];
 
 /** One note pinned to one element. Elements can carry several. */
-type PageComment = { id: string; path: string; selector: string; label: string; text: string; createdAt: string };
+type PageComment = {
+  id: string;
+  path: string;
+  selector: string;
+  label: string;
+  text: string;
+  createdAt: string;
+  /** Who left it. Blank until someone signs their notes — see `readCommentAuthor`. */
+  author?: string;
+  /** Kept rather than deleted, so a review reads as a list of decisions rather than a list of gaps. */
+  resolved?: boolean;
+};
 
 const COMMENTS_STORAGE_KEY = 'meraki-inspector-comments';
+const COMMENT_AUTHOR_KEY = 'meraki-inspector-author';
+
+/**
+ * Who is reviewing.
+ *
+ * Asked for once, in the composer, and remembered — a page full of unattributed notes is no use to
+ * the person who has to act on them. Empty is allowed and simply means the notes are unsigned.
+ */
+function readCommentAuthor(): string {
+  return readStoredPreference(COMMENT_AUTHOR_KEY) ?? '';
+}
+
+function writeCommentAuthor(name: string): void {
+  if (!isBrowser) return;
+  try {
+    window.localStorage.setItem(COMMENT_AUTHOR_KEY, name);
+  } catch {
+    // Same reasoning as the comments themselves: losing the name is survivable.
+  }
+}
+
+/** Every note on one element, numbered in the order the first note on it was written. */
+type CommentThread = { path: string; label: string; index: number; comments: PageComment[]; resolved: boolean };
+type CommentMarker = CommentThread & { top: number; left: number };
+
+/**
+ * Groups notes into threads and numbers them.
+ *
+ * The number is the whole point of pinning: "see note 3" is something a designer can say out loud,
+ * and it has to mean the same thing in the panel, on the page and inside the device preview. It
+ * follows the order the conversation started in, so it does not shuffle when a note is resolved.
+ */
+function groupComments(comments: readonly PageComment[]): CommentThread[] {
+  const byPath = new Map<string, PageComment[]>();
+  for (const comment of comments) {
+    const list = byPath.get(comment.path) ?? [];
+    list.push(comment);
+    byPath.set(comment.path, list);
+  }
+  return [...byPath.entries()]
+    .map(([path, list]) => ({
+      path,
+      label: list[0].label,
+      comments: list,
+      startedAt: list.reduce((earliest, comment) => (comment.createdAt < earliest ? comment.createdAt : earliest), list[0].createdAt),
+      resolved: list.every((comment) => comment.resolved),
+    }))
+    .sort((a, b) => (a.startedAt < b.startedAt ? -1 : 1))
+    .map((thread, order) => ({ path: thread.path, label: thread.label, comments: thread.comments, resolved: thread.resolved, index: order + 1 }));
+}
+
+/** "2 minutes ago" reads better on a pin than a timestamp nobody can parse at a glance. */
+function relativeTime(iso: string): string {
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return '';
+  const seconds = Math.round((Date.now() - then) / 1000);
+  if (seconds < 60) return 'just now';
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Date(iso).toLocaleDateString();
+}
 
 /** Comments are per-page: a note about the pricing table means nothing on the checkout screen. */
 function commentsKey(): string {
@@ -303,12 +380,27 @@ function readStoredComments(): PageComment[] {
   }
 }
 
+/**
+ * Announced as well as stored.
+ *
+ * Storage is the inspector's own business, but something outside it may want to keep a copy — the
+ * Chrome extension mirrors notes into extension storage so a review survives the site clearing its
+ * `localStorage`, and badges the toolbar with how many are still open. An event costs nothing when
+ * nobody is listening, which is the usual case.
+ */
+const COMMENTS_CHANGE_EVENT = 'meraki-inspector-comments-change';
+
 function writeStoredComments(comments: PageComment[]): void {
   if (!isBrowser) return;
   try {
     window.localStorage.setItem(commentsKey(), JSON.stringify(comments));
   } catch {
     // Storage can be full or blocked; losing persistence is survivable, crashing is not.
+  }
+  try {
+    window.dispatchEvent(new CustomEvent(COMMENTS_CHANGE_EVENT, { detail: { comments } }));
+  } catch {
+    // Older engines without CustomEvent constructors: the notes are still saved.
   }
 }
 
@@ -1426,13 +1518,15 @@ function CanvasHandles({ size, onStart }: { size: string | null; onStart: (direc
   </>;
 }
 
-function DeviceOverlay({ presetId, onPresetChange, snapshot, dock, hidden, editVersion, canvasEdit, canvasSize, canvasBusyRef, onCanvasResize, onCanvasText, onFrameDocument, onSelectPath, onReplay, onClose, onExit }: {
+function DeviceOverlay({ presetId, onPresetChange, snapshot, dock, hidden, editVersion, comments, canvasEdit, canvasSize, canvasBusyRef, onCanvasResize, onCanvasText, onFrameDocument, onSelectPath, onReplay, onComment, onClose, onExit }: {
   presetId: DevicePresetId;
   onPresetChange: (id: DevicePresetId) => void;
   snapshot: ElementSnapshot | null;
   dock: 'left' | 'right';
   hidden: boolean;
   editVersion: number;
+  /** Threads to pin inside the frame — the preview is where most reviewing actually happens. */
+  comments: readonly PageComment[];
   canvasEdit: boolean;
   canvasSize: string | null;
   /** Set while a canvas drag owns the pointer, so Escape cancels the drag instead of closing the preview. */
@@ -1442,6 +1536,8 @@ function DeviceOverlay({ presetId, onPresetChange, snapshot, dock, hidden, editV
   onFrameDocument: (doc: Document | null) => void;
   onSelectPath: (path: string) => boolean;
   onReplay: (doc: Document) => void;
+  /** Selects the element a pin belongs to and puts the caret in the composer. */
+  onComment: (path: string) => void;
   onClose: () => void;
   /** The overlay fills the screen, so its X is read as "close the tool", not "close this one pane". */
   onExit: () => void;
@@ -1549,6 +1645,41 @@ function DeviceOverlay({ presetId, onPresetChange, snapshot, dock, hidden, editV
   }, [frameDoc, snapshot, width]);
 
   useEffect(() => { sync(); }, [sync, editVersion]);
+
+  /**
+   * Comment pins, resolved against the framed document.
+   *
+   * The same numbers as on the page, because the preview *is* the page — a reviewer reading "note 3"
+   * in the panel has to find note 3 here. Positions come from the frame's own coordinates, which is
+   * exactly what the selection marker beside them uses, so both stay put when the frame scrolls.
+   */
+  const [pins, setPins] = useState<Array<CommentThread & { top: number; left: number }>>([]);
+
+  const syncPins = useCallback(() => {
+    if (!frameDoc) { setPins([]); return; }
+    const next: Array<CommentThread & { top: number; left: number }> = [];
+    for (const thread of groupComments(comments)) {
+      const node = resolveInDocument(frameDoc, { uniquePath: thread.path, selector: thread.comments[0].selector });
+      if (!node) continue;
+      const rect = node.getBoundingClientRect();
+      if (rect.width === 0 && rect.height === 0) continue;
+      next.push({ ...thread, top: rect.top, left: rect.left + rect.width });
+    }
+    setPins(next);
+  }, [comments, frameDoc]);
+
+  useEffect(() => { syncPins(); }, [syncPins, editVersion]);
+
+  useEffect(() => {
+    const view = frameDoc?.defaultView;
+    if (!view) return;
+    view.addEventListener('scroll', syncPins, true);
+    view.addEventListener('resize', syncPins);
+    return () => {
+      view.removeEventListener('scroll', syncPins, true);
+      view.removeEventListener('resize', syncPins);
+    };
+  }, [frameDoc, syncPins]);
 
   useEffect(() => {
     if (!frameDoc) return;
@@ -1755,6 +1886,14 @@ function DeviceOverlay({ presetId, onPresetChange, snapshot, dock, hidden, editV
               {canvasEdit && snapshot && <CanvasHandles size={canvasSize} onStart={(direction, event) => onCanvasResize(direction, event, scale, sync)} />}
             </span>}
             {picking && hoverBox && <span className="hi-device-marker" style={{ top: hoverBox.top, left: hoverBox.left, width: hoverBox.width, height: hoverBox.height }}><b>{hoverBox.label}</b></span>}
+            {/* Counter-scaled so a pin stays legible at 50% zoom instead of shrinking with the shell. */}
+            {pins.map((pin) => <button
+              key={pin.path}
+              className={`hi-device-pin ${pin.resolved ? 'is-resolved' : ''}`}
+              style={{ top: pin.top, left: pin.left, transform: `scale(${1 / scale}) translate(-6px, -8px)` }}
+              title={`Note ${pin.index}: ${pin.comments[0].text}`}
+              onClick={() => onComment(pin.path)}
+            >{pin.resolved ? <Check size={11} /> : <MessageSquare size={11} />}{pin.index}</button>)}
           </div>
           {preset.chrome === 'phone' && <><em className="hi-device-notch" /><em className="hi-device-home" /></>}
         </div>
@@ -1930,6 +2069,213 @@ function auditPage(colorTokens: readonly BrandColorToken[], customTokens: readon
   }).filter((group) => group.total > 0);
 
   return { scanned, groups };
+}
+
+/* ===========================================================================
+   System check — the design system, drawn on the page.
+   The audit panel answers "how tokenised is this page"; this answers "where",
+   which is the question a designer actually has, and it answers it in the one
+   place the answer is useful: on top of the thing that drifted.
+   =========================================================================== */
+
+type DriftIssue = {
+  /** The CSS property that drifted, ready to hand back to `applyStyle`. */
+  property: string;
+  label: string;
+  category: CustomDesignToken['category'];
+  value: string;
+  nearest: TokenSuggestion | null;
+};
+
+type DriftTarget = { element: HTMLElement; label: string; issues: DriftIssue[]; rect: DOMRect };
+type DriftReport = { targets: DriftTarget[]; scanned: number; bound: number; near: number; loose: number };
+
+const DRIFT_PROPERTIES: Array<{ property: string; label: string; category: CustomDesignToken['category'] }> = [
+  { property: 'color', label: 'Text', category: 'color' },
+  { property: 'background-color', label: 'Fill', category: 'color' },
+  { property: 'border-top-color', label: 'Border', category: 'color' },
+  { property: 'font-size', label: 'Type size', category: 'typography' },
+  { property: 'border-top-left-radius', label: 'Radius', category: 'radius' },
+  { property: 'padding-top', label: 'Padding top', category: 'spacing' },
+  { property: 'padding-left', label: 'Padding left', category: 'spacing' },
+  { property: 'gap', label: 'Gap', category: 'spacing' },
+];
+
+/**
+ * A short name for a box on the X-ray.
+ *
+ * Cheaper on purpose than the panel's component-family lookup, which queries the whole document per
+ * element — this runs for hundreds of elements and only has to be recognisable, not authoritative.
+ */
+function describeElement(element: HTMLElement): string {
+  const tag = element.tagName.toLowerCase();
+  const className = Array.from(element.classList).find((name) => name.length < 24 && !name.includes(':'));
+  if (className) return `${tag}.${className}`;
+  const role = element.getAttribute('role') ?? element.getAttribute('data-testid');
+  return role ? `${tag}[${role}]` : tag;
+}
+
+/**
+ * Walks the page once and asks of every value: is this a token, near a token, or nobody's idea?
+ *
+ * Capped deliberately. A full walk of a large page is thousands of `getComputedStyle` calls, and
+ * the point is a fast, repeatable read a designer can leave running — not a complete census. The
+ * cap is on elements examined, so the score stays honest for the part of the page it did look at.
+ */
+function scanForDrift(colorTokens: readonly BrandColorToken[], customTokens: readonly CustomDesignToken[]): DriftReport {
+  const elements = Array.from(document.body.querySelectorAll<HTMLElement>('*'))
+    .filter((element) => !element.closest(IGNORED_SELECTOR))
+    .slice(0, 900);
+
+  const targets: DriftTarget[] = [];
+  let scanned = 0;
+  let bound = 0;
+  let near = 0;
+  let loose = 0;
+
+  for (const element of elements) {
+    const style = getComputedStyle(element);
+    if (style.display === 'none' || style.visibility === 'hidden') continue;
+    const rect = element.getBoundingClientRect();
+    if (rect.width < 4 || rect.height < 4) continue;
+    scanned += 1;
+
+    const issues: DriftIssue[] = [];
+    for (const { property, label, category } of DRIFT_PROPERTIES) {
+      const value = style.getPropertyValue(property).trim();
+      if (!value || value === 'normal' || value === 'none' || value === 'auto') continue;
+      // Values that say nothing: a transparent fill, a zero radius, no padding, an invisible border.
+      if (category === 'color') {
+        const parsed = parseColor(value);
+        if (!parsed || parsed[3] < 0.03) continue;
+        if (property === 'border-top-color' && (Number.parseFloat(style.borderTopWidth) || 0) === 0) continue;
+      } else if (cssNumber(value) === 0) continue;
+
+      if (matchToken(category, value, colorTokens, customTokens)) { bound += 1; continue; }
+      const nearest = findNearestToken({ category, value }, colorTokens, customTokens);
+      if (nearest) near += 1;
+      else loose += 1;
+      issues.push({ property, label, category, value, nearest });
+    }
+
+    if (issues.length) targets.push({ element, label: describeElement(element), issues, rect });
+  }
+
+  // Busiest first: the boxes that matter are the ones drifting in several ways at once.
+  targets.sort((a, b) => b.issues.length - a.issues.length);
+  return { targets: targets.slice(0, 140), scanned, bound, near, loose };
+}
+
+/**
+ * The X-ray itself.
+ *
+ * Off-system boxes are outlined where they sit, colour-coded by how far off they are, and every
+ * near miss carries its own fix. Snapping goes through the normal edit path, so a snap is an
+ * ordinary tracked change: it shows up in Designer changes, copies out as CSS, and resets with
+ * everything else.
+ */
+function SystemCheckOverlay({ colorTokens, connected, onSelect, onSnap, onClose }: {
+  colorTokens: readonly BrandColorToken[];
+  connected: boolean;
+  onSelect: (element: HTMLElement) => void;
+  onSnap: (element: HTMLElement, property: string, value: string) => void;
+  onClose: () => void;
+}) {
+  const [report, setReport] = useState<DriftReport | null>(null);
+  const [openIndex, setOpenIndex] = useState<number | null>(null);
+  const [snapped, setSnapped] = useState(0);
+  const [scanning, setScanning] = useState(true);
+
+  const scan = useCallback(() => {
+    setScanning(true);
+    // Yield first: the walk is synchronous, and the overlay should paint its scanning state before
+    // the main thread disappears for a moment.
+    window.setTimeout(() => {
+      setReport(scanForDrift(colorTokens, readCustomDesignTokens()));
+      setScanning(false);
+    }, 16);
+  }, [colorTokens]);
+
+  useEffect(() => { scan(); }, [scan]);
+
+  // Rects go stale the moment the page scrolls; recompute them without re-walking the DOM.
+  useEffect(() => {
+    const reposition = () => {
+      setReport((current) => current && {
+        ...current,
+        targets: current.targets.map((target) => ({ ...target, rect: target.element.getBoundingClientRect() })),
+      });
+    };
+    window.addEventListener('scroll', reposition, true);
+    window.addEventListener('resize', reposition);
+    return () => {
+      window.removeEventListener('scroll', reposition, true);
+      window.removeEventListener('resize', reposition);
+    };
+  }, []);
+
+  const total = report ? report.bound + report.near + report.loose : 0;
+  const score = total ? Math.round((report!.bound / total) * 100) : 100;
+  const fixable = report?.targets.flatMap((target) => target.issues.filter((issue) => issue.nearest).map((issue) => ({ target, issue }))) ?? [];
+
+  const snapAll = () => {
+    fixable.forEach(({ target, issue }) => onSnap(target.element, issue.property, issue.nearest!.value));
+    setSnapped(fixable.length);
+    window.setTimeout(scan, 220);
+  };
+
+  return <>
+    <div className="hi-xray" aria-hidden="true">
+      {report?.targets.map((target, index) => {
+        const worst = target.issues.some((issue) => !issue.nearest) ? 'is-loose' : 'is-near';
+        const open = openIndex === index;
+        if (target.rect.bottom < -80 || target.rect.top > window.innerHeight + 80) return null;
+        return <div key={index} className={`hi-xray-box ${worst} ${open ? 'is-open' : ''}`} style={{ top: target.rect.top, left: target.rect.left, width: target.rect.width, height: target.rect.height }}>
+          <button
+            className="hi-xray-badge"
+            title={`${target.label} · ${target.issues.length} off-system value${target.issues.length > 1 ? 's' : ''}`}
+            onClick={() => { setOpenIndex(open ? null : index); onSelect(target.element); }}
+          >{target.issues.length}</button>
+
+          {open && <div className="hi-xray-card">
+            <header><strong>{target.label}</strong><button title="Close" onClick={() => setOpenIndex(null)}><X size={12} /></button></header>
+            {target.issues.map((issue) => <div key={issue.property} className="hi-xray-issue">
+              {issue.category === 'color'
+                ? <i className="hi-xray-chip" style={{ background: issue.value }} />
+                : <i className="hi-xray-chip is-metric">{cssNumber(issue.value)}</i>}
+              <span><strong>{issue.label}</strong><small>{issue.value}</small></span>
+              {issue.nearest
+                ? <button
+                    className="hi-xray-snap"
+                    title={`Snap to ${issue.nearest.name} (${issue.nearest.value})`}
+                    onClick={() => { onSnap(target.element, issue.property, issue.nearest!.value); setSnapped((count) => count + 1); window.setTimeout(scan, 200); }}
+                  >Snap to {issue.nearest.name}</button>
+                : <em title="No token in the system is close enough to suggest">one-off</em>}
+            </div>)}
+          </div>}
+        </div>;
+      })}
+    </div>
+
+    <div className="hi-xray-hud">
+      <div className="hi-xray-score" style={{ '--hi-score': `${score}%` } as CSSProperties}>
+        <strong>{scanning ? '···' : `${score}%`}</strong>
+        <span>on system</span>
+      </div>
+      <div className="hi-xray-legend">
+        <span className="is-bound"><i />{report?.bound ?? 0} on token</span>
+        <span className="is-near"><i />{report?.near ?? 0} near a token</span>
+        <span className="is-loose"><i />{report?.loose ?? 0} one-off</span>
+        {!connected && <small>Measured against values detected from the page — connect a design system for the real answer.</small>}
+        {connected && snapped > 0 && <small className="is-good"><Check size={11} />{snapped} value{snapped === 1 ? '' : 's'} snapped to the system</small>}
+      </div>
+      <div className="hi-xray-actions">
+        <button disabled={scanning || !fixable.length} onClick={snapAll}><Wand2 size={13} />Snap all {fixable.length ? `(${fixable.length})` : ''}</button>
+        <button onClick={scan} disabled={scanning}><RefreshCw size={13} />{scanning ? 'Scanning…' : 'Rescan'}</button>
+        <button className="hi-xray-close" onClick={onClose} title="Close system check"><X size={14} /></button>
+      </div>
+    </div>
+  </>;
 }
 
 function PageTokenAudit({ colorTokens, onSelect }: { colorTokens: readonly BrandColorToken[]; onSelect: (element: HTMLElement) => void }) {
@@ -2175,6 +2521,8 @@ function HandoffInspectorPanel() {
   const [stateResetSignal, setStateResetSignal] = useState(0);
   const [devicePreset, setDevicePreset] = useState<DevicePresetId>('iphone-15');
   const [deviceOpen, setDeviceOpen] = useState(false);
+  /** The X-ray of design-system drift, drawn over the page. Off by default — it is a mode, not a mood. */
+  const [systemCheck, setSystemCheck] = useState(false);
   // The frame stays mounted after the first open so reopening does not reboot the app and replay every reveal.
   const [deviceMounted, setDeviceMounted] = useState(false);
   const [editVersion, setEditVersion] = useState(0);
@@ -2183,6 +2531,9 @@ function HandoffInspectorPanel() {
   // --- comments -------------------------------------------------------------
   const [comments, setComments] = useState<PageComment[]>(readStoredComments);
   const [commentDraft, setCommentDraft] = useState('');
+  const [commentAuthor, setCommentAuthor] = useState(readCommentAuthor);
+  /** Which pin has its thread open on the page. Only ever one — two open bubbles fight for space. */
+  const [openThread, setOpenThread] = useState<string | null>(null);
 
   /**
    * The tool does one job at a time.
@@ -2246,6 +2597,8 @@ function HandoffInspectorPanel() {
   };
   const hasSecondCollection = designTokens.collections.length > 1;
   const [secondaryCollectionActive, setSecondaryCollectionActive] = useState(false);
+  /** The collection currently being edited against — the one the header names. */
+  const activeCollection = designTokens.collections[secondaryCollectionActive ? 1 : 0] ?? designTokens.collections[0];
   const colorTokens = secondaryCollectionActive ? aiGuideColorTokens : brandColorTokens;
   const typePresets = secondaryCollectionActive ? aiGuideTypographyRecipes : typographyRecipes;
 
@@ -2282,29 +2635,24 @@ function HandoffInspectorPanel() {
    * Held as state rather than derived at render because they depend on scroll position and live
    * layout, neither of which React re-renders for on its own.
    */
-  const [commentMarkers, setCommentMarkers] = useState<Array<{ path: string; label: string; count: number; top: number; left: number }>>([]);
+  const [commentMarkers, setCommentMarkers] = useState<CommentMarker[]>([]);
 
   const syncCommentMarkers = useCallback(() => {
     if (typeof document === 'undefined') return;
-    const byPath = new Map<string, PageComment[]>();
-    for (const comment of comments) {
-      const list = byPath.get(comment.path) ?? [];
-      list.push(comment);
-      byPath.set(comment.path, list);
-    }
-    const next: Array<{ path: string; label: string; count: number; top: number; left: number }> = [];
-    for (const [path, list] of byPath) {
-      const element = resolveInDocument(document, { uniquePath: path, selector: list[0].selector });
+    const next: CommentMarker[] = [];
+    for (const thread of groupComments(comments)) {
+      const element = resolveInDocument(document, { uniquePath: thread.path, selector: thread.comments[0].selector });
       if (!element) continue; // the element may not exist on this render of the page
       const rect = element.getBoundingClientRect();
       if (rect.width === 0 && rect.height === 0) continue;
-      next.push({ path, label: list[0].label, count: list.length, top: rect.top, left: rect.left + rect.width });
+      next.push({ ...thread, top: rect.top, left: rect.left + rect.width });
     }
     setCommentMarkers(next);
   }, [comments]);
 
   useEffect(() => {
-    if (!open) { setCommentMarkers([]); return; }
+    // Pins are drawn whether or not the panel is open: walking up to a page and seeing that three
+    // people have already said something about the header is the whole point of pinning them.
     syncCommentMarkers();
     window.addEventListener('scroll', syncCommentMarkers, true);
     window.addEventListener('resize', syncCommentMarkers);
@@ -2324,12 +2672,32 @@ function HandoffInspectorPanel() {
       label: snapshot.family.label,
       text: trimmed,
       createdAt: new Date().toISOString(),
+      author: commentAuthor.trim() || undefined,
     }]);
     setCommentDraft('');
-  }, [snapshot]);
+  }, [commentAuthor, snapshot]);
 
   const removeComment = useCallback((id: string) => {
     setComments((current) => current.filter((comment) => comment.id !== id));
+  }, []);
+
+  const toggleCommentResolved = useCallback((id: string) => {
+    setComments((current) => current.map((comment) => (comment.id === id ? { ...comment, resolved: !comment.resolved } : comment)));
+  }, []);
+
+  /**
+   * Selects whatever a pin is attached to.
+   *
+   * Pins are the one part of the tool that points *into* the page from outside it, so they need a
+   * way back to a selection — clicking a note should put you on the thing the note is about.
+   */
+  const selectByPath = useCallback((path: string) => {
+    const element = resolveInDocument(document, { uniquePath: path, selector: '' });
+    if (!element) return;
+    selectedRef.current = element;
+    hoverRef.current = element;
+    setLocked(true);
+    setSnapshot(createSnapshot(element));
   }, []);
 
   const refresh = useCallback((element = selectedRef.current || hoverRef.current) => {
@@ -2367,7 +2735,12 @@ function HandoffInspectorPanel() {
       if (deviceOpen) return;
       // A drag or an inline edit consumes Escape itself; unlocking underneath it would lose the element.
       if (canvasBusyRef.current) return;
+      // Escape peels one layer at a time, innermost first — an open note, then the selection, then
+      // the X-ray, then the tool. Closing the whole thing because a bubble was open is a small
+      // betrayal of the key everyone reaches for.
+      if (openThread) { setOpenThread(null); return; }
       if (locked) { setLocked(false); selectedRef.current = null; }
+      else if (systemCheck) setSystemCheck(false);
       else setOpen(false);
     };
     const onViewport = () => refresh();
@@ -2384,7 +2757,7 @@ function HandoffInspectorPanel() {
       window.removeEventListener('resize', onViewport);
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
-  }, [deviceOpen, locked, open, refresh]);
+  }, [deviceOpen, locked, open, openThread, refresh, systemCheck]);
 
   useEffect(() => {
     if (open) return;
@@ -3024,22 +3397,23 @@ function HandoffInspectorPanel() {
     {!open && <button className="hi-launcher" onClick={toggleInspector} aria-label="Open inspector"><ScanSearch size={16} /><span>Inspect</span></button>}
 
     {/* Pins live outside the panel so they sit over the page, next to what they refer to. */}
-    {open && commentMarkers.length > 0 && <div className="hi-comment-pins" aria-hidden="true">
-      {commentMarkers.map((marker) => <button
-        key={marker.path}
-        className="hi-comment-pin"
-        style={{ top: marker.top, left: marker.left }}
-        title={`${marker.count} comment${marker.count > 1 ? 's' : ''} on ${marker.label}`}
-        onClick={() => {
-          const element = resolveInDocument(document, { uniquePath: marker.path, selector: '' });
-          if (!element) return;
-          selectedRef.current = element;
-          hoverRef.current = element;
-          setLocked(true);
-          setSnapshot(createSnapshot(element));
-        }}
-      ><MessageSquare size={12} />{marker.count}</button>)}
-    </div>}
+    {open && !deviceOpen && systemCheck && <SystemCheckOverlay
+      colorTokens={colorTokens}
+      connected={designSystemConnected}
+      onSelect={selectElement}
+      onSnap={(element, property, value) => applyStyleTo([element], property, value)}
+      onClose={() => setSystemCheck(false)}
+    />}
+
+    {!deviceOpen && commentMarkers.length > 0 && <CommentPinLayer
+      markers={commentMarkers}
+      openPath={openThread}
+      onOpenPath={setOpenThread}
+      onSelect={(path) => { setOpen(true); selectByPath(path); }}
+      onReply={(path) => { selectByPath(path); setMode('comment'); setFocusComposer((count) => count + 1); setOpenThread(null); }}
+      onToggleResolved={toggleCommentResolved}
+      onDelete={removeComment}
+    />}
     {open && <>
       {deviceMounted && <DeviceOverlay
         presetId={devicePreset}
@@ -3048,6 +3422,7 @@ function HandoffInspectorPanel() {
         dock={dock}
         hidden={!deviceOpen}
         editVersion={editVersion}
+        comments={comments}
         canvasEdit={canvasEdit}
         canvasSize={canvasSize}
         canvasBusyRef={canvasBusyRef}
@@ -3055,6 +3430,7 @@ function HandoffInspectorPanel() {
         onCanvasText={applyTextFromDevice}
         onFrameDocument={registerDeviceDocument}
         onSelectPath={selectFromDevice}
+        onComment={(path) => { selectByPath(path); setMode('comment'); setFocusComposer((count) => count + 1); }}
         onReplay={replayIntoDevice}
         onClose={() => setDeviceOpen(false)}
         onExit={() => setOpen(false)}
@@ -3082,6 +3458,26 @@ function HandoffInspectorPanel() {
                 <button className={secondaryCollectionActive ? 'is-active' : ''} aria-pressed={secondaryCollectionActive} onClick={() => setSecondaryCollectionActive(true)} title={designTokens.collections[1]?.name}>{designTokens.collections[1]?.name ?? 'Secondary'}</button>
               </div>
             )}
+            {/* What am I editing against? Without this the answer is a guess — the swatches look the
+                same whether they came from a real system or from the page, and only one of those is
+                worth trusting. */}
+            <span
+              className={`hi-system-chip ${designSystemConnected ? 'is-connected' : ''}`}
+              title={designSystemConnected
+                ? `Editing against ${activeCollection?.name ?? 'your design system'} — ${activeCollection?.colors.length ?? 0} colours, ${activeCollection?.typography.length ?? 0} text styles, ${designTokens.spacing.length} spacing, ${designTokens.radius.length} radii`
+                : 'No design system connected — colours, type and spacing are read from this page'}
+            >
+              <i />{designSystemConnected ? (activeCollection?.name ?? 'Design system') : 'Detected'}
+            </span>
+
+            {/* Lives in the header, next to the panel-side switch, because it changes what the whole
+                page looks like rather than anything about the current selection. */}
+            <button
+              className={`hi-xray-toggle ${systemCheck ? 'is-active' : ''}`}
+              aria-pressed={systemCheck}
+              title={systemCheck ? 'Hide system check' : 'System check — show every value on this page that drifts from the design system'}
+              onClick={() => { setSystemCheck((current) => !current); setDeviceOpen(false); }}
+            ><Radar size={15} /></button>
             <div className="hi-dock-switch" role="group" aria-label="Panel side">
               <button className={dock === 'left' ? 'is-active' : ''} aria-pressed={dock === 'left'} onClick={() => setDock('left')} title="Move panel to left"><PanelLeft size={15} /></button>
               <button className={dock === 'right' ? 'is-active' : ''} aria-pressed={dock === 'right'} onClick={() => setDock('right')} title="Move panel to right"><PanelRight size={15} /></button>
@@ -3137,15 +3533,36 @@ function HandoffInspectorPanel() {
                     }}
                   />
                   <div className="hi-comment-composer-actions">
-                    <small>Enter to post · Shift + Enter for a new line</small>
+                    {/* Signing is a one-off: type it once and every later note carries it. Unsigned
+                        notes are still allowed, because a solo review needs no byline. */}
+                    <label className="hi-comment-signature" title="Notes you post are signed with this name">
+                      <span>Signed</span>
+                      <input
+                        value={commentAuthor}
+                        placeholder="your name"
+                        aria-label="Your name, shown on notes you post"
+                        onChange={(event) => setCommentAuthor(event.target.value)}
+                        onBlur={(event) => writeCommentAuthor(event.target.value.trim())}
+                      />
+                    </label>
                     <button disabled={!commentDraft.trim()} onClick={() => addComment(commentDraft)}>Post</button>
                   </div>
+                  <small className="hi-comment-hint">Enter to post · Shift + Enter for a new line</small>
                 </div>
                 {elementComments.length > 0 && <div className="hi-comment-list">
-                  {elementComments.map((comment) => <article key={comment.id}>
+                  {elementComments.map((comment) => <article key={comment.id} className={comment.resolved ? 'is-resolved' : ''}>
                     <p>{comment.text}</p>
                     <footer>
-                      <time dateTime={comment.createdAt}>{new Date(comment.createdAt).toLocaleString()}</time>
+                      <time dateTime={comment.createdAt} title={new Date(comment.createdAt).toLocaleString()}>
+                        {comment.author ? `${comment.author} · ` : ''}{relativeTime(comment.createdAt)}
+                      </time>
+                      <button
+                        title={comment.resolved ? 'Reopen this note' : 'Mark resolved'}
+                        aria-label={comment.resolved ? 'Reopen this note' : 'Mark resolved'}
+                        aria-pressed={Boolean(comment.resolved)}
+                        className={comment.resolved ? 'is-active' : ''}
+                        onClick={() => toggleCommentResolved(comment.id)}
+                      ><Check size={12} /></button>
                       <button title="Delete comment" aria-label="Delete comment" onClick={() => removeComment(comment.id)}><Trash2 size={12} /></button>
                     </footer>
                   </article>)}
@@ -3239,6 +3656,85 @@ function HandoffInspectorPanel() {
         </footer>
       </aside>
     </>}
+  </div>;
+}
+
+/**
+ * The notes, on the page, readable without opening anything.
+ *
+ * A pin that only says "3" is a promise of information, not information — you still have to click
+ * into the panel to find out what the note said, and that is three clicks between a reviewer's
+ * remark and a designer understanding it. Hovering a pin peeks at the note; clicking opens the
+ * whole thread where it is pinned, with the two actions a thread ever needs.
+ */
+function CommentPinLayer({ markers, openPath, onOpenPath, onSelect, onReply, onToggleResolved, onDelete }: {
+  markers: CommentMarker[];
+  openPath: string | null;
+  onOpenPath: (path: string | null) => void;
+  onSelect: (path: string) => void;
+  onReply: (path: string) => void;
+  onToggleResolved: (id: string) => void;
+  onDelete: (id: string) => void;
+}) {
+  const [peeked, setPeeked] = useState<string | null>(null);
+
+  return <div className="hi-comment-pins">
+    {markers.map((marker) => {
+      const open = openPath === marker.path;
+      const peeking = !open && peeked === marker.path;
+      // Bubbles near the right edge would otherwise open off-screen.
+      const flip = marker.left > window.innerWidth - 320;
+      return <div
+        key={marker.path}
+        className={`hi-comment-pin-anchor ${flip ? 'is-flipped' : ''}`}
+        style={{ top: marker.top, left: marker.left }}
+        onMouseEnter={() => setPeeked(marker.path)}
+        onMouseLeave={() => setPeeked(null)}
+      >
+        <button
+          className={`hi-comment-pin ${marker.resolved ? 'is-resolved' : ''} ${open ? 'is-open' : ''}`}
+          title={marker.resolved ? `Note ${marker.index} · resolved` : `Note ${marker.index} on ${marker.label}`}
+          onClick={(event) => {
+            event.stopPropagation();
+            onOpenPath(open ? null : marker.path);
+            onSelect(marker.path);
+          }}
+        >
+          {marker.resolved ? <Check size={11} /> : <MessageSquare size={11} />}
+          {marker.index}
+          {marker.comments.length > 1 && <em>{marker.comments.length}</em>}
+        </button>
+
+        {peeking && <div className="hi-comment-peek">
+          <strong>{marker.comments[0].author || 'Note'}</strong>
+          <p>{marker.comments[0].text}</p>
+          {marker.comments.length > 1 && <small>+{marker.comments.length - 1} more · click to open</small>}
+        </div>}
+
+        {open && <div className="hi-comment-bubble" onMouseDown={(event) => event.stopPropagation()}>
+          <header>
+            <strong>Note {marker.index}</strong>
+            <span title={marker.label}>{marker.label}</span>
+            <button title="Close" onClick={() => onOpenPath(null)}><X size={12} /></button>
+          </header>
+          <div className="hi-comment-bubble-list">
+            {marker.comments.map((comment) => <article key={comment.id} className={comment.resolved ? 'is-resolved' : ''}>
+              <p>{comment.text}</p>
+              <footer>
+                <span>{comment.author || 'Unsigned'} · {relativeTime(comment.createdAt)}</span>
+                <button
+                  title={comment.resolved ? 'Reopen this note' : 'Mark resolved'}
+                  aria-pressed={Boolean(comment.resolved)}
+                  onClick={() => onToggleResolved(comment.id)}
+                ><Check size={12} /></button>
+                <button title="Delete this note" onClick={() => onDelete(comment.id)}><Trash2 size={12} /></button>
+              </footer>
+            </article>)}
+          </div>
+          <button className="hi-comment-bubble-reply" onClick={() => onReply(marker.path)}><MessageSquare size={12} />Reply in the panel</button>
+        </div>}
+      </div>;
+    })}
   </div>;
 }
 

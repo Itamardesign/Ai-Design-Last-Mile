@@ -21,7 +21,8 @@
     "src",
     "scripts",
     "tsconfig.json",
-    "README.md"
+    "README.md",
+    "extension"
   ],
   "repository": {
     "type": "git",
@@ -33,7 +34,12 @@
   "scripts": {
     "clean": "node scripts/clean.mjs",
     "build": "npm run clean && node scripts/gen-styles.mjs && tsc -p tsconfig.json && node scripts/copy-assets.mjs",
-    "prepare": "node scripts/prepare.mjs"
+    "prepare": "node scripts/prepare.mjs",
+    "build:extension": "node extension/build.mjs",
+    "dev:extension": "node extension/build.mjs --watch",
+    "typecheck:extension": "tsc -p extension/tsconfig.json",
+    "pack:extension": "node extension/build.mjs && node extension/zip.mjs",
+    "test:extension": "node extension/build.mjs && node extension/test/tokens.test.mjs && node extension/test/notes.test.mjs && node extension/test/background.test.mjs"
   },
   "peerDependencies": {
     "react": ">=18",
@@ -43,14 +49,22 @@
     "lucide-react": "^0.468.0"
   },
   "devDependencies": {
+    "@types/chrome": "^0.2.6",
     "@types/node": "^22.14.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "esbuild": "^0.25.0",
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
     "typescript": "~5.8.2"
   },
-  "keywords": ["design-system", "devtools", "inspector", "handoff", "react"],
+  "keywords": [
+    "design-system",
+    "devtools",
+    "inspector",
+    "handoff",
+    "react"
+  ],
   "license": "SEE LICENSE IN LICENSE",
   "publishConfig": {
     "access": "public"
