@@ -1245,8 +1245,9 @@
 .hi-font-current { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 
 .hi-font-menu {
-  position: absolute; z-index: 40; top: calc(100% + 6px); right: 0; left: 0;
-  max-height: 310px; overflow-y: auto; padding: 6px;
+  /* Fixed, not absolute: the panel body scrolls, and a list drawn inside a scrolling box gets
+     clipped by it. Coordinates come from the trigger — see `useMenuAnchor`. */
+  position: fixed; z-index: 2147483645; overflow-y: auto; padding: 6px;
   border: 1px solid var(--hi-border-strong); border-radius: 13px;
   background: var(--hi-surface-strong, #fff);
   box-shadow: 0 18px 44px rgba(31, 33, 68, .18);
@@ -1520,8 +1521,12 @@
    Comments and the design/browse switch.
    =========================================================================== */
 
-/* --- pins over commented elements ---------------------------------------- */
+/* --- pins over commented elements ----------------------------------------
+   A pin has to read at a glance from across a room in a review, and open into
+   something you can actually read without leaving the page. Hover peeks at the
+   note; click opens the thread in place. */
 .hi-comment-pins { position: fixed; z-index: 2147482000; inset: 0; pointer-events: none; }
+.hi-comment-pin-anchor { position: absolute; pointer-events: none; }
 .hi-comment-pin {
   position: absolute; display: inline-flex; padding: 3px 7px 3px 5px; gap: 3px;
   align-items: center; transform: translate(-6px, -8px);
@@ -1529,8 +1534,128 @@
   color: #fff; background: #7c3cff; font: inherit; font-size: 10.5px; font-weight: 700;
   cursor: pointer; pointer-events: auto;
   box-shadow: 0 4px 12px rgba(31, 33, 68, .3);
+  transition: transform .16s cubic-bezier(.2, .9, .3, 1.4), background .15s ease;
 }
-.hi-comment-pin:hover { background: #6a2ee0; }
+.hi-comment-pin:hover { background: #6a2ee0; transform: translate(-6px, -8px) scale(1.09); }
+.hi-comment-pin.is-open { background: #4c1fb0; transform: translate(-6px, -8px) scale(1.09); }
+.hi-comment-pin.is-resolved { background: #12a150; }
+.hi-comment-pin.is-resolved:hover { background: #0d8a43; }
+/* The reply count sits off the corner rather than beside the number: inline, "1" plus "2" reads
+   as note twelve. */
+.hi-comment-pin > em {
+  position: absolute; top: -7px; right: -7px; display: grid; min-width: 15px; height: 15px;
+  padding: 0 3px; place-items: center; border: 1.5px solid #fff; border-radius: 999px;
+  background: #27212d; color: #fff; font-size: 8.5px; font-style: normal; line-height: 1;
+}
+
+/* Hover preview: the note itself, one hover away — and reachable, not a tooltip that flees. */
+.hi-comment-peek {
+  position: absolute; top: -10px; left: 16px; z-index: 2; width: 244px; padding: 9px 10px 8px;
+  border: 1px solid var(--hi-border); border-radius: 11px;
+  background: #fff; box-shadow: 0 14px 34px rgba(31, 33, 68, .22);
+  pointer-events: auto; animation: hi-pop .14s ease-out;
+}
+.is-flipped .hi-comment-peek { left: auto; right: 16px; }
+.hi-comment-peek > header { display: flex; margin-bottom: 5px; align-items: baseline; justify-content: space-between; gap: 8px; }
+.hi-comment-peek > header strong { color: var(--hi-accent); font-size: 10px; letter-spacing: .04em; text-transform: uppercase; }
+.hi-comment-peek > header span {
+  overflow: hidden; color: var(--hi-faint); font-size: 10px; text-overflow: ellipsis; white-space: nowrap;
+}
+.hi-comment-peek article + article { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--hi-border); }
+.hi-comment-peek p {
+  display: -webkit-box; overflow: hidden; margin: 0; color: var(--hi-text); font-size: 11.5px; line-height: 1.45;
+  -webkit-box-orient: vertical; -webkit-line-clamp: 4;
+}
+.hi-comment-peek small { display: block; margin-top: 3px; color: var(--hi-faint); font-size: 10px; }
+.hi-comment-peek-more { color: var(--hi-muted) !important; }
+.hi-comment-peek > button {
+  display: flex; width: 100%; margin-top: 8px; min-height: 26px; align-items: center;
+  justify-content: center; gap: 5px; border: 0; border-radius: 8px;
+  color: var(--hi-accent); background: rgba(139, 92, 246, .1);
+  font: inherit; font-size: 11px; font-weight: 600; cursor: pointer;
+}
+.hi-comment-peek > button:hover { color: #fff; background: var(--hi-accent, #7c3cff); }
+
+/* An open thread is the one thing being attended to; the page steps back behind it. */
+.hi-comment-scrim {
+  position: fixed; inset: 0; z-index: 1; background: rgba(23, 32, 51, .28);
+  backdrop-filter: blur(1px); pointer-events: auto; animation: hi-fade .16s ease-out;
+}
+
+@keyframes hi-fade { from { opacity: 0; } to { opacity: 1; } }
+
+/* Click: the whole thread, in place. */
+.hi-comment-bubble {
+  position: absolute; top: -12px; left: 18px; z-index: 3; width: 268px;
+  border: 1px solid var(--hi-border); border-radius: 12px; background: #fff;
+  box-shadow: 0 18px 44px rgba(31, 33, 68, .26); pointer-events: auto;
+  animation: hi-pop .16s cubic-bezier(.2, .9, .3, 1.2);
+}
+.is-flipped .hi-comment-bubble { left: auto; right: 18px; }
+.hi-comment-bubble > header {
+  display: flex; padding: 9px 8px 9px 11px; align-items: center; gap: 7px;
+  border-bottom: 1px solid var(--hi-border);
+}
+.hi-comment-bubble > header strong { color: var(--hi-text); font-size: 11.5px; }
+.hi-comment-bubble > header span {
+  flex: 1; overflow: hidden; color: var(--hi-muted); font-size: 10.5px; text-overflow: ellipsis; white-space: nowrap;
+}
+.hi-comment-bubble > header button {
+  display: grid; width: 22px; height: 22px; flex: none; place-items: center;
+  border: 0; border-radius: 6px; color: var(--hi-muted); background: transparent; cursor: pointer;
+}
+.hi-comment-bubble > header button:hover { color: var(--hi-text); background: rgba(23, 32, 51, .07); }
+.hi-comment-bubble-list { display: grid; max-height: 232px; overflow-y: auto; gap: 1px; }
+.hi-comment-bubble-list article { padding: 9px 11px; border-bottom: 1px solid var(--hi-border); }
+.hi-comment-bubble-list article:last-child { border-bottom: 0; }
+.hi-comment-bubble-list article.is-resolved { background: rgba(18, 161, 80, .06); }
+.hi-comment-bubble-list article.is-resolved p { color: var(--hi-muted); text-decoration: line-through; }
+.hi-comment-bubble-list p { margin: 0; color: var(--hi-text); font-size: 12px; line-height: 1.5; white-space: pre-wrap; }
+.hi-comment-bubble-list footer { display: flex; margin-top: 5px; align-items: center; gap: 4px; }
+.hi-comment-bubble-list footer span { flex: 1; overflow: hidden; color: var(--hi-faint); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.hi-comment-bubble-list footer button {
+  display: grid; width: 21px; height: 21px; place-items: center; border: 0; border-radius: 6px;
+  color: var(--hi-faint); background: transparent; cursor: pointer;
+}
+.hi-comment-bubble-list footer button:first-of-type:hover { color: #12a150; background: rgba(18, 161, 80, .12); }
+.hi-comment-bubble-list footer button:last-of-type:hover { color: #d92d20; background: rgba(217, 45, 32, .1); }
+.hi-comment-bubble-list footer button[aria-pressed='true'] { color: #12a150; }
+.hi-comment-bubble-reply {
+  display: flex; width: 100%; padding: 8px; align-items: center; justify-content: center; gap: 5px;
+  border: 0; border-top: 1px solid var(--hi-border); border-radius: 0 0 12px 12px;
+  color: var(--hi-accent); background: rgba(139, 92, 246, .07);
+  font: inherit; font-size: 11px; font-weight: 600; cursor: pointer;
+}
+.hi-comment-bubble-reply:hover { background: rgba(139, 92, 246, .14); }
+
+@keyframes hi-pop {
+  from { opacity: 0; transform: translateY(4px) scale(.97); }
+  to { opacity: 1; transform: none; }
+}
+
+/* --- pins inside the device preview -------------------------------------- */
+.hi-device-pin {
+  position: absolute; z-index: 4; display: inline-flex; padding: 3px 7px 3px 5px; gap: 3px;
+  align-items: center; transform-origin: 0 0;
+  border: 1.5px solid #fff; border-radius: 999px 999px 999px 3px;
+  color: #fff; background: #7c3cff; font: inherit; font-size: 10.5px; font-weight: 700;
+  cursor: pointer; box-shadow: 0 4px 12px rgba(31, 33, 68, .3);
+}
+.hi-device-pin:hover { background: #6a2ee0; }
+.hi-device-pin.is-resolved { background: #12a150; }
+
+/* --- signing your notes --------------------------------------------------- */
+.hi-comment-signature {
+  display: inline-flex; min-width: 0; flex: 1; align-items: center; gap: 5px;
+  color: var(--hi-muted); font-size: 10px;
+}
+.hi-comment-signature span { flex: none; letter-spacing: .05em; text-transform: uppercase; }
+.hi-comment-signature input {
+  width: 100%; min-width: 0; padding: 3px 6px; border: 1px dashed var(--hi-border);
+  border-radius: 6px; color: var(--hi-text); background: transparent; font: inherit; font-size: 11px;
+}
+.hi-comment-signature input:focus { border-style: solid; border-color: var(--hi-accent); outline: 0; }
+.hi-comment-hint { color: var(--hi-faint); font-size: 10px; }
 
 /* --- comment mode button in the header ----------------------------------- */
 .hi-comment-mode { position: relative; }
@@ -1616,3 +1741,634 @@
   letter-spacing: .07em; text-transform: uppercase;
 }
 .hi-inspect-group h4 em { font-size: 9.5px; font-weight: 500; font-style: normal; letter-spacing: .02em; text-transform: none; }
+
+/* Resolved threads stay in the list, faded — a review reads as decisions, not gaps. */
+.hi-comment-list article.is-resolved { background: rgba(18, 161, 80, .07); }
+.hi-comment-list article.is-resolved p { color: var(--hi-muted); text-decoration: line-through; }
+.hi-comment-list footer button.is-active { color: #12a150; }
+.hi-comment-list footer button:first-of-type:hover { color: #12a150; background: rgba(18, 161, 80, .12); }
+
+}
+.hi-control--scrub > .hi-scrub-label:hover {
+  border-bottom-color: rgba(124, 60, 255, .45);
+  color: var(--hi-accent, #7c3cff);
+}
+
+/* ===========================================================================
+   Dropdowns the panel actually owns.
+
+   A native `<select>` draws its list in the operating system: no blur, no
+   accent, no check beside what is set, and on Windows a grey box from another
+   decade. These triggers borrow the field shape already used by every input, and
+   the list is a floating card in the same glass as the panel around it.
+   =========================================================================== */
+
+.hi-select { position: relative; min-width: 0; }
+
+.hi-select-trigger {
+  display: flex;
+  width: 100%;
+  min-height: 33px;
+  padding: 0 9px 0 11px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px solid var(--hi-border);
+  border-radius: 10px;
+  color: var(--hi-text);
+  background: rgba(255, 255, 255, .82);
+  box-shadow: 0 6px 18px rgba(71, 78, 122, .045), inset 0 0 0 1px rgba(255, 255, 255, .55);
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color .18s ease, box-shadow .18s ease, background-color .18s ease;
+}
+.hi-select-trigger > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hi-select-trigger > svg { flex: none; color: var(--hi-faint); transition: transform .18s ease, color .18s ease; }
+.hi-select-trigger:hover { border-color: var(--hi-border-strong); background: #fff; }
+.hi-select-trigger:hover > svg { color: var(--hi-accent); }
+.hi-select-trigger.is-open,
+.hi-select-trigger:focus-visible {
+  border-color: var(--hi-accent);
+  background: #fff;
+  outline: 0;
+  box-shadow: 0 0 0 3px rgba(124, 60, 255, .13);
+}
+.hi-select-trigger.is-open > svg { transform: rotate(180deg); color: var(--hi-accent); }
+
+/* The list: a card of its own, floating clear of the field. */
+.hi-select-menu {
+  /* Same reasoning as the font menu: positioned against the viewport so nothing clips it. */
+  position: fixed;
+  z-index: 2147483645;
+  display: grid;
+  padding: 5px;
+  overflow-y: auto;
+  gap: 1px;
+  border: 1px solid var(--hi-border);
+  border-radius: 13px;
+  background: rgba(252, 253, 255, .97);
+  box-shadow: 0 22px 48px rgba(69, 76, 122, .24), inset 0 0 0 1px rgba(255, 255, 255, .7);
+  backdrop-filter: blur(24px) saturate(140%);
+  scrollbar-width: thin;
+  animation: hi-select-in .14s cubic-bezier(.2, .9, .3, 1.2);
+}
+
+@keyframes hi-select-in {
+  from { opacity: 0; transform: translateY(-4px) scale(.985); }
+  to { opacity: 1; transform: none; }
+}
+
+.hi-select-menu button {
+  display: grid;
+  min-height: 30px;
+  padding: 0 9px 0 7px;
+  align-items: center;
+  grid-template-columns: 15px minmax(0, 1fr) auto;
+  gap: 6px;
+  border: 0;
+  border-radius: 9px;
+  color: var(--hi-text);
+  background: transparent;
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+.hi-select-menu button > svg { opacity: 0; color: var(--hi-accent); transition: opacity .12s ease; }
+.hi-select-menu button > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hi-select-menu button > small { color: var(--hi-faint); font-size: 10px; }
+/* The cursor row follows the pointer and the arrow keys alike, so both feel like one control. */
+.hi-select-menu button.is-cursor { background: rgba(124, 60, 255, .08); }
+.hi-select-menu button.is-active { color: var(--hi-accent); font-weight: 600; }
+.hi-select-menu button.is-active > svg { opacity: 1; }
+
+/* --- size: type it, drag it, or take a preset ------------------------------ */
+.hi-size-control { position: relative; display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr) 30px; gap: 4px; }
+.hi-size-presets {
+  display: grid;
+  height: 33px;
+  place-items: center;
+  border: 1px solid var(--hi-border);
+  border-radius: 10px;
+  color: var(--hi-faint);
+  background: rgba(255, 255, 255, .82);
+  cursor: pointer;
+  transition: color .18s ease, border-color .18s ease, background-color .18s ease;
+}
+.hi-size-presets:hover { color: var(--hi-accent); border-color: var(--hi-border-strong); background: #fff; }
+.hi-size-presets.is-open { color: #fff; border-color: transparent; background: var(--hi-accent); }
+.hi-size-menu button > span { font-variant-numeric: tabular-nums; }
+/* Every preset previewed at its own size — picking type from numbers alone is guesswork. */
+.hi-size-menu button > small { color: var(--hi-muted); font-size: 11px; line-height: 1; }
+
+/* Width comes from the trigger; the preset list needs a floor of its own. */
+.hi-size-menu { min-width: 148px; }
+
+/* The layer menus are drawn in — outside the panel, where fixed positioning still means the
+   viewport. It must never intercept a pointer of its own; only the menus inside it do. */
+.hi-menu-layer { position: static; pointer-events: none; }
+.hi-menu-layer > * { pointer-events: auto; }
+
+/* ===========================================================================
+   The handoff tab.
+
+   A document rather than a control panel: it reads top to bottom, grouped by
+   element, and every row can be disowned. Same glass as the rest of the panel,
+   but quieter — nothing here is a control you reach for repeatedly.
+   =========================================================================== */
+
+.hi-handoff { display: grid; padding: 12px 14px 18px; gap: 12px; }
+
+.hi-handoff-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.hi-handoff-summary { display: flex; align-items: baseline; gap: 5px; }
+.hi-handoff-summary strong { color: var(--hi-text); font-size: 15px; font-weight: 700; letter-spacing: -.01em; }
+.hi-handoff-summary strong.is-alert { color: #d92d20; }
+.hi-handoff-summary span { margin-right: 6px; color: var(--hi-muted); font-size: 10px; }
+
+.hi-handoff-exports { display: flex; flex-wrap: wrap; gap: 6px; }
+.hi-handoff-exports button,
+.hi-handoff-exports .hi-copy {
+  display: inline-flex; min-height: 30px; padding: 0 11px; align-items: center; gap: 6px;
+  border: 1px solid var(--hi-border); border-radius: 9px; color: var(--hi-text);
+  background: rgba(255, 255, 255, .8); font: inherit; font-size: 11px; font-weight: 600; cursor: pointer;
+  transition: border-color .16s ease, color .16s ease, background-color .16s ease;
+}
+.hi-handoff-exports button:hover:not(:disabled),
+.hi-handoff-exports .hi-copy:hover { border-color: var(--hi-accent); color: var(--hi-accent); background: #fff; }
+.hi-handoff-exports .hi-copy:first-child { border-color: transparent; color: #fff; background: var(--hi-accent); }
+.hi-handoff-exports .hi-copy:first-child:hover { color: #fff; background: #6b2ee6; }
+.hi-handoff-exports button:disabled { color: var(--hi-faint); cursor: default; }
+.hi-handoff-kept { margin: 0; color: var(--hi-muted); font-size: 10.5px; }
+
+/* --- the screenshot ------------------------------------------------------- */
+.hi-handoff-shot { margin: 0; overflow: hidden; border: 1px solid var(--hi-border); border-radius: 12px; background: #fff; }
+.hi-handoff-shot img { display: block; width: 100%; }
+.hi-handoff-shot figcaption { display: flex; padding: 7px 8px; align-items: center; gap: 6px; border-top: 1px solid var(--hi-border); }
+.hi-handoff-shot figcaption span { flex: 1; color: var(--hi-muted); font-size: 10px; }
+.hi-handoff-shot figcaption button {
+  display: inline-flex; min-height: 24px; padding: 0 8px; align-items: center; gap: 4px;
+  border: 1px solid var(--hi-border); border-radius: 7px; color: var(--hi-muted);
+  background: transparent; font: inherit; font-size: 10px; cursor: pointer;
+}
+.hi-handoff-shot figcaption button:hover { color: var(--hi-accent); border-color: var(--hi-accent); }
+
+/* --- one element, everything about it -------------------------------------- */
+.hi-handoff-groups { display: grid; gap: 10px; }
+.hi-handoff-group {
+  display: grid; padding: 10px; gap: 8px;
+  border: 1px solid var(--hi-border); border-radius: 13px; background: rgba(255, 255, 255, .62);
+}
+.hi-handoff-group > header { display: flex; align-items: center; gap: 8px; }
+.hi-handoff-index {
+  display: grid; width: 19px; height: 19px; flex: none; place-items: center;
+  border-radius: 999px; color: #fff; background: var(--hi-accent, #7c3cff);
+  font-size: 9.5px; font-weight: 700;
+}
+.hi-handoff-target {
+  display: grid; min-width: 0; flex: 1; gap: 1px; border: 0; padding: 0;
+  background: transparent; font: inherit; text-align: left; cursor: pointer;
+}
+.hi-handoff-target strong { color: var(--hi-text); font-size: 11.5px; }
+.hi-handoff-target code {
+  overflow: hidden; color: var(--hi-muted); font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 9.5px; text-overflow: ellipsis; white-space: nowrap;
+}
+.hi-handoff-target:hover strong { color: var(--hi-accent); }
+
+/* --- what was said --------------------------------------------------------- */
+.hi-handoff-notes { display: grid; gap: 5px; }
+.hi-handoff-notes article { padding: 7px 9px; border-left: 2px solid var(--hi-accent); border-radius: 0 8px 8px 0; background: rgba(139, 92, 246, .06); }
+.hi-handoff-notes article.is-resolved { border-left-color: #12a150; background: rgba(18, 161, 80, .06); }
+.hi-handoff-notes article.is-resolved p { color: var(--hi-muted); text-decoration: line-through; }
+.hi-handoff-notes p { margin: 0; color: var(--hi-text); font-size: 11.5px; line-height: 1.45; white-space: pre-wrap; }
+.hi-handoff-notes footer { display: flex; margin-top: 4px; align-items: center; gap: 4px; }
+.hi-handoff-notes footer span { flex: 1; color: var(--hi-faint); font-size: 9.5px; }
+.hi-handoff-notes footer button {
+  display: grid; width: 20px; height: 20px; place-items: center; border: 0; border-radius: 6px;
+  color: var(--hi-faint); background: transparent; cursor: pointer;
+}
+.hi-handoff-notes footer button:first-of-type:hover { color: #12a150; background: rgba(18, 161, 80, .12); }
+.hi-handoff-notes footer button:last-of-type:hover { color: #d92d20; background: rgba(217, 45, 32, .1); }
+.hi-handoff-notes footer button[aria-pressed='true'] { color: #12a150; }
+
+/* --- what changed ---------------------------------------------------------- */
+.hi-handoff-changes { display: grid; margin: 0; padding: 0; gap: 2px; list-style: none; }
+.hi-handoff-changes li {
+  display: grid; min-height: 26px; padding: 3px 4px 3px 7px; align-items: center;
+  grid-template-columns: minmax(64px, auto) minmax(0, 1fr) auto auto auto 22px; gap: 6px;
+  border-radius: 8px;
+}
+.hi-handoff-changes li:hover { background: rgba(23, 32, 51, .04); }
+.hi-handoff-property { color: var(--hi-text); font-size: 10.5px; font-weight: 600; }
+.hi-handoff-value { overflow: hidden; color: var(--hi-muted); font-size: 10.5px; text-overflow: ellipsis; white-space: nowrap; }
+.hi-handoff-value del { color: var(--hi-faint); }
+.hi-handoff-token {
+  padding: 2px 6px; border-radius: 999px; color: #0d6b36; background: rgba(18, 161, 80, .12);
+  font-size: 9px; font-style: normal; font-weight: 600;
+}
+.hi-handoff-scope {
+  padding: 2px 5px; border-radius: 999px; color: var(--hi-accent); background: rgba(124, 60, 255, .1);
+  font-size: 9px; font-style: normal; font-weight: 600;
+}
+.hi-handoff-undo {
+  display: grid; width: 20px; height: 20px; place-items: center; border: 0; border-radius: 6px;
+  color: var(--hi-faint); background: transparent; cursor: pointer; opacity: 0;
+  transition: opacity .14s ease, color .14s ease, background-color .14s ease;
+}
+.hi-handoff-changes li:hover .hi-handoff-undo { opacity: 1; }
+.hi-handoff-undo:focus-visible { opacity: 1; }
+.hi-handoff-undo:hover { color: #d92d20; background: rgba(217, 45, 32, .12); }
+.hi-handoff-instruction {
+  display: flex; margin: 3px 0 0; padding: 6px 8px; grid-column: 1 / -1; align-items: flex-start; gap: 6px;
+  border-radius: 7px; color: #4b2fa8; background: rgba(124, 60, 255, .08);
+  font-size: 10px; line-height: 1.45;
+}
+.hi-handoff-instruction svg { flex: none; margin-top: 1px; }
+
+/* --- what is wrong with it -------------------------------------------------- */
+.hi-handoff-issues { display: grid; margin: 0; padding: 0; gap: 3px; list-style: none; }
+.hi-handoff-issues li { display: flex; padding: 5px 7px; align-items: flex-start; gap: 6px; border-radius: 8px; font-size: 10.5px; }
+.hi-handoff-issues li.error { color: #b42318; background: rgba(217, 45, 32, .08); }
+.hi-handoff-issues li.warning { color: #b45309; background: rgba(245, 158, 11, .1); }
+.hi-handoff-issues svg { flex: none; margin-top: 1px; }
+.hi-handoff-issues span { display: grid; gap: 1px; }
+.hi-handoff-issues strong { font-size: 10.5px; font-weight: 600; }
+.hi-handoff-issues small { color: inherit; font-size: 9.5px; opacity: .82; }
+
+/* --- nothing yet ------------------------------------------------------------ */
+.hi-handoff-empty { display: grid; padding: 42px 26px; justify-items: center; gap: 8px; text-align: center; }
+.hi-handoff-empty > div {
+  display: grid; width: 46px; height: 46px; place-items: center; border-radius: 14px;
+  color: var(--hi-accent); background: rgba(124, 60, 255, .1);
+}
+.hi-handoff-empty h2 { margin: 4px 0 0; color: var(--hi-text); font-size: 13px; }
+.hi-handoff-empty p { margin: 0; max-width: 260px; color: var(--hi-muted); font-size: 11px; line-height: 1.55; }
+
+/* --- which screen a decision was made at ----------------------------------- */
+.hi-handoff-screens {
+  display: inline-flex; flex: none; padding: 2px 7px; align-items: center; gap: 4px;
+  border-radius: 999px; color: var(--hi-muted); background: rgba(23, 32, 51, .06);
+  font-size: 9px; font-weight: 600;
+}
+.hi-handoff-at {
+  padding: 2px 5px; border-radius: 999px; color: #1f6f8b; background: rgba(31, 111, 139, .12);
+  font-size: 9px; font-style: normal; font-weight: 600; font-variant-numeric: tabular-nums;
+}
+
+/* Figma-like working chrome: quiet, compact panel; the canvas and selection do the talking. */
+.hi-panel {
+  top: 8px; right: 8px; bottom: 8px; width: 360px; padding: 0; gap: 0;
+  border-color: #d9d9d9; border-radius: 10px; background: #fff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .12), 0 12px 30px rgba(0, 0, 0, .08);
+  backdrop-filter: none;
+}
+.hi-panel--left { left: 8px; }
+.hi-panel--right { right: 8px; }
+.hi-header {
+  min-height: 48px; padding: 0 8px 0 12px; border: 0; border-bottom: 1px solid #e5e5e5;
+  border-radius: 10px 10px 0 0; box-shadow: none; background: #fff; backdrop-filter: none;
+}
+.hi-product { gap: 8px; }
+.hi-logo { width: 28px; height: 28px; border: 0; border-radius: 6px; background: #1e1e1e; box-shadow: none; }
+.hi-product strong { font-size: 12px; font-weight: 600; letter-spacing: 0; }
+.hi-product small { font-size: 10px; }
+.hi-header-actions button { width: 28px; height: 28px; border-radius: 5px; }
+.hi-dock-switch { padding: 2px; grid-template-columns: repeat(2, 26px); border: 0; border-radius: 6px; background: #f2f2f2; }
+.hi-dock-switch button { width: 26px; height: 24px; border-radius: 4px; }
+.hi-dock-switch button.is-active { color: #1e1e1e; box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+.hi-status {
+  min-height: 30px; margin: 0; padding: 0 12px; border: 0; border-bottom: 1px solid #e5e5e5;
+  border-radius: 0; color: #6e6e6e; background: #fff; box-shadow: none; backdrop-filter: none;
+  font-size: 10px; font-weight: 500; letter-spacing: 0;
+}
+.hi-status--multi { color: #007be5; background: #e5f4ff; }
+.hi-scroll { padding: 0; }
+.hi-preview-card, .hi-section {
+  margin: 0; border: 0; border-bottom: 1px solid #e5e5e5; border-radius: 0;
+  background: #fff; box-shadow: none; backdrop-filter: none; animation: none;
+}
+.hi-section:hover { border-color: #e5e5e5; box-shadow: none; }
+.hi-section-title { min-height: 40px; padding-inline: 12px; }
+.hi-section-title > span { gap: 8px; font-size: 11px; font-weight: 600; }
+.hi-section-body { padding: 0 12px 12px; }
+.hi-control { min-height: 36px; grid-template-columns: 88px minmax(0, 1fr); gap: 8px; }
+.hi-control > span, .hi-box-sides-control > span, .hi-token-field > span { font-size: 11px; }
+.hi-control input:not([type="color"]):not([type="range"]),
+.hi-control select, .hi-number-field, .hi-token-picker { height: 30px; border-radius: 5px; box-shadow: none; }
+.hi-control input:not([type="color"]):not([type="range"]), .hi-control select { height: 30px; padding-inline: 8px; font-size: 11px; }
+.hi-number-field { height: 30px; }
+.hi-number-field input { padding-left: 8px; font-size: 11px; }
+.hi-control input:focus, .hi-control select:focus, .hi-control textarea:focus,
+.hi-number-field:focus-within, .hi-token-picker:focus-within { box-shadow: 0 0 0 1px #0d99ff; }
+
+.hi-selection {
+  border: 1px solid #0d99ff; background: transparent; box-shadow: none;
+}
+.hi-selection.is-locked { border-color: #0d99ff; background: transparent; }
+.hi-selection > span {
+  top: calc(100% + 5px); bottom: auto; left: 50%; padding: 3px 5px; max-width: 260px;
+  border-radius: 3px; background: #0d99ff; font-size: 9px; font-weight: 500;
+  transform: translateX(-50%);
+}
+.hi-selection.is-locked > span { background: #0d99ff; }
+.hi-selection--peer { background: rgba(13, 153, 255, .035); }
+.hi-selection-parent {
+  position: fixed; z-index: 2147483599; border: 1px dashed rgba(13, 153, 255, .72);
+  pointer-events: none;
+}
+.hi-selection > i { display: none; }
+.hi-handle {
+  width: 7px; height: 7px; border: 1px solid #0d99ff; border-radius: 1px; background: #fff;
+  box-shadow: none;
+}
+.hi-measure { border-radius: 2px; background: #f24822; font-size: 9px; }
+
+.hi-canvas-toolbar {
+  position: fixed; z-index: 2147483606; left: 50%; bottom: 18px; display: flex; height: 44px;
+  padding: 4px; align-items: center; gap: 2px; border: 1px solid #d9d9d9; border-radius: 9px;
+  color: #b3b3b3; background: #2c2c2c; box-shadow: 0 2px 8px rgba(0,0,0,.28), 0 12px 30px rgba(0,0,0,.18);
+  transform: translateX(-50%);
+}
+.hi-canvas-toolbar button {
+  display: inline-flex; height: 36px; padding: 0 9px; align-items: center; gap: 6px; border: 0;
+  border-radius: 5px; color: #d9d9d9; background: transparent; font: inherit; font-size: 10px;
+  cursor: pointer;
+}
+.hi-canvas-toolbar button:hover { color: #fff; background: #383838; }
+.hi-canvas-toolbar button.is-active { color: #fff; background: #0d99ff; }
+.hi-canvas-toolbar kbd { color: currentColor; font: 9px/1 "SFMono-Regular", Consolas, monospace; opacity: .6; }
+.hi-canvas-toolbar > i { width: 1px; height: 24px; margin: 0 3px; background: #4a4a4a; }
+
+@media (max-width: 760px) {
+  .hi-panel { width: min(340px, calc(100vw - 16px)); }
+  .hi-canvas-toolbar span, .hi-canvas-toolbar kbd { display: none; }
+  .hi-canvas-toolbar button { width: 36px; padding: 0; justify-content: center; }
+}
+
+/* Device canvas workspace --------------------------------------------------- */
+.hi-device-overlay {
+  --hi-panel-width: 280px;
+  padding: 0;
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+  gap: 0;
+  background: #1e1e1e;
+  backdrop-filter: none;
+  animation: none;
+}
+.hi-device-overlay--right { right: calc(var(--hi-panel-width) - 12px); }
+.hi-device-overlay--left { left: calc(var(--hi-panel-width) - 12px); }
+.hi-device-overlay--right,
+.hi-device-overlay--left { padding: 0; }
+.hi-device-stage { padding: 24px; place-items: center; overflow: hidden; cursor: default; }
+.hi-device-stage.is-panning { cursor: grabbing; }
+.hi-device-sizer { transition: transform 90ms ease-out; }
+.hi-device-shell { box-shadow: 0 8px 32px rgba(0,0,0,.4), inset 0 0 0 1px rgba(255,255,255,.1); }
+
+/* Device controls live on the canvas toolbar, after the tools — see `DeviceControls`. */
+.hi-canvas-toolbar .hi-device-kinds { display: flex; padding: 0; gap: 2px; border-radius: 0; background: transparent; }
+.hi-canvas-toolbar .hi-device-kinds button,
+.hi-canvas-toolbar .hi-device-menu summary,
+.hi-canvas-toolbar .hi-device-kinds + select + button {
+  display: grid; width: 36px; height: 36px; padding: 0; place-items: center; border: 0; border-radius: 5px;
+  color: #b3b3b3; background: transparent; text-transform: none; cursor: pointer; list-style: none;
+}
+.hi-canvas-toolbar .hi-device-kinds button:hover,
+.hi-canvas-toolbar .hi-device-menu summary:hover { color: #fff; background: #383838; }
+.hi-canvas-toolbar .hi-device-kinds button.is-active { color: #fff; background: #0d99ff; }
+.hi-canvas-toolbar .hi-device-model {
+  width: 150px; height: 32px; margin: 0 2px; padding: 0 24px 0 8px; border: 0; border-radius: 5px; color: #fff;
+  background: #383838; font-size: 11px;
+}
+.hi-canvas-toolbar .hi-device-model option { color: #fff; background: #2c2c2c; }
+.hi-device-menu, .hi-panel-menu { position: relative; }
+.hi-device-menu summary::-webkit-details-marker,
+.hi-panel-menu summary::-webkit-details-marker { display: none; }
+.hi-device-menu > div,
+.hi-panel-menu > div {
+  position: absolute; z-index: 30; top: calc(100% + 6px); right: 0; display: grid; width: 170px; padding: 5px;
+  border: 1px solid #444; border-radius: 7px; color: #fff; background: #2c2c2c; box-shadow: 0 8px 24px rgba(0,0,0,.45);
+}
+/* The toolbar sits at the bottom of the screen, so its menu opens upward. */
+.hi-canvas-toolbar .hi-device-menu > div { top: auto; bottom: calc(100% + 10px); }
+.hi-device-menu > div button,
+.hi-device-menu > div label,
+.hi-panel-menu > div button {
+  display: flex; width: 100%; height: 30px; padding: 0 8px; align-items: center; justify-content: flex-start; gap: 8px;
+  border: 0; border-radius: 4px; color: #e5e5e5; background: transparent; font: inherit; font-size: 11px; cursor: pointer;
+}
+.hi-device-menu > div button:hover,
+.hi-device-menu > div label:hover,
+.hi-panel-menu > div button:hover { background: #383838; }
+.hi-device-menu input { accent-color: #0d99ff; }
+
+.hi-device-zoom-pill {
+  position: absolute; z-index: 8; right: 12px; bottom: 18px; display: flex; height: 36px; align-items: center;
+  border: 1px solid #444; border-radius: 8px; color: #d9d9d9; background: #2c2c2c; box-shadow: 0 2px 8px rgba(0,0,0,.3);
+}
+.hi-device-zoom-pill select { width: 68px; height: 34px; padding: 0 24px 0 10px; border: 0; outline: 0; appearance: none; color: inherit; background: transparent; font: inherit; font-size: 11px; cursor: pointer; }
+.hi-device-zoom-pill svg { margin-left: -21px; pointer-events: none; }
+
+.hi-selection-chrome {
+  position: absolute; z-index: 3; border: calc(1px * var(--hi-chrome-scale, 1)) solid #0d99ff;
+  background: transparent; pointer-events: none;
+}
+.hi-selection-chrome.is-live { position: fixed; }
+.hi-selection-chrome.is-hovered { z-index: 2; }
+.hi-selection-size {
+  position: absolute; top: calc(100% + 5px * var(--hi-chrome-scale, 1)); left: 50%; padding: calc(3px * var(--hi-chrome-scale, 1)) calc(5px * var(--hi-chrome-scale, 1));
+  border-radius: calc(3px * var(--hi-chrome-scale, 1)); color: #fff; background: #0d99ff;
+  font-size: calc(10px * var(--hi-chrome-scale, 1)); line-height: 1; white-space: nowrap;
+  transform: translateX(-50%); transform-origin: top center;
+}
+.hi-selection-chrome .hi-selection-size {
+  top: calc(100% + 5px * var(--hi-chrome-scale, 1)); bottom: auto; left: 50%; padding: calc(3px * var(--hi-chrome-scale, 1)) calc(5px * var(--hi-chrome-scale, 1));
+  border-radius: calc(3px * var(--hi-chrome-scale, 1)); background: #0d99ff; font-size: calc(10px * var(--hi-chrome-scale, 1)); font-weight: 500;
+  transform: translateX(-50%);
+}
+.hi-selection-parent--canvas { position: absolute; z-index: 2; border-width: calc(1px * var(--hi-chrome-scale, 1)); border-color: rgba(13,153,255,.5); }
+.hi-selection-chrome .hi-handle { width: calc(8px * var(--hi-chrome-scale, 1)); height: calc(8px * var(--hi-chrome-scale, 1)); border-width: calc(1px * var(--hi-chrome-scale, 1)); }
+.hi-selection-chrome .hi-handle--n,
+.hi-selection-chrome .hi-handle--s { width: calc(22px * var(--hi-chrome-scale, 1)); border-color: transparent; background: transparent; }
+.hi-selection-chrome .hi-handle--e,
+.hi-selection-chrome .hi-handle--w { height: calc(22px * var(--hi-chrome-scale, 1)); border-color: transparent; background: transparent; }
+
+/* The right panel becomes the second, flush workspace column. */
+.hi-panel.hi-panel--workspace {
+  top: 0; bottom: 0; width: 280px; max-width: 280px; border: 0; border-left: 1px solid #444;
+  border-radius: 0; color: #fff; background: #2c2c2c; box-shadow: none; animation: none;
+}
+.hi-panel--workspace.hi-panel--right { right: 0; left: auto; }
+.hi-panel--workspace.hi-panel--left { left: 0; right: auto; border-right: 1px solid #444; border-left: 0; }
+.hi-panel--workspace .hi-header { min-height: 44px; padding: 0 6px 0 10px; border-color: #444; border-radius: 0; background: #2c2c2c; }
+.hi-mode-tabs { display: flex; align-self: stretch; gap: 10px; }
+.hi-mode-tabs button { position: relative; padding: 0; border: 0; color: #b3b3b3; background: transparent; font: inherit; font-size: 11px; cursor: pointer; }
+.hi-mode-tabs button.is-active { color: #fff; }
+.hi-mode-tabs button.is-active::after { position: absolute; right: 0; bottom: 0; left: 0; height: 2px; content: ""; background: #0d99ff; }
+.hi-panel-menu summary { display: grid; width: 28px; height: 28px; place-items: center; border-radius: 5px; color: #b3b3b3; cursor: pointer; list-style: none; }
+.hi-panel-menu summary:hover { color: #fff; background: #383838; }
+.hi-breadcrumb { display: flex; min-height: 34px; padding: 0 10px; align-items: center; overflow: hidden; border-bottom: 1px solid #444; color: #b3b3b3; background: #2c2c2c; }
+.hi-breadcrumb span { display: flex; min-width: 0; align-items: center; }
+.hi-breadcrumb i { padding: 0 4px; color: #777; font-style: normal; }
+.hi-breadcrumb button { max-width: 76px; padding: 2px 0; overflow: hidden; border: 0; color: #d9d9d9; background: transparent; font: inherit; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.hi-breadcrumb button:hover { color: #fff; }
+.hi-breadcrumb small { font-size: 11px; }
+.hi-panel--workspace .hi-scroll { scrollbar-color: #555 transparent; }
+.hi-panel--workspace .hi-preview-card,
+.hi-panel--workspace .hi-section { border-color: #444; color: #fff; background: #2c2c2c; }
+.hi-panel--workspace .hi-section-title { min-height: 36px; color: #fff; background: #2c2c2c; }
+.hi-panel--workspace .hi-section-title:hover { background: #333; }
+.hi-panel--workspace .hi-section-body { padding: 0 10px 10px; }
+.hi-panel--workspace .hi-control { min-height: 32px; grid-template-columns: 72px minmax(0, 1fr); }
+.hi-panel--workspace .hi-control > span,
+.hi-panel--workspace .hi-box-sides-control > span,
+.hi-panel--workspace .hi-token-field > span { color: #b3b3b3; font-size: 11px; }
+.hi-panel--workspace input:not([type="color"]):not([type="range"]),
+.hi-panel--workspace select,
+.hi-panel--workspace textarea,
+.hi-panel--workspace .hi-number-field,
+.hi-panel--workspace .hi-token-picker { border-color: transparent; color: #fff; background: #383838; }
+.hi-panel--workspace input::placeholder,
+.hi-panel--workspace textarea::placeholder { color: #858585; }
+.hi-panel--workspace .hi-design-cluster,
+.hi-panel--workspace .hi-reset-row,
+.hi-panel--workspace .hi-credit { border-color: #444; color: #b3b3b3; background: #2c2c2c; }
+.hi-panel--workspace .hi-credit { display: none; }
+.hi-panel--workspace .hi-empty-note { color: #b3b3b3; background: #333; }
+.hi-panel--workspace .hi-onboarding--quiet { min-height: 160px; margin: 0; padding: 32px 16px; flex-direction: row; gap: 8px; border: 0; border-radius: 0; color: #b3b3b3; background: transparent; box-shadow: none; font-size: 11px; }
+.hi-onboarding--quiet > svg { color: #b3b3b3; }
+.hi-responsive-panel { display: grid; gap: 8px; }
+.hi-responsive-panel > .hi-sweep-run { display: flex; min-height: 30px; padding: 0 9px; align-items: center; justify-content: center; gap: 7px; border: 1px solid #555; border-radius: 5px; color: #fff; background: #383838; font: inherit; font-size: 11px; cursor: pointer; }
+.hi-responsive-issues { margin: 0; padding: 0; list-style: none; }
+.hi-responsive-issues li { padding: 5px 0; border-bottom: 1px solid #444; color: #d9d9d9; font-size: 10px; }
+.hi-panel--workspace .hi-sweep-report { padding: 0; border: 0; border-radius: 0; background: transparent; backdrop-filter: none; }
+.hi-panel--workspace .hi-sweep-strip { grid-template-columns: repeat(4, 1fr); }
+.hi-panel--workspace .hi-sweep-strip button { min-height: 36px; border-radius: 4px; }
+.hi-panel--workspace .hi-sweep-ranges > div { padding: 7px; grid-template-columns: 14px minmax(0,1fr); color: #d9d9d9; background: #383838; border-color: #555; }
+.hi-panel--workspace .hi-sweep-ranges code { grid-column: 2; }
+
+.hi-canvas-toolbar.is-device.hi-canvas-toolbar--right { left: calc((100vw - 280px) / 2); }
+.hi-canvas-toolbar.is-device.hi-canvas-toolbar--left { left: calc(280px + (100vw - 280px) / 2); }
+.hi-canvas-toolbar.is-device { z-index: 2147483635; border-color: #444; }
+.hi-asset-head { grid-template-columns: 38px minmax(0,1fr) auto; }
+.hi-asset-actions { display: flex; gap: 3px; }
+.hi-asset-actions a,
+.hi-asset-actions button { display: grid; width: 28px; height: 28px; padding: 0; place-items: center; border: 0; border-radius: 4px; color: var(--hi-muted); background: transparent; cursor: pointer; }
+.hi-asset-actions a:hover { color: #0d99ff; background: #e5f4ff; }
+.hi-asset-actions button.is-danger:hover { color: #fff; background: #e5484d; }
+.hi-panel--workspace .hi-asset-actions a,
+.hi-panel--workspace .hi-asset-actions button { color: #b3b3b3; }
+.hi-panel--workspace .hi-asset-actions a:hover { color: #fff; background: #383838; }
+
+@media (max-width: 760px) {
+  .hi-device-overlay--right { right: min(280px, 68vw); }
+  .hi-device-overlay--left { left: min(280px, 68vw); }
+  .hi-panel.hi-panel--workspace { width: min(280px, 68vw); max-width: min(280px, 68vw); }
+  .hi-canvas-toolbar.is-device.hi-canvas-toolbar--right { left: calc((100vw - min(280px, 68vw)) / 2); }
+  .hi-canvas-toolbar.is-device.hi-canvas-toolbar--left { left: calc(min(280px, 68vw) + (100vw - min(280px, 68vw)) / 2); }
+}
+
+/* Friendly wide workspace --------------------------------------------------
+   The canvas remains precise, while the chrome is intentionally roomier and
+   more familiar for people who do not spend all day in design software.
+   The canvas and the panel share one off-white so they read as one surface. */
+.hi-root { --hi-workspace-off-white: #f5f3ee; }
+.hi-device-overlay {
+  --hi-panel-width: 416px;
+  /* The canvas covers the whole viewport, panel included, so the host page never shows
+     through the margins around the floating panel; padding keeps the stage beside it. */
+  inset: 0;
+  background-color: var(--hi-workspace-off-white);
+  background-image: radial-gradient(circle, rgba(91, 96, 108, .28) 1px, transparent 1.25px);
+  background-size: 18px 18px;
+}
+.hi-device-overlay--right { right: 0; padding-right: calc(var(--hi-panel-width) - 12px); }
+.hi-device-overlay--left { left: 0; padding-left: calc(var(--hi-panel-width) - 12px); }
+/* The frame starts level with the panel's top and, when fitted, ends level with its bottom. */
+.hi-device-stage { padding: 12px 42px; place-items: start center; }
+.hi-device-shell {
+  border: 1px solid rgba(31, 35, 43, .2);
+  box-shadow: 0 22px 70px rgba(35, 40, 51, .28), 0 5px 18px rgba(35, 40, 51, .2), inset 0 0 0 1px rgba(255,255,255,.7);
+}
+.hi-device-shell--browser { border-color: rgba(31, 35, 43, .24); background: #eef0f3; }
+.hi-device-zoom-pill { right: 18px; bottom: 20px; height: 42px; border-color: rgba(31,35,43,.12); border-radius: 12px; color: #34373e; background: rgba(255,255,255,.96); box-shadow: 0 8px 24px rgba(35,40,51,.14); }
+.hi-device-zoom-pill select { width: 78px; height: 40px; padding-left: 12px; color: #34373e; font-size: 12px; }
+
+.hi-panel.hi-panel--workspace {
+  top: 12px; bottom: 12px; width: 392px; max-width: 392px; border: 1px solid rgba(31,35,43,.12);
+  border-radius: 16px; color: #24272e; background: var(--hi-workspace-off-white); box-shadow: 0 18px 52px rgba(35,40,51,.18), 0 3px 10px rgba(35,40,51,.08);
+}
+.hi-panel--workspace.hi-panel--right { right: 12px; }
+.hi-panel--workspace.hi-panel--left { left: 12px; border: 1px solid rgba(31,35,43,.12); }
+.hi-panel--workspace .hi-header { min-height: 54px; padding: 0 10px 0 14px; border-color: #dedbd4; border-radius: 16px 16px 0 0; background: var(--hi-workspace-off-white); }
+.hi-mode-tabs { gap: 18px; }
+.hi-mode-tabs button { color: #727680; font-size: 12px; font-weight: 600; }
+.hi-mode-tabs button.is-active { color: #20242b; }
+.hi-panel-menu summary { width: 34px; height: 34px; color: #6c7079; }
+.hi-panel-menu summary:hover { color: #20242b; background: #f1f2f4; }
+.hi-panel-menu > div { top: calc(100% + 8px); width: 190px; border-color: #dfe1e5; color: #24272e; background: #fff; box-shadow: 0 12px 32px rgba(35,40,51,.18); }
+.hi-panel-menu > div button { height: 36px; color: #34373e; font-size: 12px; }
+.hi-panel-menu > div button:hover { background: #f1f2f4; }
+.hi-breadcrumb { min-height: 42px; padding: 0 14px; border-color: #dedbd4; color: #858993; background: var(--hi-workspace-off-white); }
+.hi-breadcrumb button { max-width: 112px; color: #555a64; font-size: 11px; }
+.hi-breadcrumb button:hover { color: #0d78d4; }
+.hi-breadcrumb small { font-size: 12px; }
+.hi-panel--workspace .hi-scroll { padding-bottom: 10px; scrollbar-color: #c5c8cf transparent; }
+.hi-panel--workspace .hi-preview-card,
+.hi-panel--workspace .hi-section { border-color: #dedbd4; color: #24272e; background: var(--hi-workspace-off-white); }
+.hi-panel--workspace .hi-section-title { min-height: 46px; padding-inline: 14px; color: #24272e; background: var(--hi-workspace-off-white); }
+.hi-panel--workspace .hi-section-title:hover { background: #eeece6; }
+.hi-panel--workspace .hi-section-title > span { font-size: 12px; }
+.hi-panel--workspace .hi-section-body { padding: 0 14px 14px; }
+.hi-panel--workspace .hi-control { min-height: 40px; grid-template-columns: 104px minmax(0, 1fr); gap: 10px; }
+.hi-panel--workspace .hi-control > span,
+.hi-panel--workspace .hi-box-sides-control > span,
+.hi-panel--workspace .hi-token-field > span { color: #737782; font-size: 12px; }
+.hi-panel--workspace input:not([type="color"]):not([type="range"]),
+.hi-panel--workspace select,
+.hi-panel--workspace textarea,
+.hi-panel--workspace .hi-number-field,
+.hi-panel--workspace .hi-token-picker { border-color: #dfe1e5; color: #24272e; background: #f7f8f9; }
+.hi-panel--workspace .hi-control input:not([type="color"]):not([type="range"]),
+.hi-panel--workspace .hi-control select,
+.hi-panel--workspace .hi-number-field,
+.hi-panel--workspace .hi-token-picker { height: 36px; font-size: 12px; }
+.hi-panel--workspace input::placeholder,
+.hi-panel--workspace textarea::placeholder { color: #a0a4ad; }
+.hi-panel--workspace .hi-design-cluster,
+.hi-panel--workspace .hi-reset-row { border-color: #dedbd4; color: #737782; background: var(--hi-workspace-off-white); }
+.hi-panel--workspace .hi-empty-note { color: #737782; background: #f7f8f9; }
+.hi-panel--workspace .hi-onboarding--quiet { min-height: 180px; color: #737782; }
+.hi-panel--workspace .hi-onboarding--quiet > svg { color: #0d99ff; }
+.hi-panel--workspace .hi-responsive-panel > .hi-sweep-run { min-height: 36px; border-color: #dfe1e5; color: #24272e; background: #f7f8f9; font-size: 12px; }
+.hi-panel--workspace .hi-responsive-issues li { border-color: #e7e8eb; color: #555a64; font-size: 11px; }
+.hi-panel--workspace .hi-sweep-ranges > div { color: #555a64; background: #f7f8f9; border-color: #dfe1e5; }
+.hi-panel--workspace .hi-asset-actions a,
+.hi-panel--workspace .hi-asset-actions button { color: #737782; }
+.hi-panel--workspace .hi-asset-actions a:hover { color: #0d78d4; background: #eaf5ff; }
+.hi-canvas-toolbar.is-device.hi-canvas-toolbar--right { left: calc((100vw - 416px) / 2); }
+.hi-canvas-toolbar.is-device.hi-canvas-toolbar--left { left: calc(416px + (100vw - 416px) / 2); }
+.hi-canvas-toolbar.is-device { height: 48px; padding: 5px; border-color: rgba(31,35,43,.14); border-radius: 13px; box-shadow: 0 10px 28px rgba(35,40,51,.2); }
+.hi-canvas-toolbar.is-device button { height: 38px; padding-inline: 11px; font-size: 11px; }
+.hi-canvas-toolbar.is-device .hi-device-kinds button,
+.hi-canvas-toolbar.is-device .hi-device-kinds + select + button,
+.hi-canvas-toolbar.is-device .hi-device-menu summary { width: 38px; padding: 0; }
+.hi-canvas-toolbar.is-device .hi-device-menu > div button { height: 30px; padding: 0 8px; }
+
+/* With the device controls on board the bar is wide; below this the tools go icon-only. */
+@media (max-width: 1280px) {
+  .hi-canvas-toolbar.is-device > button span,
+  .hi-canvas-toolbar.is-device > button kbd { display: none; }
+  .hi-canvas-toolbar.is-device > button { width: 38px; padding: 0; justify-content: center; }
+}
+
+@media (max-width: 980px) {
+  .hi-device-overlay { --hi-panel-width: min(360px, 44vw); }
+  .hi-device-overlay--right { padding-right: calc(var(--hi-panel-width) - 12px); }
+  .hi-device-overlay--left { padding-left: calc(var(--hi-panel-width) - 12px); }
+  .hi-panel.hi-panel--workspace { width: min(336px, calc(44vw - 24px)); max-width: min(336px, calc(44vw - 24px)); }
+  .hi-canvas-toolbar .hi-device-model { width: 120px; }
+  .hi-canvas-toolbar.is-device.hi-canvas-toolbar--right { left: calc((100vw - min(360px, 44vw)) / 2); }
+  .hi-canvas-toolbar.is-device.hi-canvas-toolbar--left { left: calc(min(360px, 44vw) + (100vw - min(360px, 44vw)) / 2); }
+}

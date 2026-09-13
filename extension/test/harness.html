@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Hostile host page — inspector harness</title>
+    <style>
+      /*
+        Deliberately unfriendly: the kinds of global rules a real site has that would redecorate a
+        panel mounted in the light DOM. If the inspector still looks right here, the shadow root is
+        doing its job.
+      */
+      * { box-sizing: content-box !important; }
+      html, body { margin: 0; font-family: 'Comic Sans MS', cursive; background: #10121a; color: #e6e8f0; }
+      button, input, select, textarea {
+        all: unset;
+        display: inline-block;
+        padding: 12px 20px !important;
+        border: 3px dashed #ff00aa !important;
+        border-radius: 0 !important;
+        background: #ffee00 !important;
+        color: #10121a !important;
+        font-size: 22px !important;
+        text-transform: uppercase !important;
+      }
+      svg { width: 40px !important; height: 40px !important; }
+      main { max-width: 720px; margin: 0 auto; padding: 48px 24px; }
+      h1 { font-size: 34px; letter-spacing: -0.02em; }
+      .card { padding: 20px; border: 1px solid #2a2f45; border-radius: 14px; background: #171a26; margin: 16px 0; }
+      .cta { color: #fff; background: #7c3cff !important; border: 0 !important; }
+      p { line-height: 1.6; color: #a8adc4; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Quarterly platform review</h1>
+      <p>
+        A stand-in for somebody else's website: its own fonts, its own resets, its own opinions about
+        what a button looks like. Turn the inspector on with the controls below.
+      </p>
+      <div class="card">
+        <h2>Usage this month</h2>
+        <p>Fourteen thousand sessions, up nine percent.</p>
+        <button class="cta">Upgrade plan</button>
+        <button>Export CSV</button>
+      </div>
+      <div class="card">
+        <h2>Team</h2>
+        <p>Six seats, four in use.</p>
+        <input value="search the team" />
+      </div>
+    </main>
+
+    <div style="position: fixed; left: 12px; bottom: 12px; display: flex; gap: 8px; z-index: 10">
+      <button id="on" style="font-size: 13px !important">inspector: on</button>
+      <button id="off" style="font-size: 13px !important">off</button>
+      <button id="tokens" style="font-size: 13px !important">send tokens</button>
+    </div>
+
+    <script>
+      /*
+        The smallest `chrome` the content script needs: it registers one message listener and is
+        driven entirely through it, so a shim over the same shape exercises the real code path
+        without an extension install.
+      */
+      const listeners = [];
+      const fakeStore = {};
+      window.__store = fakeStore;
+      window.chrome = {
+        runtime: {
+          onMessage: { addListener: (listener) => listeners.push(listener) },
+          sendMessage: async (message) => { window.__lastMessage = message; return { ok: true }; },
+        },
+        storage: {
+          local: {
+            get: async (key) => (fakeStore[key] === undefined ? {} : { [key]: fakeStore[key] }),
+            set: async (patch) => Object.assign(fakeStore, patch),
+          },
+          onChanged: { addListener: () => {} },
+        },
+      };
+      window.__send = (message) => listeners.forEach((listener) => listener(message, {}, () => {}));
+
+      const SAMPLE_TOKENS = {
+        collections: [
+          {
+            id: 'harness',
+            name: 'Harness system',
+            colors: [
+              { label: 'Brand', value: '#7C3CFF', usage: 'accent' },
+              { label: 'Ink', value: '#172033', usage: 'text' },
+              { label: 'Surface', value: '#F6F8FF', usage: 'surface' },
+              { label: 'Border', value: '#E5E5E8', usage: 'border' },
+            ],
+            typography: [
+              { label: 'Display', sample: 'Display', css: 'font-size: 34px; font-weight: 600' },
+              { label: 'Body', sample: 'Body', css: 'font-size: 15px' },
+            ],
+          },
+        ],
+        spacing: [
+          { name: 'sm', value: '8px' },
+          { name: 'md', value: '16px' },
+          { name: 'lg', value: '24px' },
+        ],
+        radius: [
+          { name: 'card', value: '14px' },
+          { name: 'pill', value: '999px' },
+        ],
+      };
+    </script>
+    <script src="../dist/content.js"></script>
+    <script>
+      document.getElementById('on').onclick = () =>
+        window.__send({ type: 'inspector:set', active: true, tokens: null, systemName: null });
+      document.getElementById('off').onclick = () =>
+        window.__send({ type: 'inspector:set', active: false, tokens: null, systemName: null });
+      document.getElementById('tokens').onclick = () =>
+        window.__send({ type: 'inspector:tokens', tokens: SAMPLE_TOKENS, systemName: 'Harness system' });
+    </script>
+  </body>
+</html>

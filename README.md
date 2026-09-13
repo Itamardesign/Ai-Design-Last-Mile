@@ -8,6 +8,24 @@ Your source files are never touched — edits are live-preview only. You copy th
 
 ---
 
+## Two ways to run it
+
+**In your app** — install the package and render `<HandoffInspector />`. That is the rest of this
+document.
+
+**On any website** — load the Chrome extension, click the toolbar button, and inspect a site you do
+not own: a competitor, a staging deploy, production, a page nobody has the source to. Same features,
+same panel, and your design system connects to it from the extension's settings instead of a
+provider. See [extension/README.md](./extension/README.md).
+
+```bash
+npm run build:extension
+```
+
+Then load `extension/dist` at `chrome://extensions` with **Developer mode → Load unpacked**.
+
+---
+
 ## Install
 
 ### Requirements
@@ -82,6 +100,10 @@ That's the whole install. If the button doesn't appear, see [Troubleshooting](#t
 - **Edit** its content, typography, fill and layout from the panel on the right.
 - **Preview** the page at real device sizes from the *Device preview* section.
 - **Check accessibility** — contrast, touch targets, readable type, focus states.
+- **Leave notes on the page** — pinned to the element, numbered, readable on hover, and answerable
+  in place. Resolve rather than delete, sign them with your name, and they stay visible with the
+  panel closed and inside the device preview. A note remembers what its element looked like, so it
+  finds it again when the markup changes underneath it.
 - **Copy your changes** from *Designer changes* at the bottom: CSS, or written instructions.
 - **`Esc`** deselects the current element; press it again to close the inspector.
 

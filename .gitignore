@@ -2,3 +2,5 @@ node_modules/
 dist/
 *.log
 src/generated/
+extension/dist
+extension/*.zip

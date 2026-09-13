@@ -1,0 +1,33 @@
+rules_version = '2';
+
+/*
+ * Deploy with: firebase deploy --only firestore:rules
+ *
+ * The extension's API key is public — every Firebase web key is — so these rules are the only thing
+ * standing between one designer's review and everybody else's. They say one thing: you may read and
+ * write your own workspace, and nothing else in the database.
+ *
+ * `workspaceId` is the signer's uid today, which is why the check is a straight comparison. When a
+ * workspace becomes a real, shared thing, this becomes a lookup against a members list —
+ *
+ *     function member(workspaceId) {
+ *       return request.auth != null
+ *         && exists(/databases/$(database)/documents/workspaces/$(workspaceId)/members/$(request.auth.uid));
+ *     }
+ *
+ * — and every path below stays exactly as it is. That is the reason documents are stored under a
+ * workspace rather than under `users/{uid}`.
+ */
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    match /workspaces/{workspaceId} {
+      allow read, write: if request.auth != null && request.auth.uid == workspaceId;
+
+      // notes/{pageId}, edits/{pageId}, handoffs/{docId} — same owner, same rule.
+      match /{document=**} {
+        allow read, write: if request.auth != null && request.auth.uid == workspaceId;
+      }
+    }
+  }
+}

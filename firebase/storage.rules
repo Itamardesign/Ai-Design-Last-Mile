@@ -1,0 +1,25 @@
+rules_version = '2';
+
+/*
+ * Deploy with: firebase deploy --only storage
+ *
+ * The one thing that goes in the bucket is a handoff screenshot, and it is a picture of whatever page
+ * the designer was standing on — frequently a client's unreleased work. So: your own folder only, and
+ * nothing that is not a PNG.
+ *
+ * The size cap is not about cost. An extension talking to a bucket with no ceiling is an upload
+ * endpoint for anything, so the limit is a little above what a full-page capture on a tall page runs
+ * to and well below anything worth abusing.
+ */
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    match /handoffs/{workspaceId}/{file} {
+      allow read: if request.auth != null && request.auth.uid == workspaceId;
+      allow write: if request.auth != null
+        && request.auth.uid == workspaceId
+        && request.resource.size < 12 * 1024 * 1024
+        && request.resource.contentType == 'image/png';
+    }
+  }
+}
