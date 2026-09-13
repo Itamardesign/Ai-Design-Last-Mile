@@ -16,7 +16,6 @@ import {
   Cloud,
   Code2,
   Component,
-  Crosshair,
   Download,
   ExternalLink,
   FileCode2,
@@ -27,8 +26,8 @@ import {
   Link2,
   LoaderCircle,
   Lock,
-  Maximize2,
   MessageSquare,
+  MoreHorizontal,
   PaintBucket,
   Pipette,
   Monitor,
@@ -37,6 +36,7 @@ import {
   Palette,
   PanelLeft,
   PanelRight,
+  PenTool,
   Plus,
   RefreshCw,
   RotateCcw,
@@ -55,14 +55,13 @@ import {
   Wand2,
   X,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode, type WheelEvent as ReactWheelEvent } from 'react';
 import { createPortal } from 'react-dom';
 import {
   CUSTOM_DESIGN_TOKENS_STORAGE_KEY,
   defaultDeviceForKind,
   inspectorAccessibilityThresholds,
   inspectorDevicePresets,
-  inspectorResponsiveBreakpoints,
   inspectorVisualTokens,
   type CustomDesignToken,
   type DeviceKind,
@@ -164,6 +163,8 @@ type DesignChange = {
   /** The inline value this edit replaced, so this one edit can be taken back without resetting the rest. */
   inlineBefore?: string;
   priorityBefore?: string;
+  /** Attribute undo must distinguish a missing attribute from an explicitly empty one. */
+  hadAttributeBefore?: boolean;
   /** How many elements the edit landed on — one, or every variant of a component. */
   appliedTo?: number;
   /** The screen this was decided at — see `ViewportContext`. */
@@ -173,7 +174,66 @@ type DesignChange = {
   instruction?: string;
   /** Custom property declaration a token change needs in the design system. */
   cssVariable?: { name: string; value: string };
+  /** Previous inline root value for undoing token creation/binding without leaking variables. */
+  tokenVariableBefore?: { value: string; priority: string } | null;
+  /** Stable selector marker required to make a redone pseudo-state rule match again. */
+  stateMark?: string;
+  /** Exact DOM snapshots for edits such as assets and reordering that are not scalar CSS values. */
+  domBefore?: OriginalState;
+  domAfter?: OriginalState;
 };
+
+type HistoryEntry = {
+  label: string;
+  /** Immediate before/after mutations, kept separate from the coalesced handoff log. */
+  changes: DesignChange[];
+};
+
+function mergeChangeLog(current: DesignChange[], incoming: readonly DesignChange[]): DesignChange[] {
+  const next = [...current];
+  for (const change of incoming) {
+    const existing = next.findIndex((item) => item.element === change.element && item.property === change.property);
+    if (existing === -1) next.push(change);
+    else next[existing] = {
+      ...change,
+      before: next[existing].before,
+      inlineBefore: next[existing].inlineBefore,
+      priorityBefore: next[existing].priorityBefore,
+      hadAttributeBefore: next[existing].hadAttributeBefore,
+      tokenVariableBefore: next[existing].tokenVariableBefore,
+      domBefore: next[existing].domBefore,
+    };
+  }
+  return next;
+}
+
+function historyChangeLog(entries: readonly HistoryEntry[]): DesignChange[] {
+  return entries.reduce<DesignChange[]>((log, entry) => mergeChangeLog(log, entry.changes), []);
+}
+
+function captureOriginalState(element: HTMLElement): OriginalState {
+  return {
+    element,
+    styleAttribute: element.getAttribute('style'),
+    innerHTML: element.innerHTML,
+    textContent: element.textContent,
+    value: element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement ? element.value : undefined,
+    attributes: Array.from(element.attributes).map((attribute) => [attribute.name, attribute.value]),
+    parent: element.parentNode,
+    nextSibling: element.nextSibling,
+  };
+}
+
+function restoreCapturedState(original: OriginalState): void {
+  const { element } = original;
+  Array.from(element.attributes).forEach((attribute) => element.removeAttribute(attribute.name));
+  original.attributes.forEach(([name, value]) => element.setAttribute(name, value));
+  if (original.styleAttribute === null) element.removeAttribute('style'); else element.setAttribute('style', original.styleAttribute);
+  element.innerHTML = original.innerHTML;
+  if (original.value !== undefined && (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement)) element.value = original.value;
+  if (original.parent && element.parentNode !== original.parent) original.parent.insertBefore(element, original.nextSibling);
+  else if (original.parent && element.nextSibling !== original.nextSibling) original.parent.insertBefore(element, original.nextSibling);
+}
 
 type TokenBinding = {
   property: string;
@@ -312,6 +372,11 @@ type StoredChange = {
   kind: DesignChange['kind'];
   instruction?: string;
   cssVariable?: { name: string; value: string };
+  forced?: boolean;
+  inlineBefore?: string;
+  priorityBefore?: string;
+  hadAttributeBefore?: boolean;
+  tokenVariableBefore?: { value: string; priority: string } | null;
 };
 
 type StoredSession = { savedAt: string; variables: Array<[string, string]>; changes: StoredChange[] };
@@ -346,12 +411,6 @@ function readStoredPreference(key: string): string | null {
 }
 
 type InspectorMode = 'design' | 'comment' | 'handoff';
-
-const MODES: Array<{ id: InspectorMode; label: string; hint: string }> = [
-  { id: 'design', label: 'Design', hint: 'Edit styles and drag on the canvas' },
-  { id: 'comment', label: 'Comment', hint: 'Click an element to leave a note' },
-  { id: 'handoff', label: 'Handoff', hint: 'Everything you changed and said, ready to hand over' },
-];
 
 /** One note pinned to one element. Elements can carry several. */
 type PageComment = {
@@ -2224,6 +2283,46 @@ function TokenColorField({ label, value, tokens, onChange }: { label: string; va
 }
 
 const DEVICE_KIND_ICON: Record<DeviceKind, typeof Monitor> = { mobile: Smartphone, tablet: Tablet, desktop: Monitor };
+type DeviceOrientation = 'portrait' | 'landscape';
+
+/**
+ * Which device, which way round, and the frame options — one group on the canvas toolbar, so
+ * choosing a screen sits next to choosing a tool instead of floating in its own bar.
+ */
+function DeviceControls({ presetId, orientation, freezeReveals, onPresetChange, onOrientationChange, onFreezeRevealsChange, onReload, onLivePage }: {
+  presetId: DevicePresetId;
+  orientation: DeviceOrientation;
+  freezeReveals: boolean;
+  onPresetChange: (id: DevicePresetId) => void;
+  onOrientationChange: (orientation: DeviceOrientation) => void;
+  onFreezeRevealsChange: (value: boolean) => void;
+  onReload: () => void;
+  onLivePage: () => void;
+}) {
+  const preset = inspectorDevicePresets.find((item) => item.id === presetId) ?? inspectorDevicePresets[1];
+  const kinds: DeviceKind[] = ['mobile', 'tablet', 'desktop'];
+  const modelsForKind = inspectorDevicePresets.filter((item) => item.kind === preset.kind);
+  return <>
+    <div className="hi-device-kinds" role="group" aria-label="Device type">
+      {kinds.map((kind) => {
+        const Icon = DEVICE_KIND_ICON[kind];
+        return <button key={kind} title={kind[0].toUpperCase() + kind.slice(1)} aria-label={kind} className={preset.kind === kind ? 'is-active' : ''} aria-pressed={preset.kind === kind} onClick={() => onPresetChange(defaultDeviceForKind[kind])}><Icon size={15} /></button>;
+      })}
+    </div>
+    <select className="hi-device-model" aria-label="Device model" value={preset.id} onChange={(event) => onPresetChange(event.target.value as DevicePresetId)}>
+      {modelsForKind.map((item) => <option key={item.id} value={item.id}>{item.label} · {item.width}</option>)}
+    </select>
+    {preset.kind !== 'desktop' && <button title="Rotate device" aria-label="Rotate device" onClick={() => onOrientationChange(orientation === 'portrait' ? 'landscape' : 'portrait')}><RotateCw size={15} /></button>}
+    <details className="hi-device-menu">
+      <summary title="Frame options" aria-label="Frame options"><MoreHorizontal size={16} /></summary>
+      <div>
+        <button onClick={onReload}><RefreshCw size={14} />Reload</button>
+        <label><input type="checkbox" checked={freezeReveals} onChange={(event) => onFreezeRevealsChange(event.target.checked)} />Freeze reveals</label>
+        <button onClick={onLivePage}><ExternalLink size={14} />Live page</button>
+      </div>
+    </details>
+  </>;
+}
 const ZOOM_STEPS = [0.5, 0.75, 1] as const;
 
 type ResponsiveIssueId = 'hidden' | 'overflow' | 'edge' | 'type' | 'padding' | 'target';
@@ -2357,7 +2456,7 @@ const RESIZE_HANDLES: Array<{ id: ResizeDirection; label: string }> = [
   { id: 'w', label: 'Resize from the left' },
 ];
 
-/** Alt-drag snaps to this grid, in px, regardless of which project's spacing scale is active. */
+/** Edge-size snapping follows the common 8px spacing scale. */
 const CANVAS_SNAP_STEP = 8;
 const MIN_CANVAS_SIZE = 8;
 const RESIZE_PROPERTIES = ['width', 'height', 'margin-left', 'margin-top'] as const;
@@ -2383,6 +2482,7 @@ type ResizeSession = {
   height: number;
   marginLeft: number;
   marginTop: number;
+  fromCenter: boolean;
   moved: boolean;
 };
 
@@ -2413,6 +2513,7 @@ function beginResize(element: HTMLElement, direction: ResizeDirection, event: Po
     height: rect.height,
     marginLeft,
     marginTop,
+    fromCenter: false,
     moved: false,
   };
 }
@@ -2422,20 +2523,27 @@ function resizeFrame(session: ResizeSession, event: PointerEvent) {
   const dy = (event.clientY - session.startY) / session.scale;
   const horizontal = session.direction.includes('e') ? 1 : session.direction.includes('w') ? -1 : 0;
   const vertical = session.direction.includes('s') ? 1 : session.direction.includes('n') ? -1 : 0;
-  let width = horizontal ? session.startWidth + horizontal * dx : session.startWidth;
-  let height = vertical ? session.startHeight + vertical * dy : session.startHeight;
+  const multiplier = event.altKey ? 2 : 1;
+  let width = horizontal ? session.startWidth + horizontal * dx * multiplier : session.startWidth;
+  let height = vertical ? session.startHeight + vertical * dy * multiplier : session.startHeight;
   // Shift on a corner keeps the proportion the element started at, the way it does in Figma.
   if (horizontal && vertical && event.shiftKey) {
     if (Math.abs(dx) > Math.abs(dy)) height = width / session.ratio;
     else width = height * session.ratio;
   }
-  const snap = (value: number) => Math.max(MIN_CANVAS_SIZE, event.altKey ? Math.round(value / CANVAS_SNAP_STEP) * CANVAS_SNAP_STEP : Math.round(value));
+  const snapToScale = event.shiftKey && !(horizontal && vertical);
+  const snap = (value: number) => Math.max(MIN_CANVAS_SIZE, snapToScale ? Math.round(value / CANVAS_SNAP_STEP) * CANVAS_SNAP_STEP : Math.round(value));
   session.width = snap(width);
   session.height = snap(height);
+  session.fromCenter = event.altKey;
   // A left or top handle has to move the box as well as size it, or the opposite edge walks away
   // from the pointer and the drag feels like it is fighting back.
-  session.marginLeft = horizontal < 0 ? session.startMarginLeft - (session.width - session.startWidth) : session.startMarginLeft;
-  session.marginTop = vertical < 0 ? session.startMarginTop - (session.height - session.startHeight) : session.startMarginTop;
+  session.marginLeft = event.altKey && horizontal
+    ? session.startMarginLeft - (session.width - session.startWidth) / 2
+    : horizontal < 0 ? session.startMarginLeft - (session.width - session.startWidth) : session.startMarginLeft;
+  session.marginTop = event.altKey && vertical
+    ? session.startMarginTop - (session.height - session.startHeight) / 2
+    : vertical < 0 ? session.startMarginTop - (session.height - session.startHeight) : session.startMarginTop;
   session.moved = true;
 }
 
@@ -2444,8 +2552,8 @@ function resizeDeclarations(session: ResizeSession): Array<[string, string]> {
   const entries: Array<[string, string]> = [];
   if (/[ew]/.test(session.direction)) entries.push(['width', pixels(session.width)]);
   if (/[ns]/.test(session.direction)) entries.push(['height', pixels(session.height)]);
-  if (session.direction.includes('w')) entries.push(['margin-left', pixels(session.marginLeft)]);
-  if (session.direction.includes('n')) entries.push(['margin-top', pixels(session.marginTop)]);
+  if (session.direction.includes('w') || (session.fromCenter && /[ew]/.test(session.direction))) entries.push(['margin-left', pixels(session.marginLeft)]);
+  if (session.direction.includes('n') || (session.fromCenter && /[ns]/.test(session.direction))) entries.push(['margin-top', pixels(session.marginTop)]);
   return entries;
 }
 
@@ -2511,7 +2619,7 @@ function beginTextEdit(element: HTMLElement, handlers: { onCommit: () => void; o
     const text = event.clipboardData?.getData('text/plain');
     if (text === undefined) return;
     event.preventDefault();
-    doc.execCommand('insertText', false, text.replace(/\s+/g, ' '));
+    doc.execCommand('insertText', false, text);
   };
   const onBlur = () => handlers.onCommit();
   element.addEventListener('keydown', onKeyDown, true);
@@ -2552,7 +2660,7 @@ function CanvasHandles({ size, onStart }: { size: string | null; onStart: (direc
       key={handle.id}
       type="button"
       className={`hi-handle hi-handle--${handle.id}`}
-      title={`${handle.label} · Shift keeps the ratio, Alt snaps to ${CANVAS_SNAP_STEP}px`}
+      title={`${handle.label} · Shift keeps the ratio · Alt resizes from centre`}
       aria-label={handle.label}
       onPointerDown={(event) => onStart(handle.id, event)}
     />)}
@@ -2560,15 +2668,43 @@ function CanvasHandles({ size, onStart }: { size: string | null; onStart: (direc
   </>;
 }
 
-function DeviceOverlay({ presetId, onPresetChange, snapshot, dock, hidden, editVersion, comments, canvasEdit, canvasSize, canvasBusyRef, onCanvasResize, onCanvasText, onFrameDocument, onSelectPath, onReplay, onComment, onClose, onExit }: {
+type ChromeRect = { top: number; left: number; width: number; height: number };
+
+/** One selection treatment for the live page and the framed canvas. */
+function SelectionChrome({ rect, scale = 1, handles, label, parentRect, className = '', children }: {
+  rect: ChromeRect;
+  scale?: number;
+  handles?: ReactNode;
+  label?: string | null;
+  parentRect?: ChromeRect | null;
+  className?: string;
+  children?: ReactNode;
+}) {
+  const chromeScale = 1 / Math.max(scale, .01);
+  const style = { top: rect.top, left: rect.left, width: rect.width, height: rect.height, '--hi-chrome-scale': chromeScale } as CSSProperties;
+  return <>
+    {parentRect && <span className="hi-selection-parent hi-selection-parent--canvas" style={{ top: parentRect.top, left: parentRect.left, width: parentRect.width, height: parentRect.height, '--hi-chrome-scale': chromeScale } as CSSProperties} />}
+    <span className={`hi-selection-chrome ${className}`} style={style}>
+      {handles}
+      {label && <span className="hi-selection-size">{label}</span>}
+      {children}
+    </span>
+  </>;
+}
+
+function DeviceOverlay({ presetId, orientation, freezeReveals, reloadKey, snapshot, dock, hidden, editVersion, comments, tool, canvasEdit, canvasSize, canvasBusyRef, onCanvasResize, onCanvasText, onFrameDocument, onSelectPath, onReplay, onComment, onUndo, onRedo, onNotice }: {
   presetId: DevicePresetId;
-  onPresetChange: (id: DevicePresetId) => void;
+  /** Frame settings live with the toolbar that changes them — see `DeviceControls`. */
+  orientation: DeviceOrientation;
+  freezeReveals: boolean;
+  reloadKey: number;
   snapshot: ElementSnapshot | null;
   dock: 'left' | 'right';
   hidden: boolean;
   editVersion: number;
   /** Threads to pin inside the frame — the preview is where most reviewing actually happens. */
   comments: readonly PageComment[];
+  tool: 'move' | 'comment' | 'hand';
   canvasEdit: boolean;
   canvasSize: string | null;
   /** Set while a canvas drag owns the pointer, so Escape cancels the drag instead of closing the preview. */
@@ -2580,36 +2716,37 @@ function DeviceOverlay({ presetId, onPresetChange, snapshot, dock, hidden, editV
   onReplay: (doc: Document) => void;
   /** Selects the element a pin belongs to and puts the caret in the composer. */
   onComment: (path: string) => void;
-  onClose: () => void;
-  /** The overlay fills the screen, so its X is read as "close the tool", not "close this one pane". */
-  onExit: () => void;
+  onUndo: () => void;
+  onRedo: () => void;
+  onNotice: (message: string) => void;
 }) {
   const preset = inspectorDevicePresets.find((item) => item.id === presetId) ?? inspectorDevicePresets[1];
-  const [orientation, setOrientation] = useState<'portrait' | 'landscape'>('portrait');
   // Mirrors whatever direction the host page is actually in, so a Hebrew or Arabic site previews
   // right-to-left. The manual LTR/RTL toggle that used to sit in the toolbar is gone; following
   // the page is the behaviour that was worth keeping.
   const direction = isBrowser && document.documentElement.dir === 'rtl' ? 'rtl' : 'ltr';
-  const [freezeReveals, setFreezeReveals] = useState(true);
   const [zoom, setZoom] = useState<'fit' | number>('fit');
-  const [picking, setPicking] = useState(true);
-  const [reloadKey, setReloadKey] = useState(0);
-  const [sweeping, setSweeping] = useState(false);
-  const [sweepProgress, setSweepProgress] = useState(0);
-  const [sweep, setSweep] = useState<{ points: SweepPoint[]; ranges: SweepRange[] } | null>(null);
-  const sweepRef = useRef<HTMLIFrameElement>(null);
   const [frameDoc, setFrameDoc] = useState<Document | null>(null);
+  // A reload swaps the iframe out; the old document must not be inspected while the new one boots.
+  const lastReloadRef = useRef(reloadKey);
+  useEffect(() => {
+    if (lastReloadRef.current === reloadKey) return;
+    lastReloadRef.current = reloadKey;
+    setFrameDoc(null);
+  }, [reloadKey]);
   const [stageSize, setStageSize] = useState({ width: 0, height: 0 });
-  const [hoverBox, setHoverBox] = useState<{ top: number; left: number; width: number; height: number; label: string } | null>(null);
+  const [hoverBox, setHoverBox] = useState<ChromeRect | null>(null);
   const [selectionBox, setSelectionBox] = useState<{ top: number; left: number; width: number; height: number } | null>(null);
-  const [metrics, setMetrics] = useState<DeviceMetrics | null>(null);
-  const [note, setNote] = useState<string | null>(null);
+  const [parentBox, setParentBox] = useState<ChromeRect | null>(null);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
   const stageRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLIFrameElement>(null);
   const frameDocumentRef = useRef(onFrameDocument);
   const replayRef = useRef(onReplay);
   const frameEditRef = useRef<TextEditSession | null>(null);
   const canvasTextRef = useRef(onCanvasText);
+  const spaceHeldRef = useRef(false);
+  const panSessionRef = useRef<{ x: number; y: number; originX: number; originY: number } | null>(null);
   frameDocumentRef.current = onFrameDocument;
   replayRef.current = onReplay;
   canvasTextRef.current = onCanvasText;
@@ -2655,35 +2792,45 @@ function DeviceOverlay({ presetId, onPresetChange, snapshot, dock, hidden, editV
     };
   }, [measureStage]);
 
-  // The footer grows once measurements and issues arrive, which shortens the stage.
-  useEffect(() => { measureStage(); }, [measureStage, presetId, orientation, dock, metrics, note]);
+  useEffect(() => { measureStage(); }, [measureStage, presetId, orientation, dock]);
 
   useEffect(() => () => frameDocumentRef.current(null), []);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      // A canvas drag or an inline text edit owns Escape first — closing the preview underneath it
-      // would strand the edit half-applied.
-      if (canvasBusyRef.current) return;
-      if (event.key === 'Escape') { event.stopPropagation(); onClose(); }
-      if (event.key.toLowerCase() === 'p' && (event.metaKey || event.ctrlKey)) { event.preventDefault(); setPicking((current) => !current); }
+      const target = event.target;
+      const editing = target instanceof HTMLElement && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
+      if (event.code === 'Space' && !editing) spaceHeldRef.current = event.type === 'keydown';
+      if (event.type !== 'keydown' || editing || canvasBusyRef.current) return;
+      if ((event.metaKey || event.ctrlKey) && event.key === '0') { event.preventDefault(); setZoom('fit'); setPan({ x: 0, y: 0 }); }
+      if ((event.metaKey || event.ctrlKey) && event.key === '1') { event.preventDefault(); setZoom(1); setPan({ x: 0, y: 0 }); }
+      if ((event.metaKey || event.ctrlKey) && ['=', '+', '-'].includes(event.key)) {
+        event.preventDefault();
+        const steps = [.5, 1, 2];
+        const current = zoom === 'fit' ? fitScale : zoom;
+        const index = steps.reduce((closest, step, item) => Math.abs(step - current) < Math.abs(steps[closest] - current) ? item : closest, 0);
+        setZoom(steps[Math.max(0, Math.min(steps.length - 1, index + (event.key === '-' ? -1 : 1)))]);
+      }
     };
+    const onKeyUp = (event: KeyboardEvent) => { if (event.code === 'Space') spaceHeldRef.current = false; };
     window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
-  }, [canvasBusyRef, onClose]);
+    window.addEventListener('keyup', onKeyUp, true);
+    return () => { window.removeEventListener('keydown', onKey, true); window.removeEventListener('keyup', onKeyUp, true); };
+  }, [canvasBusyRef, fitScale, zoom]);
 
   /** Keep the drawn overlays and the measurement in sync with whatever the frame is currently showing. */
   const sync = useCallback(() => {
-    if (!frameDoc || !snapshot) { setSelectionBox(null); setMetrics(null); return; }
+    if (!frameDoc || !snapshot) { setSelectionBox(null); setParentBox(null); return; }
     const node = resolveInDocument(frameDoc, snapshot);
     if (!node) {
       setSelectionBox(null);
-      setMetrics({ found: false, width: 0, height: 0, fontSize: 0, padding: '—', issues: [{ id: 'hidden', text: 'This element is not rendered at this screen size.' }] });
+      setParentBox(null);
       return;
     }
     const rect = node.getBoundingClientRect();
     setSelectionBox({ top: rect.top, left: rect.left, width: rect.width, height: rect.height });
-    setMetrics(measureInFrame(node, snapshot, width));
+    const parent = node.parentElement?.getBoundingClientRect();
+    setParentBox(parent ? { top: parent.top, left: parent.left, width: parent.width, height: parent.height } : null);
   }, [frameDoc, snapshot, width]);
 
   useEffect(() => { sync(); }, [sync, editVersion]);
@@ -2750,10 +2897,28 @@ function DeviceOverlay({ presetId, onPresetChange, snapshot, dock, hidden, editV
 
   useEffect(() => {
     if (!frameDoc) return;
-    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape' && !canvasBusyRef.current) onClose(); };
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target;
+      const editing = target instanceof HTMLElement && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
+      if (!editing && event.key.toLowerCase() === 'z' && (event.metaKey || event.ctrlKey)) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.shiftKey) onRedo(); else onUndo();
+        return;
+      }
+      if (!editing && event.key === 'Escape' && !canvasBusyRef.current) {
+        const selected = snapshot ? resolveInDocument(frameDoc, snapshot) : null;
+        const parent = selected?.parentElement;
+        if (parent && parent !== frameDoc.body && !parent.closest(IGNORED_SELECTOR)) {
+          event.preventDefault();
+          event.stopPropagation();
+          onSelectPath(getUniquePath(parent));
+        }
+      }
+    };
     frameDoc.addEventListener('keydown', onKey, true);
     return () => frameDoc.removeEventListener('keydown', onKey, true);
-  }, [canvasBusyRef, frameDoc, onClose]);
+  }, [canvasBusyRef, frameDoc, onRedo, onSelectPath, onUndo, snapshot]);
 
   // Mirroring the site's Hebrew direction is a supported review mode, not a cosmetic flip.
   useEffect(() => {
@@ -2770,50 +2935,13 @@ function DeviceOverlay({ presetId, onPresetChange, snapshot, dock, hidden, editV
     return () => window.clearTimeout(settle);
   }, [frameDoc, freezeReveals, sync]);
 
-  useEffect(() => { setSweep(null); }, [presetId, orientation, direction, snapshot]);
-
-  /**
-   * Sweeps a throwaway off-screen frame across every sampled width and records which rules fail where,
-   * so the answer is "it breaks from 320 to 414px", not "toggle three devices and squint".
-   */
-  const runSweep = async () => {
-    const frame = sweepRef.current;
-    const doc = frame?.contentDocument;
-    if (!frame || !doc || !snapshot) { setSweeping(false); return; }
-    doc.documentElement.setAttribute('dir', direction);
-    applyFreezeReveals(doc, freezeReveals);
-    const settle = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
-    const points: SweepPoint[] = [];
-    for (const [index, sweepWidth] of SWEEP_WIDTHS.entries()) {
-      frame.style.width = `${sweepWidth}px`;
-      await settle(70);
-      // Reapply the live edits at each width: the markup can differ per breakpoint, so a single
-      // replay at load would miss elements that only exist at some sizes.
-      replayRef.current(doc);
-      // Sections animate in on scroll, so bring the element into view before measuring it.
-      resolveInDocument(doc, snapshot)?.scrollIntoView({ block: 'center' });
-      await settle(90);
-      const node = resolveInDocument(doc, snapshot);
-      if (!node) points.push({ width: sweepWidth, found: false, elementWidth: 0, fontSize: 0, issues: [{ id: 'hidden', text: 'Not rendered at this width.' }] });
-      else {
-        const measured = measureInFrame(node, snapshot, sweepWidth);
-        points.push({ width: sweepWidth, found: true, elementWidth: measured.width, fontSize: measured.fontSize, issues: measured.issues });
-      }
-      setSweepProgress(index + 1);
-    }
-    setSweep({ points, ranges: summariseSweep(points) });
-    setSweeping(false);
-  };
-
-  const startSweep = () => { setSweep(null); setSweepProgress(0); setSweeping(true); };
-
   useEffect(() => {
-    if (!frameDoc || !picking) { setHoverBox(null); return; }
+    if (!frameDoc || tool === 'hand') { setHoverBox(null); return; }
     const onMove = (event: PointerEvent) => {
       const target = frameDoc.elementFromPoint(event.clientX, event.clientY);
       if (!isElementNode(target) || target.closest(IGNORED_SELECTOR)) return setHoverBox(null);
       const rect = target.getBoundingClientRect();
-      setHoverBox({ top: rect.top, left: rect.left, width: rect.width, height: rect.height, label: `${classifyElement(target).hint} · ${round(rect.width)} × ${round(rect.height)}` });
+      setHoverBox({ top: rect.top, left: rect.left, width: rect.width, height: rect.height });
     };
     const onLeave = () => setHoverBox(null);
     const onClickCapture = (event: MouseEvent) => {
@@ -2826,7 +2954,7 @@ function DeviceOverlay({ presetId, onPresetChange, snapshot, dock, hidden, editV
       if (editing && (editing === target || editing.contains(target))) return;
       event.preventDefault();
       event.stopPropagation();
-      setNote(onSelectPath(getUniquePath(target)) ? null : 'That element only exists at this screen size, so it cannot be edited from the panel yet.');
+      if (!onSelectPath(getUniquePath(target))) onNotice('That element only exists at this screen size.');
     };
     frameDoc.addEventListener('pointermove', onMove, true);
     frameDoc.addEventListener('pointerleave', onLeave, true);
@@ -2836,7 +2964,7 @@ function DeviceOverlay({ presetId, onPresetChange, snapshot, dock, hidden, editV
       frameDoc.removeEventListener('pointerleave', onLeave, true);
       frameDoc.removeEventListener('click', onClickCapture, true);
     };
-  }, [frameDoc, picking, onSelectPath]);
+  }, [frameDoc, onNotice, onSelectPath, tool]);
 
   /**
    * Double-click retypes text right inside the device. The frame node is edited live so the designer
@@ -2867,10 +2995,9 @@ function DeviceOverlay({ presetId, onPresetChange, snapshot, dock, hidden, editV
       finish(true);
       const session = beginTextEdit(target, { onCommit: () => finish(true), onCancel: () => finish(false) });
       if (!session) {
-        setNote('That element wraps other elements — edit its text from the Content section in the panel.');
+        onNotice('Edit nested text from the Text section.');
         return;
       }
-      setNote(null);
       frameEditRef.current = session;
       canvasBusyRef.current = true;
     };
@@ -2880,7 +3007,7 @@ function DeviceOverlay({ presetId, onPresetChange, snapshot, dock, hidden, editV
       frameDoc.removeEventListener('dblclick', onDoubleClick, true);
       finish(false);
     };
-  }, [canvasBusyRef, canvasEdit, frameDoc]);
+  }, [canvasBusyRef, canvasEdit, frameDoc, onNotice]);
 
   const handleLoad = () => {
     const doc = frameRef.current?.contentDocument ?? null;
@@ -2890,44 +3017,34 @@ function DeviceOverlay({ presetId, onPresetChange, snapshot, dock, hidden, editV
     if (doc) window.setTimeout(() => replayRef.current(doc), 80);
   };
 
-  const kinds: DeviceKind[] = ['mobile', 'tablet', 'desktop'];
-  const modelsForKind = inspectorDevicePresets.filter((item) => item.kind === preset.kind);
+  const changeZoom = (value: 'fit' | number) => { setZoom(value); if (value === 'fit') setPan({ x: 0, y: 0 }); };
+  const onStagePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!spaceHeldRef.current && tool !== 'hand') return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    panSessionRef.current = { x: event.clientX, y: event.clientY, originX: pan.x, originY: pan.y };
+  };
+  const onStagePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const session = panSessionRef.current;
+    if (!session) return;
+    setPan({ x: session.originX + event.clientX - session.x, y: session.originY + event.clientY - session.y });
+  };
+  const stopPanning = () => { panSessionRef.current = null; };
+  const onStageWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
+    if (!(event.metaKey || event.ctrlKey)) return;
+    event.preventDefault();
+    const current = zoom === 'fit' ? fitScale : zoom;
+    setZoom(Math.max(.25, Math.min(4, Number((current * (event.deltaY > 0 ? .9 : 1.1)).toFixed(2)))));
+  };
 
   return <div className={`hi-device-overlay hi-device-overlay--${dock} ${hidden ? 'is-hidden' : ''}`} role="dialog" aria-modal={!hidden} aria-hidden={hidden} aria-label={`${preset.label} preview`}>
-    <div className="hi-device-toolbar">
-      <div className="hi-device-kinds" role="group" aria-label="Device type">
-        {kinds.map((kind) => {
-          const Icon = DEVICE_KIND_ICON[kind];
-          return <button key={kind} className={preset.kind === kind ? 'is-active' : ''} aria-pressed={preset.kind === kind} onClick={() => onPresetChange(defaultDeviceForKind[kind])}><Icon size={15} />{kind}</button>;
-        })}
-      </div>
-      <select className="hi-device-model" aria-label="Device model" value={preset.id} onChange={(event) => onPresetChange(event.target.value as DevicePresetId)}>
-        {modelsForKind.map((item) => <option key={item.id} value={item.id}>{item.label} · {item.width}×{item.height}</option>)}
-      </select>
-      <span className="hi-device-size">{width} × {height}</span>
-      <div className="hi-device-actions">
-        <button className={picking ? 'is-active' : ''} aria-pressed={picking} title="Pick an element inside the device (Ctrl/Cmd + P)" onClick={() => setPicking((current) => !current)}><Crosshair size={15} /></button>
-        <button title="Rotate" onClick={() => setOrientation((current) => current === 'portrait' ? 'landscape' : 'portrait')}><RotateCw size={15} /></button>
-        <button className={freezeReveals ? 'is-active' : ''} aria-pressed={freezeReveals} title={freezeReveals ? 'Reveal animations are frozen — click to watch them play' : 'Freeze reveal animations so sections stay visible'} onClick={() => setFreezeReveals((current) => !current)}><Sparkles size={15} /></button>
-        <button title="Reload the device frame" onClick={() => { setReloadKey((current) => current + 1); setFrameDoc(null); }}><RefreshCw size={15} /></button>
-        <div className="hi-device-zoom" role="group" aria-label="Zoom">
-          <button className={zoom === 'fit' ? 'is-active' : ''} onClick={() => setZoom('fit')}>Fit</button>
-          {ZOOM_STEPS.map((step) => <button key={step} className={zoom === step ? 'is-active' : ''} onClick={() => setZoom(step)}>{step * 100}%</button>)}
-        </div>
-        <button className="hi-device-close" title="Close the design tool (Esc)" onClick={onExit}><X size={16} /></button>
-      </div>
-    </div>
-
-    <div className="hi-device-stage" ref={stageRef}>
-      <div className="hi-device-sizer" style={{ width: shellWidth * scale, height: shellHeight * scale }}>
+    <div className={`hi-device-stage ${panSessionRef.current ? 'is-panning' : ''}`} ref={stageRef} onPointerDown={onStagePointerDown} onPointerMove={onStagePointerMove} onPointerUp={stopPanning} onPointerCancel={stopPanning} onWheel={onStageWheel}>
+      <div className="hi-device-sizer" style={{ width: shellWidth * scale, height: shellHeight * scale, transform: `translate(${pan.x}px, ${pan.y}px)` }}>
         <div className={`hi-device-shell hi-device-shell--${preset.chrome}`} style={{ width: shellWidth, height: shellHeight, transform: `scale(${scale})`, padding: bezel, borderRadius: preset.radius + bezel }}>
           {preset.chrome === 'browser' && <div className="hi-device-chrome" style={{ height: chromeBar }}><i /><i /><i /><span>{window.location.host}{window.location.pathname}</span></div>}
           <div className="hi-device-viewport" style={{ width, height, borderRadius: preset.radius }}>
             <iframe key={reloadKey} ref={frameRef} name={DESIGN_PREVIEW_FRAME_NAME} title={`${preset.label} live preview`} src={previewUrl} onLoad={handleLoad} style={{ width, height }} />
-            {selectionBox && <span className="hi-device-marker is-selected" style={{ top: selectionBox.top, left: selectionBox.left, width: selectionBox.width, height: selectionBox.height }}>
-              {canvasEdit && snapshot && <CanvasHandles size={canvasSize} onStart={(direction, event) => onCanvasResize(direction, event, scale, sync)} />}
-            </span>}
-            {picking && hoverBox && <span className="hi-device-marker" style={{ top: hoverBox.top, left: hoverBox.left, width: hoverBox.width, height: hoverBox.height }}><b>{hoverBox.label}</b></span>}
+            {selectionBox && <SelectionChrome rect={selectionBox} parentRect={parentBox} scale={scale} className="is-selected" label={canvasSize ?? `${round(selectionBox.width)} × ${round(selectionBox.height)}`} handles={canvasEdit && snapshot ? <CanvasHandles size={null} onStart={(direction, event) => onCanvasResize(direction, event, scale, sync)} /> : null} />}
+            {tool !== 'hand' && hoverBox && (!selectionBox || hoverBox.top !== selectionBox.top || hoverBox.left !== selectionBox.left) && <SelectionChrome rect={hoverBox} scale={scale} className="is-hovered" />}
             {/* Counter-scaled so a pin stays legible at 50% zoom instead of shrinking with the shell. */}
             {pins.map((pin) => <button
               key={pin.path}
@@ -2941,46 +3058,79 @@ function DeviceOverlay({ presetId, onPresetChange, snapshot, dock, hidden, editV
         </div>
       </div>
     </div>
-
-    <div className="hi-device-footer">
-      <div className="hi-device-readout">
-        {snapshot ? <><strong>{snapshot.family.label}</strong>{metrics?.found ? <small>{metrics.width} × {metrics.height}px · {metrics.fontSize}px type · padding {metrics.padding}</small> : <small>{metrics ? 'Not rendered at this size' : 'Measuring…'}</small>}</> : <small>Pick an element inside the device to start editing it in the panel.</small>}
-        {canvasEdit && <span className="hi-canvas-hint"><Maximize2 size={12} />Drag the handles to resize · double-click text to retype</span>}
-        {snapshot && <button className="hi-sweep-run" disabled={sweeping} onClick={startSweep}><Gauge size={14} />{sweeping ? `Sweeping ${sweepProgress}/${SWEEP_WIDTHS.length}…` : 'Run breakpoint sweep'}</button>}
-      </div>
-      {note && <p className="hi-device-note"><CircleAlert size={14} />{note}</p>}
-      {metrics?.found && !sweep && <div className={`hi-responsive-result ${metrics.issues.length ? 'has-issues' : 'is-clear'}`}>{metrics.issues.length ? <><CircleAlert size={15} /><span>{metrics.issues.map((issue) => <small key={issue.id}>{issue.text}</small>)}</span></> : <><CheckCircle2 size={15} /><span><strong>Looks healthy</strong><small>Width, spacing and typography fit this screen.</small></span></>}</div>}
-
-      {sweep && <div className="hi-sweep-report">
-        <div className="hi-sweep-strip" role="group" aria-label="Sweep results by width">
-          {sweep.points.map((point) => <button key={point.width} className={point.issues.length ? 'has-issues' : 'is-clear'} title={`${point.issues.map((issue) => issue.text).join('\n') || 'No issues at this width'}\n\nClick to jump to the closest device.`} onClick={() => onPresetChange(nearestPresetForWidth(point.width))}>
-            <em>{point.width}</em><small>{point.found ? `${point.elementWidth}px · ${point.fontSize}px` : 'absent'}</small>
-          </button>)}
-        </div>
-        {sweep.ranges.length
-          ? <div className="hi-sweep-ranges">{sweep.ranges.map((entry) => <div key={entry.id}><CircleAlert size={14} /><span><strong>{entry.label}</strong><small>{entry.sample}</small></span><code>{entry.range}</code></div>)}</div>
-          : <div className="hi-responsive-result is-clear"><CheckCircle2 size={15} /><span><strong>Clean from {SWEEP_WIDTHS[0]}px to {SWEEP_WIDTHS[SWEEP_WIDTHS.length - 1]}px</strong><small>No overflow, undersized type or small touch targets at any sampled width.</small></span></div>}
-        <div className="hi-sweep-actions">
-          <CopyButton label="Copy sweep report" value={`Breakpoint sweep · ${snapshot?.selector ?? ''}\n${sweep.ranges.length ? sweep.ranges.map((entry) => `- ${entry.label}: ${entry.range}`).join('\n') : `- No issues between ${SWEEP_WIDTHS[0]}px and ${SWEEP_WIDTHS[SWEEP_WIDTHS.length - 1]}px`}`} />
-          <button onClick={() => setSweep(null)}>Clear</button>
-        </div>
-      </div>}
-    </div>
-
-    {sweeping && <iframe ref={sweepRef} name={DESIGN_PREVIEW_FRAME_NAME} className="hi-sweep-frame" title="Breakpoint sweep" src={previewUrl} onLoad={runSweep} style={{ width: SWEEP_WIDTHS[0], height }} />}
+    <label className="hi-device-zoom-pill" title="Canvas zoom">
+      <select value={zoom === 'fit' ? 'fit' : String(zoom)} onChange={(event) => changeZoom(event.target.value === 'fit' ? 'fit' : Number(event.target.value))}>
+        <option value="fit">Fit</option>
+        {ZOOM_STEPS.map((step) => <option key={step} value={step}>{step * 100}%</option>)}
+      </select>
+      <ChevronDown size={12} />
+    </label>
   </div>;
 }
 
-function ResponsiveLauncher({ activeKind, onOpen }: { activeKind: DeviceKind | null; onOpen: (kind: DeviceKind) => void }) {
-  return <div className="hi-responsive-tool">
-    <div className="hi-responsive-launcher">
-      {inspectorResponsiveBreakpoints.map((item) => {
-        const Icon = DEVICE_KIND_ICON[item.id as DeviceKind];
-        return <button key={item.id} className={activeKind === item.id ? 'is-active' : ''} onClick={() => onOpen(item.id as DeviceKind)}>
-          <Icon size={17} /><span>{item.label}</span><small>{item.width} × {item.height}</small>
-        </button>;
-      })}
-    </div>
+function ResponsivePanel({ presetId, snapshot, frameDocument, editVersion, onPresetChange, onReplay }: {
+  presetId: DevicePresetId;
+  snapshot: ElementSnapshot;
+  frameDocument: Document | null;
+  editVersion: number;
+  onPresetChange: (id: DevicePresetId) => void;
+  onReplay: (doc: Document) => void;
+}) {
+  const [sweeping, setSweeping] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [sweep, setSweep] = useState<{ points: SweepPoint[]; ranges: SweepRange[] } | null>(null);
+  const sweepRef = useRef<HTMLIFrameElement>(null);
+  const preset = inspectorDevicePresets.find((item) => item.id === presetId) ?? inspectorDevicePresets[1];
+  const direction = isBrowser && document.documentElement.dir === 'rtl' ? 'rtl' : 'ltr';
+  const previewUrl = (() => {
+    const url = new URL(window.location.href);
+    [DESIGN_MODE_PARAM, 'inspect', 'design', 'system', 'responsiveSelector', 'responsiveBreakpoint'].forEach((parameter) => url.searchParams.delete(parameter));
+    return url.toString();
+  })();
+  const metrics = useMemo(() => {
+    const node = frameDocument ? resolveInDocument(frameDocument, snapshot) : null;
+    return node ? measureInFrame(node, snapshot, preset.width) : null;
+    // editVersion deliberately invalidates DOM measurements after live edits.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editVersion, frameDocument, preset.width, snapshot]);
+
+  useEffect(() => { setSweep(null); }, [presetId, snapshot.uniquePath]);
+
+  const runSweep = async () => {
+    const frame = sweepRef.current;
+    const doc = frame?.contentDocument;
+    if (!frame || !doc) { setSweeping(false); return; }
+    doc.documentElement.setAttribute('dir', direction);
+    applyFreezeReveals(doc, true);
+    const settle = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
+    const points: SweepPoint[] = [];
+    for (const [index, width] of SWEEP_WIDTHS.entries()) {
+      frame.style.width = `${width}px`;
+      await settle(70);
+      onReplay(doc);
+      resolveInDocument(doc, snapshot)?.scrollIntoView({ block: 'center' });
+      await settle(90);
+      const node = resolveInDocument(doc, snapshot);
+      if (!node) points.push({ width, found: false, elementWidth: 0, fontSize: 0, issues: [{ id: 'hidden', text: 'Not rendered at this width.' }] });
+      else {
+        const measured = measureInFrame(node, snapshot, width);
+        points.push({ width, found: true, elementWidth: measured.width, fontSize: measured.fontSize, issues: measured.issues });
+      }
+      setProgress(index + 1);
+    }
+    setSweep({ points, ranges: summariseSweep(points) });
+    setSweeping(false);
+  };
+
+  return <div className="hi-responsive-panel">
+    {metrics?.issues.length ? <ul className="hi-responsive-issues">{metrics.issues.map((issue) => <li key={issue.id}>{issue.text}</li>)}</ul> : null}
+    <button className="hi-sweep-run" disabled={sweeping} onClick={() => { setSweep(null); setProgress(0); setSweeping(true); }}><Gauge size={14} />{sweeping ? `${progress}/${SWEEP_WIDTHS.length}` : 'Sweep breakpoints'}</button>
+    {sweep && <div className="hi-sweep-report">
+      <div className="hi-sweep-strip" role="group" aria-label="Sweep results by width">{sweep.points.map((point) => <button key={point.width} className={point.issues.length ? 'has-issues' : 'is-clear'} title={point.issues.map((issue) => issue.text).join('\n') || 'No issues'} onClick={() => onPresetChange(nearestPresetForWidth(point.width))}><em>{point.width}</em><small>{point.issues.length || '✓'}</small></button>)}</div>
+      {sweep.ranges.length > 0 && <div className="hi-sweep-ranges">{sweep.ranges.map((entry) => <div key={entry.id}><CircleAlert size={14} /><span><strong>{entry.label}</strong><small>{entry.sample}</small></span><code>{entry.range}</code></div>)}</div>}
+      <div className="hi-sweep-actions"><CopyButton label="Copy sweep report" value={`Breakpoint sweep · ${snapshot.selector}\n${sweep.ranges.length ? sweep.ranges.map((entry) => `- ${entry.label}: ${entry.range}`).join('\n') : '- No sampled issues'}`} /><button onClick={() => setSweep(null)}>Clear</button></div>
+    </div>}
+    {sweeping && <iframe ref={sweepRef} name={DESIGN_PREVIEW_FRAME_NAME} className="hi-sweep-frame" title="Breakpoint sweep" src={previewUrl} onLoad={runSweep} style={{ width: SWEEP_WIDTHS[0], height: preset.height }} />}
   </div>;
 }
 
@@ -3352,9 +3502,13 @@ function HandoffInspectorPanel() {
   const [dock, setDock] = useState<'left' | 'right'>(() => readStoredPreference('meraki-inspector-dock') === 'left' ? 'left' : 'right');
   const [locked, setLocked] = useState(false);
   const [snapshot, setSnapshot] = useState<ElementSnapshot | null>(null);
+  const [selectedElements, setSelectedElements] = useState<HTMLElement[]>([]);
   const [changes, setChanges] = useState<DesignChange[]>([]);
   const [stateResetSignal, setStateResetSignal] = useState(0);
   const [devicePreset, setDevicePreset] = useState<DevicePresetId>('iphone-15');
+  const [deviceOrientation, setDeviceOrientation] = useState<DeviceOrientation>('portrait');
+  const [freezeReveals, setFreezeReveals] = useState(true);
+  const [deviceReloadKey, setDeviceReloadKey] = useState(0);
   const [deviceOpen, setDeviceOpen] = useState(false);
   /** The one confirmation on screen, if any. Ids let a repeat gesture restart its own timer. */
   const [toast, setToast] = useState<{ id: number; label: string } | null>(null);
@@ -3380,13 +3534,14 @@ function HandoffInspectorPanel() {
    * panel shows only the sections that mode can act on.
    */
   const [mode, setMode] = useState<InspectorMode>('design');
-  const commentMode = mode === 'comment';
+  const [canvasTool, setCanvasTool] = useState<'move' | 'comment' | 'hand'>('move');
+  const commentMode = mode === 'comment' && canvasTool === 'comment';
 
   /**
    * Canvas editing is what design mode means, so there is no separate switch for it. The state
    * remains because leaving comment or review has to put the handles back.
    */
-  const canvasEdit = mode === 'design';
+  const canvasEdit = mode === 'design' && canvasTool === 'move';
   /** Bumped to ask the Comments section to open and put the caret in the composer. */
   const [focusComposer, setFocusComposer] = useState(0);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
@@ -3408,23 +3563,28 @@ function HandoffInspectorPanel() {
   const stateMarkRef = useRef(1);
   const panelRef = useRef<HTMLElement>(null);
   const selectedRef = useRef<HTMLElement | null>(null);
+  const selectedElementsRef = useRef<HTMLElement[]>([]);
   const hoverRef = useRef<HTMLElement | null>(null);
   const originalsRef = useRef(new Map<HTMLElement, OriginalState>());
   const rafRef = useRef<number | null>(null);
   const deviceDocRef = useRef<Document | null>(null);
+  const [deviceDocument, setDeviceDocument] = useState<Document | null>(null);
   const tokenVariablesRef = useRef(new Map<string, string>());
+  const tokenVariableOriginalsRef = useRef(new Map<string, { value: string; priority: string } | null>());
   const changesRef = useRef<DesignChange[]>([]);
+  const undoStackRef = useRef<HistoryEntry[]>([]);
+  const redoStackRef = useRef<HistoryEntry[]>([]);
+  const historyBatchRef = useRef<{ label: string; changes: DesignChange[] } | null>(null);
   const hasSavedRef = useRef(false);
   // Canvas gestures outlive the render that started them, so they read the selection through refs.
   const snapshotRef = useRef<ElementSnapshot | null>(null);
   const scopeRef = useRef<DesignScope>('free');
   changesRef.current = changes;
+  selectedElementsRef.current = selectedElements;
   snapshotRef.current = snapshot;
   scopeRef.current = scope;
-  const activeDeviceKind = deviceOpen ? inspectorDevicePresets.find((item) => item.id === devicePreset)?.kind ?? null : null;
   const openDevice = (kind: DeviceKind) => { setDevicePreset(defaultDeviceForKind[kind]); setDeviceOpen(true); setDeviceMounted(true); };
-  // There is one mode now, so opening the inspector means landing in the desktop preview ready to edit.
-  // Opening the tool lands in the desktop preview, ready to edit at a real device size.
+  // The framed device is the default workspace; the live page remains available from frame options.
   const toggleInspector = () => {
     if (open) { setOpen(false); return; }
     openDevice('desktop');
@@ -3601,16 +3761,25 @@ function HandoffInspectorPanel() {
    * Pins are the one part of the tool that points *into* the page from outside it, so they need a
    * way back to a selection — clicking a note should put you on the thing the note is about.
    */
+  const commitSelection = useCallback((elements: HTMLElement[], primary = elements[elements.length - 1], scroll = false) => {
+    const next = elements.filter((element, index) => element.isConnected && !element.closest(IGNORED_SELECTOR) && elements.indexOf(element) === index);
+    const selected = primary && next.includes(primary) ? primary : next[next.length - 1] ?? null;
+    selectedElementsRef.current = next;
+    setSelectedElements(next);
+    selectedRef.current = selected;
+    hoverRef.current = selected;
+    setLocked(Boolean(selected));
+    setSnapshot(selected ? createSnapshot(selected) : null);
+    if (scroll && selected) selected.scrollIntoView({ block: 'center' });
+  }, []);
+
   const selectByPath = useCallback((path: string, comment?: Pick<PageComment, 'path' | 'selector' | 'anchor'>) => {
     const element = comment
       ? resolveComment(document, comment)
       : resolveInDocument(document, { uniquePath: path, selector: '' });
     if (!element) return;
-    selectedRef.current = element;
-    hoverRef.current = element;
-    setLocked(true);
-    setSnapshot(createSnapshot(element));
-  }, []);
+    commitSelection([element], element);
+  }, [commitSelection]);
 
   const refresh = useCallback((element = selectedRef.current || hoverRef.current) => {
     if (element && element.isConnected) setSnapshot(createSnapshot(element));
@@ -3620,6 +3789,7 @@ function HandoffInspectorPanel() {
     if (!open) return;
     const findTarget = (event: PointerEvent) => document.elementsFromPoint(event.clientX, event.clientY).find((node): node is HTMLElement => node instanceof HTMLElement && !node.closest(IGNORED_SELECTOR));
     const onMove = (event: PointerEvent) => {
+      if (mode === 'handoff') return;
       if (event.target instanceof Element && event.target.closest(IGNORED_SELECTOR)) return;
       if (locked) return;
       const target = findTarget(event);
@@ -3629,29 +3799,70 @@ function HandoffInspectorPanel() {
       rafRef.current = requestAnimationFrame(() => setSnapshot(createSnapshot(target)));
     };
     const onClick = (event: MouseEvent) => {
+      if (mode === 'handoff') return;
       if (event.target instanceof Element && event.target.closest(IGNORED_SELECTOR)) return;
       // Clicks inside the box being retyped place the caret; they are not a new selection.
       const editing = textEditRef.current?.element;
       if (editing && event.target instanceof Node && (editing === event.target || editing.contains(event.target))) return;
-      const target = document.elementsFromPoint(event.clientX, event.clientY).find((node): node is HTMLElement => node instanceof HTMLElement && !node.closest(IGNORED_SELECTOR));
+      const deepest = findTarget(event as PointerEvent);
+      const eventTarget = event.target instanceof HTMLElement && !event.target.closest(IGNORED_SELECTOR) ? event.target : deepest;
+      const target = event.metaKey || event.ctrlKey ? deepest : eventTarget;
       if (!target) return;
       event.preventDefault();
       event.stopPropagation();
-      selectedRef.current = target;
-      hoverRef.current = target;
-      setLocked(true);
-      setSnapshot(createSnapshot(target));
+      if (event.shiftKey) {
+        const current = selectedElementsRef.current;
+        const next = current.includes(target)
+          ? current.filter((element) => element !== target)
+          // Never edit an ancestor and its descendant as one selection: text and layout mutations
+          // would be applied twice to the same subtree. Multi-select is intentionally sibling-like.
+          : [...current.filter((element) => !element.contains(target) && !target.contains(element)), target];
+        commitSelection(next, next.includes(target) ? target : next[next.length - 1]);
+        return;
+      }
+      // A selected container owns ordinary clicks inside it. Double-click or Cmd/Ctrl-click drills
+      // into the child, mirroring Figma's group-selection convention.
+      const current = selectedRef.current;
+      if (locked && current && current !== target && current.contains(target) && !event.metaKey && !event.ctrlKey) return;
+      commitSelection([target], target);
     };
     const onKey = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
       if (deviceOpen) return;
+      const keyTarget = event.target;
+      if (keyTarget instanceof HTMLElement && (keyTarget.closest('[data-inspector-ui]') || keyTarget.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(keyTarget.tagName))) return;
       // A drag or an inline edit consumes Escape itself; unlocking underneath it would lose the element.
       if (canvasBusyRef.current) return;
+      const selected = selectedRef.current;
+      if (mode === 'handoff' && event.key !== 'Escape') return;
+      if (event.key === 'Enter' && selected) {
+        const child = Array.from(selected.children).find((node): node is HTMLElement => node instanceof HTMLElement && !node.closest(IGNORED_SELECTOR));
+        if (child) { event.preventDefault(); event.stopPropagation(); commitSelection([child], child); }
+        return;
+      }
+      if (event.key === 'Tab' && selected?.parentElement) {
+        const siblings = Array.from(selected.parentElement.children).filter((node): node is HTMLElement => node instanceof HTMLElement && !node.closest(IGNORED_SELECTOR));
+        const index = siblings.indexOf(selected);
+        if (index >= 0 && siblings.length > 1) {
+          event.preventDefault();
+          event.stopPropagation();
+          const offset = event.shiftKey ? -1 : 1;
+          const sibling = siblings[(index + offset + siblings.length) % siblings.length];
+          commitSelection([sibling], sibling);
+        }
+        return;
+      }
+      if (event.key !== 'Escape') return;
       // Escape peels one layer at a time, innermost first — an open note, then the selection, then
       // the tool. Closing the whole thing because a bubble was open is a small betrayal of the key
       // everyone reaches for.
       if (openThread) { setOpenThread(null); return; }
-      if (locked) { setLocked(false); selectedRef.current = null; }
+      if (locked && selected) {
+        event.preventDefault();
+        event.stopPropagation();
+        const parent = selected.parentElement;
+        if (parent && parent !== document.body && !parent.closest(IGNORED_SELECTOR)) commitSelection([parent], parent);
+        else commitSelection([]);
+      }
       else setOpen(false);
     };
     const onViewport = () => refresh();
@@ -3668,7 +3879,7 @@ function HandoffInspectorPanel() {
       window.removeEventListener('resize', onViewport);
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
-  }, [deviceOpen, locked, open, openThread, refresh]);
+  }, [commitSelection, deviceOpen, locked, mode, open, openThread, refresh]);
 
   useEffect(() => {
     if (open) return;
@@ -3705,22 +3916,14 @@ function HandoffInspectorPanel() {
 
   const storeOriginal = (element: HTMLElement) => {
     if (originalsRef.current.has(element)) return;
-    originalsRef.current.set(element, {
-      element,
-      styleAttribute: element.getAttribute('style'),
-      innerHTML: element.innerHTML,
-      textContent: element.textContent,
-      value: element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement ? element.value : undefined,
-      attributes: Array.from(element.attributes).map((attribute) => [attribute.name, attribute.value]),
-      parent: element.parentNode,
-      nextSibling: element.nextSibling,
-    });
+    originalsRef.current.set(element, captureOriginalState(element));
   };
 
   /** Component scope only widens an edit when the element being edited *is* the current selection. */
   const targetsFor = (element: HTMLElement) => {
     const current = snapshotRef.current;
     if (current && current.element === element && scopeRef.current === 'component') return current.family.elements;
+    if (current && current.element === element && scopeRef.current === 'free' && selectedElementsRef.current.length > 1) return selectedElementsRef.current;
     return [element];
   };
 
@@ -3745,9 +3948,10 @@ function HandoffInspectorPanel() {
   }, []);
 
   const restoreInDevice = (node: HTMLElement, source: HTMLElement) => {
-    const style = source.getAttribute('style');
-    if (style === null) node.removeAttribute('style'); else node.setAttribute('style', style);
+    Array.from(node.attributes).forEach((attribute) => node.removeAttribute(attribute.name));
+    Array.from(source.attributes).forEach((attribute) => node.setAttribute(attribute.name, attribute.value));
     node.innerHTML = source.innerHTML;
+    if (isFieldNode(node) && isFieldNode(source)) node.value = source.value;
   };
 
   /** Re-apply every live edit after the device frame reloads or the device changes. */
@@ -3778,6 +3982,7 @@ function HandoffInspectorPanel() {
 
   const registerDeviceDocument = useCallback((doc: Document | null) => {
     deviceDocRef.current = doc;
+    setDeviceDocument(doc);
     setEditVersion((current) => current + 1);
   }, []);
 
@@ -3807,6 +4012,11 @@ function HandoffInspectorPanel() {
         kind: change.kind,
         instruction: change.instruction,
         cssVariable: change.cssVariable,
+        forced: change.forced,
+        inlineBefore: change.inlineBefore,
+        priorityBefore: change.priorityBefore,
+        hadAttributeBefore: change.hadAttributeBefore,
+        tokenVariableBefore: change.tokenVariableBefore,
       })),
     };
     try {
@@ -3822,6 +4032,11 @@ function HandoffInspectorPanel() {
   }, [open]);
 
   const restoreSession = (session: StoredSession) => {
+    session.changes.forEach((entry) => {
+      if (entry.kind === 'token' && entry.cssVariable && !tokenVariableOriginalsRef.current.has(entry.cssVariable.name)) {
+        tokenVariableOriginalsRef.current.set(entry.cssVariable.name, entry.tokenVariableBefore ?? null);
+      }
+    });
     session.variables.forEach(([name, value]) => {
       document.documentElement.style.setProperty(name, value);
       deviceDocRef.current?.documentElement.style.setProperty(name, value);
@@ -3834,13 +4049,23 @@ function HandoffInspectorPanel() {
       try { element = document.querySelector<HTMLElement>(entry.path); } catch { element = null; }
       if (!element || element.closest(IGNORED_SELECTOR)) { missing += 1; return; }
       storeOriginal(element);
+      const inlineBefore = entry.kind === 'css' ? element.style.getPropertyValue(entry.property) : entry.inlineBefore;
+      const priorityBefore = entry.kind === 'css' ? element.style.getPropertyPriority(entry.property) : entry.priorityBefore;
+      const hadAttributeBefore = entry.kind === 'attribute' ? element.hasAttribute(entry.property.replace(/^@/, '')) : entry.hadAttributeBefore;
       if (entry.kind === 'css') setPropertyVisibly(element, entry.property, entry.after);
       if (entry.kind === 'content') { if (isFieldNode(element)) element.value = entry.after; else element.textContent = entry.after; }
       if (entry.kind === 'attribute') element.setAttribute(entry.property.replace(/^@/, ''), entry.after);
-      restored.push({ element, selector: entry.selector, property: entry.property, before: entry.before, after: entry.after, kind: entry.kind, instruction: entry.instruction, cssVariable: entry.cssVariable });
+      restored.push({
+        element, selector: entry.selector, property: entry.property, before: entry.before, after: entry.after,
+        kind: entry.kind, instruction: entry.instruction, cssVariable: entry.cssVariable,
+        forced: entry.forced, inlineBefore, priorityBefore, hadAttributeBefore,
+        tokenVariableBefore: entry.tokenVariableBefore,
+      });
     });
     changesRef.current = restored;
     setChanges(restored);
+    undoStackRef.current = restored.length ? [{ label: 'restored session', changes: restored }] : [];
+    redoStackRef.current = [];
     setRestorable(null);
     setRestoreNote(missing ? `${missing} edit${missing === 1 ? '' : 's'} could not be matched — the page markup changed.` : null);
     if (deviceDocRef.current) replayIntoDevice(deviceDocRef.current);
@@ -3857,12 +4082,8 @@ function HandoffInspectorPanel() {
   };
 
   const selectElement = useCallback((element: HTMLElement) => {
-    selectedRef.current = element;
-    hoverRef.current = element;
-    setLocked(true);
-    setSnapshot(createSnapshot(element));
-    element.scrollIntoView({ block: 'center' });
-  }, []);
+    commitSelection([element], element, true);
+  }, [commitSelection]);
 
   /**
    * Selects what was clicked inside the device preview.
@@ -3919,25 +4140,35 @@ function HandoffInspectorPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectElement]);
 
-  const recordChange = (change: DesignChange) => {
-    setChanges((current) => {
-      const existing = current.findIndex((item) => item.element === change.element && item.property === change.property);
-      if (existing === -1) return [...current, change];
-      const next = [...current];
-      next[existing] = { ...change, before: current[existing].before };
-      return next;
-    });
+  const recordChanges = (incoming: DesignChange[], label = incoming[0]?.property ?? 'Edit') => {
+    if (!incoming.length) return;
+    const next = mergeChangeLog(changesRef.current, incoming);
+    changesRef.current = next;
+    setChanges(next);
+    if (historyBatchRef.current) historyBatchRef.current.changes.push(...incoming);
+    else undoStackRef.current.push({ label, changes: incoming });
+    redoStackRef.current = [];
+  };
+
+  const recordChange = (change: DesignChange, label?: string) => recordChanges([change], label);
+
+  const beginHistoryBatch = (label: string) => { historyBatchRef.current = { label, changes: [] }; };
+  const finishHistoryBatch = () => {
+    const batch = historyBatchRef.current;
+    historyBatchRef.current = null;
+    if (batch?.changes.length) undoStackRef.current.push(batch);
   };
 
   const applyStyleTo = (targets: HTMLElement[], property: string, rawValue: string) => {
     const value = normalizeCssValue(property, rawValue);
+    const applied: DesignChange[] = [];
     targets.forEach((element) => {
       storeOriginal(element);
       const before = getComputedStyle(element).getPropertyValue(property);
       const inlineBefore = element.style.getPropertyValue(property);
       const priorityBefore = element.style.getPropertyPriority(property);
       const forced = setPropertyVisibly(element, property, value);
-      recordChange({
+      applied.push({
         element,
         selector: getSelector(element),
         property,
@@ -3951,23 +4182,25 @@ function HandoffInspectorPanel() {
         viewport: currentViewport(),
       });
     });
+    recordChanges(applied, `Set ${property}`);
     mirrorToDevice(targets, (node) => setPropertyVisibly(node, property, value));
     window.setTimeout(() => refresh(snapshotRef.current?.element), 0);
   };
 
   const applyStyle = (property: string, rawValue: string) => applyStyleTo(currentTargets(), property, rawValue);
 
-  /**
-   * Takes back a single edit.
-   *
-   * `Reset all` was the only way out, which is the wrong unit: disowning one colour should not cost
-   * you the other fourteen decisions made since. Every css edit records the inline value it replaced,
-   * so this puts back exactly that — and anything else is reverted to what the element computed
-   * before, which is the closest thing to "as it was" available for text, attributes and layout.
-   */
-  const undoChange = (change: DesignChange) => {
+  const applyHistoryChange = (change: DesignChange, direction: 'undo' | 'redo') => {
     const element = change.element;
-    if (element.isConnected) {
+    if (!element.isConnected && change.kind !== 'token') return;
+    if (change.domBefore && change.domAfter) {
+      restoreCapturedState(direction === 'undo' ? change.domBefore : change.domAfter);
+      // Reordering changes the element's structural path. Mirroring the parent keeps the framed DOM
+      // in the same order; scalar asset replacements can still resolve and copy the element itself.
+      const mirrorTarget = change.kind === 'layout' ? element.parentElement : element;
+      if (mirrorTarget) mirrorToDevice([mirrorTarget], restoreInDevice);
+      return;
+    }
+    if (direction === 'undo') {
       if (change.kind === 'css') {
         if (change.inlineBefore) element.style.setProperty(change.property, change.inlineBefore, change.priorityBefore || '');
         else element.style.removeProperty(change.property);
@@ -3978,17 +4211,134 @@ function HandoffInspectorPanel() {
       } else if (change.kind === 'content') {
         if (isFieldNode(element)) element.value = change.before;
         else element.textContent = change.before;
+        mirrorToDevice([element], (node) => { if (isFieldNode(node)) node.value = change.before; else node.textContent = change.before; });
       } else if (change.kind === 'attribute') {
-        element.setAttribute(change.property.replace(/^@/, ''), change.before);
+        const property = change.property.replace(/^@/, '');
+        if (change.hadAttributeBefore === false) element.removeAttribute(property);
+        else element.setAttribute(property, change.before);
+        mirrorToDevice([element], (node) => {
+          if (change.hadAttributeBefore === false) node.removeAttribute(property);
+          else node.setAttribute(property, change.before);
+        });
+      }
+    } else if (change.kind === 'css') {
+      element.style.setProperty(change.property, change.after, change.forced ? 'important' : '');
+      mirrorToDevice([element], (node) => node.style.setProperty(change.property, change.after, change.forced ? 'important' : ''));
+    } else if (change.kind === 'content') {
+      if (isFieldNode(element)) element.value = change.after;
+      else element.textContent = change.after;
+      mirrorToDevice([element], (node) => { if (isFieldNode(node)) node.value = change.after; else node.textContent = change.after; });
+    } else if (change.kind === 'attribute') {
+      const property = change.property.replace(/^@/, '');
+      element.setAttribute(property, change.after);
+      mirrorToDevice([element], (node) => node.setAttribute(property, change.after));
+    } else if (change.kind === 'state' && change.stateMark) {
+      element.setAttribute(STATE_MARK_ATTRIBUTE, change.stateMark);
+      mirrorToDevice([element], (node) => node.setAttribute(STATE_MARK_ATTRIBUTE, change.stateMark!));
+    }
+    if (change.kind === 'token' && change.cssVariable) {
+      const root = document.documentElement;
+      const frameRoot = deviceDocRef.current?.documentElement;
+      if (direction === 'undo') {
+        if (change.tokenVariableBefore) {
+          root.style.setProperty(change.cssVariable.name, change.tokenVariableBefore.value, change.tokenVariableBefore.priority);
+          frameRoot?.style.setProperty(change.cssVariable.name, change.tokenVariableBefore.value, change.tokenVariableBefore.priority);
+          tokenVariablesRef.current.set(change.cssVariable.name, change.tokenVariableBefore.value);
+        } else {
+          root.style.removeProperty(change.cssVariable.name);
+          frameRoot?.style.removeProperty(change.cssVariable.name);
+          tokenVariablesRef.current.delete(change.cssVariable.name);
+        }
+      } else {
+        root.style.setProperty(change.cssVariable.name, change.cssVariable.value);
+        frameRoot?.style.setProperty(change.cssVariable.name, change.cssVariable.value);
+        tokenVariablesRef.current.set(change.cssVariable.name, change.cssVariable.value);
       }
     }
-    setChanges((current) => current.filter((entry) => !(entry.element === change.element && entry.property === change.property)));
+  };
+
+  const syncInactiveStateMarks = (active: readonly DesignChange[]) => {
+    originalsRef.current.forEach((original, element) => {
+      const elementChanges = active.filter((change) => change.element === element);
+      if (!elementChanges.some((change) => change.kind === 'state')) {
+        const originalMark = original.attributes.find(([name]) => name === STATE_MARK_ATTRIBUTE)?.[1];
+        if (element.hasAttribute(STATE_MARK_ATTRIBUTE) || originalMark !== undefined) {
+          if (originalMark === undefined) element.removeAttribute(STATE_MARK_ATTRIBUTE);
+          else element.setAttribute(STATE_MARK_ATTRIBUTE, originalMark);
+          mirrorToDevice([element], (node) => {
+            if (originalMark === undefined) node.removeAttribute(STATE_MARK_ATTRIBUTE);
+            else node.setAttribute(STATE_MARK_ATTRIBUTE, originalMark);
+          });
+        }
+      }
+    });
+  };
+
+  const syncActiveTokenVariables = (active: readonly DesignChange[]) => {
+    const activeVariables = new Map<string, string>();
+    active.forEach((change) => {
+      if (change.kind === 'token' && change.cssVariable) activeVariables.set(change.cssVariable.name, change.cssVariable.value);
+    });
+    tokenVariablesRef.current.clear();
+    activeVariables.forEach((value, name) => tokenVariablesRef.current.set(name, value));
+  };
+
+  const syncHistoryLog = () => {
+    const next = historyChangeLog(undoStackRef.current);
+    syncInactiveStateMarks(next);
+    syncActiveTokenVariables(next);
+    changesRef.current = next;
+    setChanges(next);
+    window.setTimeout(syncStateRules, 0);
+    window.setTimeout(() => refresh(snapshotRef.current?.element), 0);
+  };
+
+  const undoHistory = () => {
+    const entry = undoStackRef.current.pop();
+    if (!entry) return;
+    [...entry.changes].reverse().forEach((change) => applyHistoryChange(change, 'undo'));
+    redoStackRef.current.push(entry);
+    syncHistoryLog();
+    setToast({ id: Date.now(), label: `Undid ${entry.label}` });
+  };
+
+  const redoHistory = () => {
+    const entry = redoStackRef.current.pop();
+    if (!entry) return;
+    entry.changes.forEach((change) => applyHistoryChange(change, 'redo'));
+    undoStackRef.current.push(entry);
+    syncHistoryLog();
+    setToast({ id: Date.now(), label: `Redid ${entry.label}` });
+  };
+
+  /** Takes back every historical edit to this property without disturbing unrelated work. */
+  const undoChange = (change: DesignChange) => {
+    applyHistoryChange(change, 'undo');
+    undoStackRef.current = undoStackRef.current
+      .map((entry) => ({ ...entry, changes: entry.changes.filter((item) => !(item.element === change.element && item.property === change.property)) }))
+      .filter((entry) => entry.changes.length);
+    redoStackRef.current = [];
+    const next = changesRef.current.filter((entry) => !(entry.element === change.element && entry.property === change.property));
+    syncInactiveStateMarks(next);
+    syncActiveTokenVariables(next);
+    if (change.kind === 'token' && change.cssVariable && !next.some((entry) => entry.kind === 'token' && entry.cssVariable?.name === change.cssVariable!.name)) {
+      tokenVariableOriginalsRef.current.delete(change.cssVariable.name);
+    }
+    changesRef.current = next;
+    setChanges(next);
+    window.setTimeout(syncStateRules, 0);
     setToast({ id: Date.now(), label: `${change.property} put back` });
     window.setTimeout(() => refresh(snapshotRef.current?.element), 0);
   };
 
   const applyTokenBinding = (payload: { property: string; label: string; from: string; tokenName: string; tokenValue: string; variable: string; created: boolean }) => {
     if (!snapshot) return;
+    beginHistoryBatch(`Bind ${payload.tokenName}`);
+    const previousVariable = document.documentElement.style.getPropertyValue(payload.variable);
+    const tokenVariableBefore = previousVariable
+      ? { value: previousVariable, priority: document.documentElement.style.getPropertyPriority(payload.variable) }
+      : null;
+    if (!tokenVariableOriginalsRef.current.has(payload.variable)) tokenVariableOriginalsRef.current.set(payload.variable, tokenVariableBefore);
     document.documentElement.style.setProperty(payload.variable, payload.tokenValue);
     deviceDocRef.current?.documentElement.style.setProperty(payload.variable, payload.tokenValue);
     tokenVariablesRef.current.set(payload.variable, payload.tokenValue);
@@ -4006,7 +4356,9 @@ function HandoffInspectorPanel() {
       kind: 'token',
       instruction,
       cssVariable: { name: payload.variable, value: payload.tokenValue },
+      tokenVariableBefore,
     });
+    finishHistoryBatch();
   };
 
   /**
@@ -4032,11 +4384,13 @@ function HandoffInspectorPanel() {
     const cssValue = property === 'scale' ? `scale(${value})` : property === 'opacity' ? String(Number(value) / 100) : String(value);
     const before = snapshot.stateRules.find((rule) => rule.state.includes(state === 'pressed' ? 'active' : state))?.declarations.find((declaration) => declaration.property === cssProperty)?.value ?? 'default';
     const targets = currentTargets();
+    const applied: DesignChange[] = [];
     targets.forEach((element) => {
       storeOriginal(element);
       if (!element.getAttribute(STATE_MARK_ATTRIBUTE)) element.setAttribute(STATE_MARK_ATTRIBUTE, `s${stateMarkRef.current++}`);
-      recordChange({ element, selector: getSelector(element), property: `state:${state}:${cssProperty}`, before, after: cssValue, kind: 'state' });
+      applied.push({ element, selector: getSelector(element), property: `state:${state}:${cssProperty}`, before, after: cssValue, kind: 'state', stateMark: element.getAttribute(STATE_MARK_ATTRIBUTE) ?? undefined });
     });
+    recordChanges(applied, `Set ${state} ${cssProperty}`);
     // The mark has to reach the device frame too, or the rule there matches nothing.
     mirrorToDevice(targets, (node, source) => {
       const mark = source.getAttribute(STATE_MARK_ATTRIBUTE);
@@ -4047,13 +4401,15 @@ function HandoffInspectorPanel() {
   };
 
   const applyTextTo = (targets: HTMLElement[], value: string) => {
+    const applied: DesignChange[] = [];
     targets.forEach((element) => {
       storeOriginal(element);
-      const before = element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement ? element.value : normalizeText(element.textContent);
+      const before = element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement ? element.value : element.textContent ?? '';
       if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) element.value = value;
       else element.textContent = value;
-      recordChange({ element, selector: getSelector(element), property: 'textContent', before, after: value, kind: 'content' });
+      applied.push({ element, selector: getSelector(element), property: 'textContent', before, after: value, kind: 'content' });
     });
+    recordChanges(applied, 'Edit text');
     mirrorToDevice(targets, (node) => {
       if (isFieldNode(node)) node.value = value;
       else node.textContent = value;
@@ -4065,22 +4421,22 @@ function HandoffInspectorPanel() {
 
   const applyAttribute = (property: string, value: string) => {
     const targets = currentTargets();
+    const applied: DesignChange[] = [];
     targets.forEach((element) => {
       storeOriginal(element);
+      const hadAttributeBefore = element.hasAttribute(property);
       const before = element.getAttribute(property) ?? '';
       element.setAttribute(property, value);
-      recordChange({ element, selector: getSelector(element), property: `@${property}`, before, after: value, kind: 'attribute' });
+      applied.push({ element, selector: getSelector(element), property: `@${property}`, before, after: value, kind: 'attribute', hadAttributeBefore });
     });
+    recordChanges(applied, `Set ${property}`);
     mirrorToDevice(targets, (node) => node.setAttribute(property, value));
     refresh(snapshot?.element);
   };
 
   /** Lock onto an element without scrolling — the pointer is already on it. */
   const lockTo = (element: HTMLElement) => {
-    selectedRef.current = element;
-    hoverRef.current = element;
-    setLocked(true);
-    setSnapshot(createSnapshot(element));
+    commitSelection([element], element);
   };
 
   const finishTextEdit = (commit: boolean) => {
@@ -4093,7 +4449,7 @@ function HandoffInspectorPanel() {
     // Put the original back before committing: applyTextTo reads the live DOM to record the "before",
     // and the element is currently holding the value that was just typed into it.
     revertTextEdit(session);
-    if (!commit || normalizeText(next) === normalizeText(session.original)) { refresh(session.element); return; }
+    if (!commit || next === session.original) { refresh(session.element); return; }
     applyTextTo(targetsFor(session.element), next);
   };
 
@@ -4154,9 +4510,11 @@ function HandoffInspectorPanel() {
         return;
       }
       const targets = targetsFor(active.element);
+      beginHistoryBatch('Resize selection');
       // Width and height do not bite on an inline box, so make the switch explicit and log it.
       if (getComputedStyle(active.element).display === 'inline') applyStyleTo(targets, 'display', 'inline-block');
       resizeDeclarations(active).forEach(([property, value]) => applyStyleTo(targets, property, value));
+      finishHistoryBatch();
     };
 
     const onUp = () => finish(true);
@@ -4205,7 +4563,15 @@ function HandoffInspectorPanel() {
       event.preventDefault();
       event.stopPropagation();
       lockTo(target);
-      startTextEdit(target);
+      const targetSnapshot = createSnapshot(target);
+      if (['text', 'button', 'link', 'input'].includes(targetSnapshot.kind) && !targetSnapshot.hasMarkup) startTextEdit(target);
+      else {
+        // Containers use the same gesture to enter the group. `elementsFromPoint` is ordered deepest
+        // first, so choose the first descendant under the pointer rather than flattening its markup.
+        const child = document.elementsFromPoint(event.clientX, event.clientY).find((node): node is HTMLElement => node instanceof HTMLElement && node !== target && target.contains(node) && !node.closest(IGNORED_SELECTOR));
+        if (child) lockTo(child);
+        else setCanvasNote('This container has no selectable child at that point.');
+      }
     };
     document.addEventListener('dblclick', onDoubleClick, true);
     return () => {
@@ -4217,23 +4583,94 @@ function HandoffInspectorPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canvasEdit, deviceOpen, open]);
 
+  useEffect(() => {
+    if (!open) return;
+    const onShortcut = (event: KeyboardEvent) => {
+      const target = event.target;
+      const command = event.metaKey || event.ctrlKey;
+      if (command && event.key.toLowerCase() === 'z') {
+        if (target instanceof HTMLElement && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.shiftKey) redoHistory(); else undoHistory();
+        return;
+      }
+      if (target instanceof HTMLElement && (target.closest('[data-inspector-ui]') || target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
+      if (!event.altKey && !command && !event.shiftKey) {
+        const tool = event.key.toLowerCase();
+        if (tool === 'v' || tool === 'c' || tool === 'h' || tool === 'i') {
+          event.preventDefault();
+          event.stopPropagation();
+          if (tool === 'v') { setCanvasTool('move'); setMode('design'); }
+          else if (tool === 'c') { setCanvasTool('comment'); setMode('comment'); }
+          else setCanvasTool('hand');
+          return;
+        }
+      }
+      if (command && event.shiftKey && event.key.toLowerCase() === 'h') {
+        event.preventDefault();
+        event.stopPropagation();
+        setMode('handoff');
+        return;
+      }
+      if (!canvasEdit || deviceOpen || command || event.altKey || !selectedRef.current || !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const step = event.shiftKey ? 10 : 1;
+      const horizontal = event.key === 'ArrowLeft' || event.key === 'ArrowRight';
+      const property = horizontal ? 'margin-left' : 'margin-top';
+      const sign = event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1 : 1;
+      const targets = currentTargets();
+      beginHistoryBatch(`Nudge ${event.key.replace('Arrow', '').toLowerCase()} ${step}px`);
+      targets.forEach((element) => {
+        const current = Number.parseFloat(getComputedStyle(element).getPropertyValue(property)) || 0;
+        applyStyleTo([element], property, `${current + sign * step}px`);
+      });
+      finishHistoryBatch();
+    };
+    window.addEventListener('keydown', onShortcut, true);
+    return () => window.removeEventListener('keydown', onShortcut, true);
+  });
+
   const restoreOriginal = (original: OriginalState) => {
-    const { element } = original;
-    Array.from(element.attributes).forEach((attribute) => element.removeAttribute(attribute.name));
-    original.attributes.forEach(([name, value]) => element.setAttribute(name, value));
-    if (original.styleAttribute === null) element.removeAttribute('style'); else element.setAttribute('style', original.styleAttribute);
-    element.innerHTML = original.innerHTML;
-    if (original.value !== undefined && (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement)) element.value = original.value;
-    if (original.parent && element.parentNode !== original.parent) original.parent.insertBefore(element, original.nextSibling);
-    else if (original.parent && element.nextSibling !== original.nextSibling) original.parent.insertBefore(element, original.nextSibling);
+    restoreCapturedState(original);
+  };
+
+  const restoreTokenVariable = (name: string) => {
+    const original = tokenVariableOriginalsRef.current.get(name);
+    if (original) {
+      document.documentElement.style.setProperty(name, original.value, original.priority);
+      deviceDocRef.current?.documentElement.style.setProperty(name, original.value, original.priority);
+    } else {
+      document.documentElement.style.removeProperty(name);
+      deviceDocRef.current?.documentElement.style.removeProperty(name);
+    }
   };
 
   const resetElement = () => {
     if (!snapshot) return;
     const targets = currentTargets();
+    const layoutTargets = new Set(changesRef.current.filter((change) => change.kind === 'layout' && targets.includes(change.element)).map((change) => change.element));
     targets.forEach((element) => { const original = originalsRef.current.get(element); if (original) { restoreOriginal(original); originalsRef.current.delete(element); } });
-    setChanges((current) => current.filter((change) => !targets.includes(change.element)));
+    undoStackRef.current = undoStackRef.current
+      .map((entry) => ({ ...entry, changes: entry.changes.filter((change) => !targets.includes(change.element)) }))
+      .filter((entry) => entry.changes.length);
+    redoStackRef.current = [];
+    const next = changesRef.current.filter((change) => !targets.includes(change.element));
+    const removedVariables = changesRef.current
+      .filter((change) => targets.includes(change.element) && change.kind === 'token' && change.cssVariable)
+      .map((change) => change.cssVariable!.name);
+    removedVariables.forEach((name) => {
+      if (next.some((change) => change.kind === 'token' && change.cssVariable?.name === name)) return;
+      restoreTokenVariable(name);
+      tokenVariableOriginalsRef.current.delete(name);
+    });
+    syncActiveTokenVariables(next);
+    changesRef.current = next;
+    setChanges(next);
     setStateResetSignal((current) => current + 1);
+    const layoutParents = Array.from(new Set(Array.from(layoutTargets).map((element) => element.parentElement).filter((parent): parent is HTMLElement => Boolean(parent))));
+    mirrorToDevice(layoutParents, restoreInDevice);
     mirrorToDevice(targets, restoreInDevice);
     window.setTimeout(syncStateRules, 0);
     refresh(snapshot.element);
@@ -4241,18 +4678,21 @@ function HandoffInspectorPanel() {
 
   const resetAll = () => {
     const touched = Array.from(originalsRef.current.keys());
+    const layoutTargets = new Set(changesRef.current.filter((change) => change.kind === 'layout').map((change) => change.element));
     originalsRef.current.forEach(restoreOriginal);
     originalsRef.current.clear();
-    tokenVariablesRef.current.forEach((_, name) => {
-      document.documentElement.style.removeProperty(name);
-      deviceDocRef.current?.documentElement.style.removeProperty(name);
-    });
+    tokenVariableOriginalsRef.current.forEach((_, name) => restoreTokenVariable(name));
     tokenVariablesRef.current.clear();
+    tokenVariableOriginalsRef.current.clear();
     changesRef.current = [];
+    undoStackRef.current = [];
+    redoStackRef.current = [];
     setChanges([]);
     setStateResetSignal((current) => current + 1);
     applyStateRules(document, '');
     if (deviceDocRef.current) applyStateRules(deviceDocRef.current, '');
+    const layoutParents = Array.from(new Set(Array.from(layoutTargets).map((element) => element.parentElement).filter((parent): parent is HTMLElement => Boolean(parent))));
+    mirrorToDevice(layoutParents, restoreInDevice);
     mirrorToDevice(touched, restoreInDevice);
     refresh(snapshot?.element);
   };
@@ -4260,6 +4700,7 @@ function HandoffInspectorPanel() {
   const applyAsset = (asset: AssetInfo, value: string, label: string) => {
     const target = asset.element as HTMLElement;
     storeOriginal(target);
+    const domBefore = captureOriginalState(target);
     if (asset.type === 'img' && target instanceof HTMLImageElement) {
       target.src = value; target.removeAttribute('srcset'); target.removeAttribute('sizes');
     } else if (asset.type === 'background') {
@@ -4274,7 +4715,7 @@ function HandoffInspectorPanel() {
       Array.from(parsed.attributes).forEach((attribute) => target.setAttribute(attribute.name, attribute.value));
       target.innerHTML = parsed.innerHTML;
     }
-    recordChange({ element: target, selector: getSelector(target), property: `asset:${asset.id}`, before: asset.src, after: label, kind: 'asset' });
+    recordChange({ element: target, selector: getSelector(target), property: `asset:${asset.id}`, before: asset.src, after: label, kind: 'asset', domBefore, domAfter: captureOriginalState(target) }, 'Replace asset');
     mirrorToDevice([target], (node, source) => {
       if (source instanceof HTMLImageElement && node.tagName.toLowerCase() === 'img') {
         (node as HTMLImageElement).src = source.src;
@@ -4291,6 +4732,30 @@ function HandoffInspectorPanel() {
     else applyAsset(asset, URL.createObjectURL(file), file.name);
   };
 
+  /** Removes the rendered asset without severing its DOM identity, so Undo/Redo and Reset can restore it. */
+  const removeAsset = (asset: AssetInfo) => {
+    const target = asset.element as HTMLElement;
+    storeOriginal(target);
+    const domBefore = captureOriginalState(target);
+    if (asset.type === 'background') target.style.setProperty('background-image', 'none', 'important');
+    else target.setAttribute('hidden', '');
+    const domAfter = captureOriginalState(target);
+    recordChange({
+      element: target,
+      selector: getSelector(target),
+      property: `asset:${asset.id}`,
+      before: asset.src,
+      after: 'Removed from canvas',
+      kind: 'asset',
+      domBefore,
+      domAfter,
+      instruction: asset.type === 'background' ? 'Remove this background image.' : 'Remove this asset from the component.',
+    }, 'Remove asset');
+    mirrorToDevice([target], restoreInDevice);
+    setToast({ id: Date.now(), label: `${asset.label} removed` });
+    refresh(snapshot?.element);
+  };
+
   const reorder = (direction: -1 | 1) => {
     if (!snapshot?.element.parentElement) return;
     const element = snapshot.element;
@@ -4300,22 +4765,27 @@ function HandoffInspectorPanel() {
     const sibling = direction < 0 ? element.previousElementSibling : element.nextElementSibling;
     if (!(sibling instanceof HTMLElement)) return;
     storeOriginal(element);
+    const domBefore = captureOriginalState(element);
     if (direction < 0) parent.insertBefore(element, sibling); else parent.insertBefore(sibling, element);
-    recordChange({ element, selector: getSelector(element), property: 'layout:order', before: 'Original order', after: direction < 0 ? 'Moved earlier' : 'Moved later', kind: 'layout' });
+    recordChange({ element, selector: getSelector(element), property: 'layout:order', before: 'Original order', after: direction < 0 ? 'Moved earlier' : 'Moved later', kind: 'layout', domBefore, domAfter: captureOriginalState(element) }, 'Reorder selection');
     mirrorToDevice([parent], restoreInDevice);
     refresh(element);
   };
 
-  const unlock = () => { finishTextEdit(true); setLocked(false); selectedRef.current = null; };
+  const unlock = () => { finishTextEdit(true); commitSelection([]); };
   // A page can swap out what it renders under the tool — a slide change, a route change. Once the
   // selected node leaves the document its rect is a lie, so stop drawing on top of whatever replaced it.
-  const overlaySnapshot = snapshot?.element.isConnected ? snapshot : null;
+  const overlaySnapshot = snapshot?.element.isConnected && snapshot.element.ownerDocument === document ? snapshot : null;
   const overlayRect = canvasRect ?? overlaySnapshot?.rect ?? null;
+  const liveSelection = selectedElements.filter((element) => element.isConnected);
+  const parentRect = locked && selectedRef.current?.ownerDocument === document && selectedRef.current.parentElement && selectedRef.current.parentElement !== document.body
+    ? selectedRef.current.parentElement.getBoundingClientRect()
+    : null;
   // Resize handles are a design-mode tool; in comment mode the outline only says what a note is about.
   const canvasHandlesVisible = mode === 'design' && canvasEdit && locked && !deviceOpen && Boolean(overlaySnapshot);
   const designChanges = changes.filter((change) => {
     if (!snapshot) return false;
-    return scope === 'component' ? snapshot.family.elements.includes(change.element) : change.element === snapshot.element;
+    return scope === 'component' ? snapshot.family.elements.includes(change.element) : liveSelection.includes(change.element);
   });
   // `!important` is carried through: these are the edits the page's own CSS was overriding, and CSS
   // copied without it would not reproduce what the designer is looking at.
@@ -4378,21 +4848,28 @@ function HandoffInspectorPanel() {
   );
 
   const liveStyle = snapshot ? getComputedStyle(snapshot.element) : null;
+  // Only the selected node and its nearest useful ancestors belong in the narrow header.
+  const breadcrumbNodes = snapshot
+    ? [snapshot.element.parentElement?.parentElement, snapshot.element.parentElement, snapshot.element].filter((node): node is HTMLElement => Boolean(node && node !== document.body && node !== document.documentElement))
+    : [];
+  const responsiveIssueCount = snapshot && deviceDocument
+    ? (() => { const node = resolveInDocument(deviceDocument, snapshot); return node ? measureInFrame(node, snapshot, inspectorDevicePresets.find((item) => item.id === devicePreset)?.width ?? 1440).issues.length : 1; })()
+    : 0;
 
   return <div data-inspector-ui className="hi-root" dir="ltr" style={{
-    '--hi-canvas': inspectorVisualTokens.canvas,
-    '--hi-panel': inspectorVisualTokens.panel,
-    '--hi-surface': inspectorVisualTokens.surface,
-    '--hi-surface-strong': inspectorVisualTokens.surfaceStrong,
-    '--hi-border': inspectorVisualTokens.border,
-    '--hi-border-strong': inspectorVisualTokens.borderStrong,
-    '--hi-text': inspectorVisualTokens.text,
-    '--hi-muted': inspectorVisualTokens.muted,
-    '--hi-faint': inspectorVisualTokens.faint,
-    '--hi-accent': inspectorVisualTokens.accent,
-    '--hi-accent-soft': inspectorVisualTokens.accentSoft,
-    '--hi-selected': inspectorVisualTokens.selected,
-    '--hi-selected-soft': inspectorVisualTokens.selectedSoft,
+    '--hi-canvas': '#f5f5f5',
+    '--hi-panel': '#ffffff',
+    '--hi-surface': '#ffffff',
+    '--hi-surface-strong': '#f7f7f7',
+    '--hi-border': '#e5e5e5',
+    '--hi-border-strong': '#b3b3b3',
+    '--hi-text': '#1e1e1e',
+    '--hi-muted': '#6e6e6e',
+    '--hi-faint': '#9e9e9e',
+    '--hi-accent': '#0d99ff',
+    '--hi-accent-soft': '#e5f4ff',
+    '--hi-selected': '#0d99ff',
+    '--hi-selected-soft': '#e5f4ff',
     '--hi-success': inspectorVisualTokens.success,
   } as CSSProperties}>
     {/* Only the way in. Closing is the header's X — two controls for one job, both on screen
@@ -4416,12 +4893,15 @@ function HandoffInspectorPanel() {
     {open && <>
       {deviceMounted && <DeviceOverlay
         presetId={devicePreset}
-        onPresetChange={setDevicePreset}
+        orientation={deviceOrientation}
+        freezeReveals={freezeReveals}
+        reloadKey={deviceReloadKey}
         snapshot={snapshot}
         dock={dock}
         hidden={!deviceOpen}
         editVersion={editVersion}
         comments={comments}
+        tool={canvasTool}
         canvasEdit={canvasEdit}
         canvasSize={canvasSize}
         canvasBusyRef={canvasBusyRef}
@@ -4431,12 +4911,16 @@ function HandoffInspectorPanel() {
         onSelectPath={selectFromDevice}
         onComment={(path) => { selectByPath(path); setMode('comment'); setFocusComposer((count) => count + 1); }}
         onReplay={replayIntoDevice}
-        onClose={() => setDeviceOpen(false)}
-        onExit={() => setOpen(false)}
+        onUndo={undoHistory}
+        onRedo={redoHistory}
+        onNotice={(label) => setToast({ id: Date.now(), label })}
       />}
-      {!deviceOpen && overlaySnapshot && overlayRect && <div className={`hi-selection ${locked ? 'is-locked' : ''} ${canvasSize ? 'is-resizing' : ''}`} style={{ top: overlayRect.top, left: overlayRect.left, width: overlayRect.width, height: overlayRect.height }}>
-        <span>{overlaySnapshot.family.label} · {round(overlayRect.width)} × {round(overlayRect.height)}</span>
-        {locked && !canvasHandlesVisible && <i><Lock size={10} /></i>}
+      {!deviceOpen && mode !== 'handoff' && parentRect && <div className="hi-selection-parent" style={{ top: parentRect.top, left: parentRect.left, width: parentRect.width, height: parentRect.height }} />}
+      {!deviceOpen && mode !== 'handoff' && locked && liveSelection.filter((element) => element.ownerDocument === document && element !== overlaySnapshot?.element).map((element) => {
+        const rect = element.getBoundingClientRect();
+        return <div key={getUniquePath(element)} className="hi-selection hi-selection--peer is-locked" style={{ top: rect.top, left: rect.left, width: rect.width, height: rect.height }} />;
+      })}
+      {!deviceOpen && mode !== 'handoff' && overlaySnapshot && overlayRect && <SelectionChrome rect={overlayRect} className={`hi-selection is-live ${locked ? 'is-locked' : ''} ${canvasSize ? 'is-resizing' : ''}`} label={`${liveSelection.length > 1 ? `${liveSelection.length} layers · ` : ''}${round(overlayRect.width)} × ${round(overlayRect.height)}`} handles={canvasHandlesVisible ? <CanvasHandles size={null} onStart={(direction, event) => startResize(overlaySnapshot.element, direction, event, 1, null)} /> : null}>
         {/* Offered right where the selection is, so commenting is one click from picking rather
             than a hunt down the panel — but only in the tab where commenting is the job. */}
         {locked && commentMode && <button
@@ -4444,46 +4928,56 @@ function HandoffInspectorPanel() {
           title={selectedCommentCount ? `${selectedCommentCount} comment${selectedCommentCount > 1 ? 's' : ''} — open the thread` : 'Comment on this element'}
           onClick={(event) => { event.stopPropagation(); setFocusComposer((count) => count + 1); }}
         ><MessageSquare size={11} />{selectedCommentCount || 'Comment'}</button>}
-        {canvasHandlesVisible && <CanvasHandles size={canvasSize} onStart={(direction, event) => startResize(overlaySnapshot.element, direction, event, 1, null)} />}
-      </div>}
-      {!deviceOpen && locked && !canvasSize && overlaySnapshot && <div className="hi-measurements">{SIDES.map((side) => overlaySnapshot.siblingDistances[side] !== undefined ? <span key={side} className={`hi-measure hi-measure-${side}`} style={{ top: side === 'top' ? overlaySnapshot.rect.top - 22 : side === 'bottom' ? overlaySnapshot.rect.bottom + 6 : overlaySnapshot.rect.top + overlaySnapshot.rect.height / 2, left: side === 'left' ? overlaySnapshot.rect.left - 42 : side === 'right' ? overlaySnapshot.rect.right + 7 : overlaySnapshot.rect.left + overlaySnapshot.rect.width / 2 }}>{overlaySnapshot.siblingDistances[side]}px</span> : null)}</div>}
-      <aside ref={panelRef} className={`hi-panel hi-panel--${dock}`}>
+      </SelectionChrome>}
+      {!deviceOpen && mode !== 'handoff' && locked && !canvasSize && overlaySnapshot && <div className="hi-measurements">{SIDES.map((side) => overlaySnapshot.siblingDistances[side] !== undefined ? <span key={side} className={`hi-measure hi-measure-${side}`} style={{ top: side === 'top' ? overlaySnapshot.rect.top - 22 : side === 'bottom' ? overlaySnapshot.rect.bottom + 6 : overlaySnapshot.rect.top + overlaySnapshot.rect.height / 2, left: side === 'left' ? overlaySnapshot.rect.left - 42 : side === 'right' ? overlaySnapshot.rect.right + 7 : overlaySnapshot.rect.left + overlaySnapshot.rect.width / 2 }}>{overlaySnapshot.siblingDistances[side]}px</span> : null)}</div>}
+      <nav className={`hi-canvas-toolbar ${deviceOpen ? 'is-device' : ''} hi-canvas-toolbar--${dock}`} aria-label="Canvas tools">
+        <button className={canvasTool === 'move' && mode === 'design' ? 'is-active' : ''} aria-pressed={canvasTool === 'move' && mode === 'design'} title="Design — select and edit (V)" onClick={() => { setCanvasTool('move'); setMode('design'); }}><PenTool size={16} /><span>Design</span><kbd>V</kbd></button>
+        <button className={canvasTool === 'comment' && mode === 'comment' ? 'is-active' : ''} aria-pressed={canvasTool === 'comment' && mode === 'comment'} title="Comment (C)" onClick={() => { setCanvasTool('comment'); setMode('comment'); }}><MessageSquare size={16} /><span>Comment</span><kbd>C</kbd></button>
+        <button className={canvasTool === 'hand' ? 'is-active' : ''} aria-pressed={canvasTool === 'hand'} title="Interact — use the page as a visitor, drag to pan (I / hold Space)" onClick={() => setCanvasTool('hand')}><MousePointerClick size={16} /><span>Interact</span><kbd>I</kbd></button>
+        <i />
+        <button className={mode === 'handoff' ? 'is-active' : ''} aria-pressed={mode === 'handoff'} title="Open handoff (Ctrl+Shift+H)" onClick={() => setMode('handoff')}><Code2 size={16} /><span>Handoff</span></button>
+        {deviceOpen && <>
+          <i />
+          <DeviceControls
+            presetId={devicePreset}
+            orientation={deviceOrientation}
+            freezeReveals={freezeReveals}
+            onPresetChange={setDevicePreset}
+            onOrientationChange={setDeviceOrientation}
+            onFreezeRevealsChange={setFreezeReveals}
+            onReload={() => setDeviceReloadKey((current) => current + 1)}
+            onLivePage={() => setDeviceOpen(false)}
+          />
+        </>}
+      </nav>
+      <aside ref={panelRef} className={`hi-panel hi-panel--${dock} ${deviceOpen ? 'hi-panel--workspace' : ''}`}>
         <header className="hi-header">
-          <div className="hi-product"><span className="hi-logo"><Sparkles size={13} /></span><div><strong>Design Inspector</strong><small>{locked ? 'Selection locked' : 'Preview mode · click to select'}</small></div></div>
-          <div className="hi-header-tools">
-            {hasSecondCollection && (
-              <div className="hi-dock-switch" role="group" aria-label="Design system collection">
-                <button className={!secondaryCollectionActive ? 'is-active' : ''} aria-pressed={!secondaryCollectionActive} onClick={() => setSecondaryCollectionActive(false)} title={designTokens.collections[0]?.name}>{designTokens.collections[0]?.name ?? 'Primary'}</button>
-                <button className={secondaryCollectionActive ? 'is-active' : ''} aria-pressed={secondaryCollectionActive} onClick={() => setSecondaryCollectionActive(true)} title={designTokens.collections[1]?.name}>{designTokens.collections[1]?.name ?? 'Secondary'}</button>
-              </div>
-            )}
-            <div className="hi-dock-switch" role="group" aria-label="Panel side">
-              <button className={dock === 'left' ? 'is-active' : ''} aria-pressed={dock === 'left'} onClick={() => setDock('left')} title="Move panel to left"><PanelLeft size={15} /></button>
-              <button className={dock === 'right' ? 'is-active' : ''} aria-pressed={dock === 'right'} onClick={() => setDock('right')} title="Move panel to right"><PanelRight size={15} /></button>
-            </div>
-            <div className="hi-header-actions">{locked && <button onClick={unlock} title="Unlock"><Unlock size={15} /></button>}{hubAvailable() && <button onClick={() => (window as HubHost).__merakiInspectorHub?.()} title="Your systems, notes, handoffs and account"><Settings size={15} /></button>}<button onClick={() => setOpen(false)} title="Close"><X size={15} /></button></div>
+          <div className="hi-mode-tabs" role="tablist" aria-label="Inspector mode">
+            <button role="tab" aria-selected={mode === 'design'} className={mode === 'design' ? 'is-active' : ''} onClick={() => { setMode('design'); setCanvasTool('move'); }}>Design</button>
+            <button role="tab" aria-selected={mode === 'comment'} className={mode === 'comment' ? 'is-active' : ''} onClick={() => { setMode('comment'); setCanvasTool('comment'); }}>Comment</button>
+            <button role="tab" aria-selected={mode === 'handoff'} className={mode === 'handoff' ? 'is-active' : ''} onClick={() => setMode('handoff')}>Handoff</button>
           </div>
+          <details className="hi-panel-menu">
+            <summary title="Inspector options" aria-label="Inspector options"><MoreHorizontal size={16} /></summary>
+            <div>
+              <button onClick={() => setDock(dock === 'left' ? 'right' : 'left')}>{dock === 'left' ? <PanelRight size={14} /> : <PanelLeft size={14} />}Dock {dock === 'left' ? 'right' : 'left'}</button>
+              {hasSecondCollection && <button onClick={() => setSecondaryCollectionActive((current) => !current)}><Component size={14} />{secondaryCollectionActive ? designTokens.collections[0]?.name : designTokens.collections[1]?.name}</button>}
+              {hubAvailable() && <button onClick={() => (window as HubHost).__merakiInspectorHub?.()}><Settings size={14} />Settings</button>}
+              {deviceOpen ? <button onClick={() => setDeviceOpen(false)}><ExternalLink size={14} />Live page</button> : <button onClick={() => openDevice('desktop')}><Monitor size={14} />Device canvas</button>}
+              {locked && <button onClick={unlock}><Unlock size={14} />Clear selection</button>}
+              <button onClick={() => setOpen(false)}><X size={14} />Close</button>
+            </div>
+          </details>
         </header>
-        {/* Only worth saying before anything is selected; afterwards the outline and the
-            element name in the cluster both say it, and this line just repeated them. */}
-        {!locked && <div className="hi-status"><i /><MousePointer2 size={12} /> Click any element to {mode === 'comment' ? 'comment on it' : 'edit it'}</div>}
+        {mode !== 'handoff' && <nav className="hi-breadcrumb" aria-label="Selection breadcrumb">
+          {breadcrumbNodes.length ? breadcrumbNodes.map((node, index) => <span key={getUniquePath(node)}>{index > 0 && <i>›</i>}<button title={getSelector(node)} onClick={() => selectElement(node)}>{node.tagName.toLowerCase()}{node.classList[0] ? `.${node.classList[0]}` : ''}</button></span>) : <small>Click anything to select it</small>}
+        </nav>}
         {restorable && !changes.length && <div className="hi-restore">
           <History size={17} />
           <span><strong>{restorable.changes.length} edit{restorable.changes.length === 1 ? '' : 's'} from your last session</strong><small>Saved {new Date(restorable.savedAt).toLocaleString()} on this page.</small></span>
           <div><button className="is-primary" onClick={() => restoreSession(restorable)}>Restore</button><button onClick={discardSession}>Discard</button></div>
         </div>}
         {restoreNote && <div className="hi-restore is-note"><CircleAlert size={16} /><span><small>{restoreNote}</small></span><div><button onClick={() => setRestoreNote(null)}>Dismiss</button></div></div>}
-        {/* Docked under the header rather than floating over the page: the page behaves
-            differently in each mode, so this belongs with the tool, in one predictable place. */}
-        <div className="hi-mode-switch" role="group" aria-label="Inspector mode">
-          {MODES.map((entry) => <button
-            key={entry.id}
-            className={mode === entry.id ? 'is-active' : ''}
-            aria-pressed={mode === entry.id}
-            title={entry.hint}
-            onClick={() => setMode(entry.id)}
-          >{entry.label}</button>)}
-        </div>
         <div className="hi-scroll">
           {mode === 'handoff' ? <HandoffTab
             report={handoffReport}
@@ -4494,7 +4988,7 @@ function HandoffInspectorPanel() {
             onDeleteNote={removeComment}
             onAuthorChange={(name) => { setCommentAuthor(name); writeCommentAuthor(name.trim()); }}
           />
-          : !snapshot ? <div className="hi-onboarding"><div><MousePointer2 size={24} /></div><h2>Select something on the canvas</h2><p>Move over the page to preview an element. Click to lock it, then edit it here or straight on the canvas.</p><div><span>ESC</span> unlock or close</div></div>
+          : !snapshot ? <div className="hi-onboarding hi-onboarding--quiet"><MousePointer2 size={16} /><span>Click anything to select it</span></div>
             : <div className="hi-design">
               {mode === 'design' && <><div className="hi-design-cluster"><div className="hi-design-heading"><div><h2>{snapshot.family.label}</h2></div><span className="hi-live-dot">Live</span></div>
               {/* Editing every matching variant at once is only meaningful against a real design
@@ -4506,7 +5000,7 @@ function HandoffInspectorPanel() {
                 {!designSystemConnected && <Lock size={11} />}
               </div></div>
               {canvasNote && <div className="hi-restore is-note"><CircleAlert size={16} /><span><small>{canvasNote}</small></span><div><button onClick={() => setCanvasNote(null)}>Dismiss</button></div></div>}
-              <div className="hi-reset-row"><button onClick={resetElement} disabled={!currentTargets().some((element) => originalsRef.current.has(element))}><RotateCcw size={13} />Reset selection</button><button onClick={resetAll} disabled={!changes.length}><RotateCcw size={13} />Reset all</button></div></>}
+              <div className="hi-reset-row"><button onClick={resetElement} disabled={!currentTargets().some((element) => changes.some((change) => change.element === element))}><RotateCcw size={13} />Reset selection</button><button onClick={resetAll} disabled={!changes.length}><RotateCcw size={13} />Reset all</button></div></>}
               {commentMode && <ToolSection title={`Comments · ${elementComments.length}`} icon={MessageSquare} openWhen={commentMode || focusComposer > 0 || elementComments.length > 0}>
                 <div className="hi-comment-composer">
                   <textarea
@@ -4573,14 +5067,14 @@ function HandoffInspectorPanel() {
                 </div>}
               </ToolSection>}
               {mode === 'design' && <>{['text', 'button', 'link', 'input'].includes(snapshot.kind) && <ToolSection title="Content" icon={Type}><label className="hi-control hi-control-stack"><span>{snapshot.kind === 'input' ? 'Value' : 'Text'}</span><DraftTextArea key={snapshot.uniquePath} ariaLabel={snapshot.kind === 'input' ? 'Value' : 'Text'} value={snapshot.rawText} onChange={applyText} /></label>{snapshot.hasMarkup && <p className="hi-empty-note hi-content-warning"><CircleAlert size={13} />This element wraps markup (line breaks, nested spans). Editing the text here replaces all of it with plain text.</p>}{snapshot.kind === 'link' && <label className="hi-control"><span>Link</span><input defaultValue={snapshot.attributes.href || ''} onBlur={(event) => applyAttribute('href', event.target.value)} /></label>}{snapshot.kind === 'input' && <><label className="hi-control"><span>Placeholder</span><input defaultValue={snapshot.attributes.placeholder || ''} onBlur={(event) => applyAttribute('placeholder', event.target.value)} /></label><label className="hi-control"><span>ARIA label</span><input defaultValue={snapshot.attributes['aria-label'] || ''} onBlur={(event) => applyAttribute('aria-label', event.target.value)} /></label></>}</ToolSection>}
-              {['text', 'button', 'link', 'input'].includes(snapshot.kind) && <ToolSection title="Typography" icon={Type}>
+              {['text', 'button', 'link', 'input'].includes(snapshot.kind) && <ToolSection title="Typography" icon={Type} defaultOpen={false}>
                 <FontField label="Font" value={snapshot.styles['font-family']} projectFonts={pageFonts} onChange={(value) => applyStyle('font-family', value)} />
                 <div className="hi-control-pair"><SizeField label="Size" compact value={snapshot.styles['font-size']} presets={FONT_SIZES} onChange={(value) => applyStyle('font-size', value)} /><SelectField label="Weight" compact value={String(cssNumber(snapshot.styles['font-weight'], 400))} options={FONT_WEIGHTS} onChange={(value) => applyStyle('font-weight', value)} /></div>
                 <div className="hi-control-pair"><NumberField label="Line" value={snapshot.styles['line-height']} onChange={(value) => applyStyle('line-height', value)} /><NumberField label="Track" value={snapshot.styles['letter-spacing']} step={0.1} onChange={(value) => applyStyle('letter-spacing', value)} /></div>
                 <div className="hi-segmented" aria-label="Text alignment">{TEXT_ALIGNMENTS.map(({ value, label, Icon }) => <button key={value} title={label} aria-label={label} className={snapshot.styles['text-align'] === value ? 'is-active' : ''} onClick={() => applyStyle('text-align', value)}><Icon size={14} /></button>)}</div>
                 <div className="hi-type-presets">{typePresets.map((recipe) => <button key={recipe.label} onClick={() => recipe.css.split(';').filter(Boolean).forEach((part) => { const [property, ...value] = part.split(':'); applyStyle(property.trim(), value.join(':').trim()); })}>{recipe.label}</button>)}</div>
               </ToolSection>}
-              <ToolSection title="Fill & stroke" icon={Palette}>
+              <ToolSection title="Fill & stroke" icon={Palette} defaultOpen={false}>
                 <ColorTabsField
                   tokens={colorTokens}
                   channels={[
@@ -4595,7 +5089,7 @@ function HandoffInspectorPanel() {
                 <NumberField label="Corner radius" value={snapshot.styles['border-radius']} min={0} onChange={(value) => applyStyle('border-radius', value)} />
                 <NumberField label="Opacity" value={cssNumber(snapshot.styles.opacity, 1) * 100} min={0} max={100} suffix="%" onChange={(value) => applyStyle('opacity', String(Number(value) / 100))} />
               </ToolSection>
-              <ToolSection title="Layout" icon={Layers3}>
+              <ToolSection title="Layout" icon={Layers3} defaultOpen={false}>
                 <SelectField label="Display" value={snapshot.styles.display} options={DISPLAY_MODES} onChange={(value) => applyStyle('display', value)} />
                 <div className="hi-control-pair"><NumberField label="W" value={snapshot.rect.width} onChange={(value) => applyStyle('width', value)} /><NumberField label="H" value={snapshot.rect.height} onChange={(value) => applyStyle('height', value)} /></div>
                 {snapshot.styles.display.includes('flex') && <><SelectField label="Direction" value={snapshot.styles['flex-direction']} options={FLEX_DIRECTIONS} onChange={(value) => applyStyle('flex-direction', value)} /><SelectField label="Align items" value={snapshot.styles['align-items']} options={ALIGN_ITEMS} onChange={(value) => applyStyle('align-items', value)} /><SelectField label="Justify" value={snapshot.styles['justify-content']} options={JUSTIFY_CONTENT} onChange={(value) => applyStyle('justify-content', value)} /></>}
@@ -4609,15 +5103,15 @@ function HandoffInspectorPanel() {
                 <label className="hi-control"><span>Filter</span><input value={snapshot.styles.filter} onChange={(event) => applyStyle('filter', event.target.value)} /></label>
                 <label className="hi-control"><span>Transform</span><input value={snapshot.styles.transform} onChange={(event) => applyStyle('transform', event.target.value)} /></label>
               </ToolSection></>}
-              {mode === 'design' && <ToolSection title="Device preview" icon={Monitor} defaultOpen={false}><ResponsiveLauncher activeKind={activeDeviceKind} onOpen={openDevice} /></ToolSection>}
-              {mode === 'design' && <>{snapshot.assets.length > 0 && <ToolSection title={`Assets · ${snapshot.assets.length}`} icon={ImageIcon}><div className="hi-design-assets">{snapshot.assets.map((asset) => <article key={asset.id}><div className="hi-asset-head"><img src={asset.src} alt="" /><span><strong>{asset.label}</strong><small>{asset.type} · {asset.id}</small></span><a href={asset.src} download={`${asset.id}.${asset.type === 'svg' ? 'svg' : 'png'}`} title="Download the current asset"><Download size={14} /></a></div><label><span>Replace by URL</span><input placeholder="https://…" onKeyDown={(event) => { if (event.key === 'Enter') applyAsset(asset, event.currentTarget.value, 'URL replacement'); }} /></label><label className="hi-upload"><input type="file" accept="image/*,.svg" onChange={(event) => onAssetFile(asset, event.target.files?.[0])} />Upload image or SVG</label>{asset.type === 'svg' && <div className="hi-icon-library">{ICON_LIBRARY.map((icon) => <button key={icon.label} title={icon.label} onClick={() => applyAsset(asset, icon.svg, `${icon.label} icon`)} dangerouslySetInnerHTML={{ __html: icon.svg }} />)}</div>}</article>)}</div></ToolSection>}
+              {mode === 'design' && deviceOpen && <ToolSection title="Responsive" icon={Monitor} defaultOpen={false} badge={responsiveIssueCount ? { text: String(responsiveIssueCount), tone: 'alert' } : undefined}><ResponsivePanel presetId={devicePreset} snapshot={snapshot} frameDocument={deviceDocument} editVersion={editVersion} onPresetChange={setDevicePreset} onReplay={replayIntoDevice} /></ToolSection>}
+              {mode === 'design' && <>{snapshot.assets.length > 0 && <ToolSection title={`Assets · ${snapshot.assets.length}`} icon={ImageIcon} defaultOpen={false}><div className="hi-design-assets">{snapshot.assets.map((asset) => <article key={asset.id}><div className="hi-asset-head"><img src={asset.src} alt="" /><span><strong>{asset.label}</strong><small>{asset.type} · {asset.id}</small></span><div className="hi-asset-actions"><a href={asset.src} download={`${asset.id}.${asset.type === 'svg' ? 'svg' : 'png'}`} title="Download asset" aria-label={`Download ${asset.label}`}><Download size={14} /></a><button className="is-danger" title="Remove from canvas · Undo restores it" aria-label={`Remove ${asset.label}`} onClick={() => removeAsset(asset)}><Trash2 size={14} /></button></div></div><label><span>Replace by URL</span><input placeholder="https://…" onKeyDown={(event) => { if (event.key === 'Enter') applyAsset(asset, event.currentTarget.value, 'URL replacement'); }} /></label><label className="hi-upload"><input type="file" accept="image/*,.svg" onChange={(event) => onAssetFile(asset, event.target.files?.[0])} />Upload image or SVG</label>{asset.type === 'svg' && <div className="hi-icon-library">{ICON_LIBRARY.map((icon) => <button key={icon.label} title={icon.label} onClick={() => applyAsset(asset, icon.svg, `${icon.label} icon`)} dangerouslySetInnerHTML={{ __html: icon.svg }} />)}</div>}</article>)}</div></ToolSection>}
               <ToolSection title="Component states · 6" icon={MousePointer2} defaultOpen={false}>
                 <ComponentStatesEditor snapshot={snapshot} colorTokens={colorTokens} resetSignal={stateResetSignal} onStateChange={recordStateChange} />
                 {snapshot.currentStates.length > 0 && <div className="hi-state-chips">{snapshot.currentStates.map((state) => <span key={state}>{state}</span>)}</div>}
                 {/* What the stylesheet already declares, so an override is not written on top of a rule that agrees with it. */}
                 {snapshot.stateRules.length ? snapshot.stateRules.map((rule, index) => <div className="hi-state-rule" key={`${rule.selector}-${index}`}><span>{rule.state}</span><code>{rule.selector} {'{'}{rule.declarations.map((item) => `\n  ${item.property}: ${item.value};`).join('')}\n{'}'}</code><CopyButton value={`${rule.selector} {\n${rule.declarations.map((item) => `  ${item.property}: ${item.value};`).join('\n')}\n}`} /></div>) : <p className="hi-empty-note">No readable pseudo-state rules matched this element.</p>}
               </ToolSection>
-              <ToolSection title="Accessibility check" icon={ShieldCheck} badge={accessibilityBadge}><AccessibilityPanel snapshot={snapshot} /></ToolSection>
+              <ToolSection title="Accessibility check" icon={ShieldCheck} badge={accessibilityBadge} defaultOpen={false}><AccessibilityPanel snapshot={snapshot} /></ToolSection>
               <MeasurementDetails snapshot={snapshot} />
               <ToolSection title="Token binding" icon={Link2} defaultOpen={false} disabled={!designSystemConnected} disabledHint={DESIGN_SYSTEM_REQUIRED}><TokenBindingPanel snapshot={snapshot} colorTokens={colorTokens} onBind={applyTokenBinding} /></ToolSection>
               <ToolSection title="Page token audit" icon={ScanSearch} defaultOpen={false} disabled={!designSystemConnected} disabledHint={DESIGN_SYSTEM_REQUIRED}><PageTokenAudit colorTokens={colorTokens} onSelect={selectElement} /></ToolSection></>}
