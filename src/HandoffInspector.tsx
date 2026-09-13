@@ -2752,10 +2752,16 @@ function DeviceOverlay({ presetId, orientation, freezeReveals, reloadKey, snapsh
   canvasTextRef.current = onCanvasText;
 
   const width = orientation === 'portrait' ? preset.width : preset.height;
-  const height = orientation === 'portrait' ? preset.height : preset.width;
   const bezel = preset.chrome === 'browser' ? 0 : preset.chrome === 'phone' ? 13 : 17;
   const chromeBar = preset.chrome === 'browser' ? 36 : 0;
   const shellWidth = width + bezel * 2;
+  // A phone or tablet has a real height. A browser window does not, so when it is fitted it runs
+  // the full height of the stage - the same height as the panel beside it - and shows more page.
+  const widthScale = stageSize.width ? Math.min(1, stageSize.width / shellWidth) : 1;
+  const fillsStage = preset.chrome === 'browser' && zoom === 'fit' && stageSize.height > 0;
+  const height = fillsStage
+    ? Math.max(320, Math.round(stageSize.height / widthScale) - chromeBar)
+    : orientation === 'portrait' ? preset.height : preset.width;
   const shellHeight = height + bezel * 2 + chromeBar;
   const fitScale = stageSize.width && stageSize.height ? Math.min(1, stageSize.width / shellWidth, stageSize.height / shellHeight) : 1;
   const scale = zoom === 'fit' ? fitScale : zoom;
@@ -2772,8 +2778,13 @@ function DeviceOverlay({ presetId, orientation, freezeReveals, reloadKey, snapsh
   const measureStage = useCallback(() => {
     const node = stageRef.current;
     if (!node) return;
+    // The content box: the stage's padding is the gap that lines the frame up with the panel.
+    const style = getComputedStyle(node);
     setStageSize((current) => {
-      const next = { width: node.clientWidth - 24, height: node.clientHeight - 24 };
+      const next = {
+        width: node.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight),
+        height: node.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom),
+      };
       return current.width === next.width && current.height === next.height ? current : next;
     });
   }, []);

@@ -2285,7 +2285,8 @@
 }
 .hi-device-overlay--right { right: 0; padding-right: calc(var(--hi-panel-width) - 12px); }
 .hi-device-overlay--left { left: 0; padding-left: calc(var(--hi-panel-width) - 12px); }
-.hi-device-stage { padding: 54px 42px 74px; }
+/* The frame starts level with the panel's top and, when fitted, ends level with its bottom. */
+.hi-device-stage { padding: 12px 42px; place-items: start center; }
 .hi-device-shell {
   border: 1px solid rgba(31, 35, 43, .2);
   box-shadow: 0 22px 70px rgba(35, 40, 51, .28), 0 5px 18px rgba(35, 40, 51, .2), inset 0 0 0 1px rgba(255,255,255,.7);
