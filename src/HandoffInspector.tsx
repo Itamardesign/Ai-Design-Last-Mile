@@ -5078,14 +5078,15 @@ function HandoffInspectorPanel() {
                 </div>}
               </ToolSection>}
               {mode === 'design' && <>{['text', 'button', 'link', 'input'].includes(snapshot.kind) && <ToolSection title="Content" icon={Type}><label className="hi-control hi-control-stack"><span>{snapshot.kind === 'input' ? 'Value' : 'Text'}</span><DraftTextArea key={snapshot.uniquePath} ariaLabel={snapshot.kind === 'input' ? 'Value' : 'Text'} value={snapshot.rawText} onChange={applyText} /></label>{snapshot.hasMarkup && <p className="hi-empty-note hi-content-warning"><CircleAlert size={13} />This element wraps markup (line breaks, nested spans). Editing the text here replaces all of it with plain text.</p>}{snapshot.kind === 'link' && <label className="hi-control"><span>Link</span><input defaultValue={snapshot.attributes.href || ''} onBlur={(event) => applyAttribute('href', event.target.value)} /></label>}{snapshot.kind === 'input' && <><label className="hi-control"><span>Placeholder</span><input defaultValue={snapshot.attributes.placeholder || ''} onBlur={(event) => applyAttribute('placeholder', event.target.value)} /></label><label className="hi-control"><span>ARIA label</span><input defaultValue={snapshot.attributes['aria-label'] || ''} onBlur={(event) => applyAttribute('aria-label', event.target.value)} /></label></>}</ToolSection>}
-              {['text', 'button', 'link', 'input'].includes(snapshot.kind) && <ToolSection title="Typography" icon={Type} defaultOpen={false}>
+              {/* The properties you edit while designing stay open; checks and audits below are opened on demand. */}
+              {['text', 'button', 'link', 'input'].includes(snapshot.kind) && <ToolSection title="Typography" icon={Type}>
                 <FontField label="Font" value={snapshot.styles['font-family']} projectFonts={pageFonts} onChange={(value) => applyStyle('font-family', value)} />
                 <div className="hi-control-pair"><SizeField label="Size" compact value={snapshot.styles['font-size']} presets={FONT_SIZES} onChange={(value) => applyStyle('font-size', value)} /><SelectField label="Weight" compact value={String(cssNumber(snapshot.styles['font-weight'], 400))} options={FONT_WEIGHTS} onChange={(value) => applyStyle('font-weight', value)} /></div>
                 <div className="hi-control-pair"><NumberField label="Line" value={snapshot.styles['line-height']} onChange={(value) => applyStyle('line-height', value)} /><NumberField label="Track" value={snapshot.styles['letter-spacing']} step={0.1} onChange={(value) => applyStyle('letter-spacing', value)} /></div>
                 <div className="hi-segmented" aria-label="Text alignment">{TEXT_ALIGNMENTS.map(({ value, label, Icon }) => <button key={value} title={label} aria-label={label} className={snapshot.styles['text-align'] === value ? 'is-active' : ''} onClick={() => applyStyle('text-align', value)}><Icon size={14} /></button>)}</div>
                 <div className="hi-type-presets">{typePresets.map((recipe) => <button key={recipe.label} onClick={() => recipe.css.split(';').filter(Boolean).forEach((part) => { const [property, ...value] = part.split(':'); applyStyle(property.trim(), value.join(':').trim()); })}>{recipe.label}</button>)}</div>
               </ToolSection>}
-              <ToolSection title="Fill & stroke" icon={Palette} defaultOpen={false}>
+              <ToolSection title="Fill & stroke" icon={Palette}>
                 <ColorTabsField
                   tokens={colorTokens}
                   channels={[
@@ -5100,7 +5101,7 @@ function HandoffInspectorPanel() {
                 <NumberField label="Corner radius" value={snapshot.styles['border-radius']} min={0} onChange={(value) => applyStyle('border-radius', value)} />
                 <NumberField label="Opacity" value={cssNumber(snapshot.styles.opacity, 1) * 100} min={0} max={100} suffix="%" onChange={(value) => applyStyle('opacity', String(Number(value) / 100))} />
               </ToolSection>
-              <ToolSection title="Layout" icon={Layers3} defaultOpen={false}>
+              <ToolSection title="Layout" icon={Layers3}>
                 <SelectField label="Display" value={snapshot.styles.display} options={DISPLAY_MODES} onChange={(value) => applyStyle('display', value)} />
                 <div className="hi-control-pair"><NumberField label="W" value={snapshot.rect.width} onChange={(value) => applyStyle('width', value)} /><NumberField label="H" value={snapshot.rect.height} onChange={(value) => applyStyle('height', value)} /></div>
                 {snapshot.styles.display.includes('flex') && <><SelectField label="Direction" value={snapshot.styles['flex-direction']} options={FLEX_DIRECTIONS} onChange={(value) => applyStyle('flex-direction', value)} /><SelectField label="Align items" value={snapshot.styles['align-items']} options={ALIGN_ITEMS} onChange={(value) => applyStyle('align-items', value)} /><SelectField label="Justify" value={snapshot.styles['justify-content']} options={JUSTIFY_CONTENT} onChange={(value) => applyStyle('justify-content', value)} /></>}
@@ -5109,7 +5110,7 @@ function HandoffInspectorPanel() {
                 <BoxSidesField label="Margin" property="margin" element={snapshot.element} onChange={applyStyle} />
                 <div className="hi-reorder"><button onClick={() => reorder(-1)}><ArrowLeft size={13} /><ArrowUp size={13} />Earlier</button><button onClick={() => reorder(1)}>Later<ArrowDown size={13} /><ArrowRight size={13} /></button></div>
               </ToolSection>
-              <ToolSection title="Effects" icon={Sparkles} defaultOpen={false}>
+              <ToolSection title="Effects" icon={Sparkles}>
                 <SelectField label="Shadow" value={snapshot.styles['box-shadow']} options={shadowOptions(snapshot.styles['box-shadow'])} onChange={(value) => applyStyle('box-shadow', value)} />
                 <label className="hi-control"><span>Filter</span><input value={snapshot.styles.filter} onChange={(event) => applyStyle('filter', event.target.value)} /></label>
                 <label className="hi-control"><span>Transform</span><input value={snapshot.styles.transform} onChange={(event) => applyStyle('transform', event.target.value)} /></label>
