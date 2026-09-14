@@ -1486,50 +1486,42 @@
 .hi-credit a:hover { text-decoration: underline; }
 
 /* ===========================================================================
-   Colour: tabs pick the destination, one palette does the work.
+   Colour: one row per colour — swatch, hex, opacity — with the palette a click away.
    =========================================================================== */
-.hi-color-tabs { display: grid; gap: 9px; }
+.hi-color-field { display: grid; gap: 7px; }
+.hi-color-field-row { display: grid; grid-template-columns: 52px 28px minmax(0, 1fr) 62px 28px; align-items: center; gap: 5px; }
+.hi-color-field-label { overflow: hidden; color: var(--tool-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.hi-color-field-swatch {
+  position: relative; display: block; width: 28px; height: 28px; overflow: hidden; border: 1px solid var(--tool-border); border-radius: 5px; cursor: pointer;
+  background-image: linear-gradient(45deg, #d5d5d9 25%, transparent 25% 75%, #d5d5d9 75%), linear-gradient(45deg, #d5d5d9 25%, transparent 25% 75%, #d5d5d9 75%);
+  background-size: 8px 8px; background-position: 0 0, 4px 4px; background-color: #fff;
+}
+.hi-color-field-swatch i { position: absolute; inset: 0; display: block; }
+.hi-color-field-swatch input[type="color"] { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+.hi-color-field-hex { min-width: 0; height: 28px; padding: 0 8px; border: 1px solid var(--tool-border); border-radius: 5px; font: inherit; font-size: 10px; font-variant-numeric: tabular-nums; text-transform: uppercase; }
+.hi-color-field-alpha { height: 28px; }
+.hi-color-field-palette { display: grid; width: 28px; height: 28px; padding: 0; place-items: center; border: 1px solid var(--tool-border); border-radius: 5px; color: var(--tool-muted); background: #fff; cursor: pointer; }
+.hi-color-field-palette:hover,
+.hi-color-field-palette.is-active { color: #0d99ff; border-color: #0d99ff; }
 
-.hi-color-tablist {
-  display: flex; padding: 3px; gap: 2px;
-  border: 1px solid var(--hi-border); border-radius: 10px; background: rgba(240, 242, 248, .7);
-}
-.hi-color-tablist button {
-  display: inline-flex; flex: 1; min-height: 30px; padding: 0 8px; gap: 6px;
-  align-items: center; justify-content: center;
-  border: 0; border-radius: 8px; color: var(--hi-muted); background: transparent;
-  font: inherit; font-size: 11.5px; font-weight: 560; cursor: pointer;
-  transition: color .15s ease, background-color .15s ease;
-}
-.hi-color-tablist button:hover { color: var(--hi-text); }
-.hi-color-tablist button.is-active { color: var(--hi-text); background: #fff; box-shadow: 0 1px 3px rgba(31, 33, 68, .16); }
-/* Each tab carries its own current colour, so switching is not a memory test. */
-.hi-color-tablist button > i {
-  width: 9px; height: 9px; flex: none; border-radius: 3px;
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .18);
-}
-
-.hi-color-body { display: grid; gap: 9px; }
-
-.hi-color-current {
-  display: flex; padding: 7px 9px; gap: 10px; align-items: center;
-  border: 1px solid var(--hi-border); border-radius: 10px; background: rgba(255, 255, 255, .6);
-}
-.hi-color-current > span {
-  width: 30px; height: 30px; flex: none; border-radius: 8px;
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .16);
-}
-.hi-color-current > div { display: grid; flex: 1; min-width: 0; gap: 1px; }
-.hi-color-current strong { overflow: hidden; color: var(--hi-text); font-size: 12.5px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
-.hi-color-current small { color: var(--hi-muted); font-size: 10.5px; font-variant-numeric: tabular-nums; }
-
-.hi-color-custom {
-  position: relative; display: grid; width: 30px; height: 30px; flex: none; place-items: center;
-  border: 1px solid var(--hi-border); border-radius: 8px; color: var(--hi-muted);
-  background: #fff; cursor: pointer; transition: color .15s ease, border-color .15s ease;
-}
-.hi-color-custom:hover { color: var(--hi-accent); border-color: var(--hi-accent); }
-.hi-color-custom input[type="color"] { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+/* Align row and the auto-layout grid. */
+.hi-align-row { display: grid; margin: 8px 12px 0; padding: 3px; grid-template-columns: repeat(6, 1fr); gap: 2px; border: 1px solid var(--tool-border); border-radius: 7px; background: #fff; }
+.hi-align-row button { display: grid; height: 28px; padding: 0; place-items: center; border: 0; border-radius: 5px; color: var(--tool-muted); background: transparent; cursor: pointer; }
+.hi-align-row button:nth-child(4) { border-left: 1px solid var(--tool-border); border-radius: 0 5px 5px 0; }
+.hi-align-row button:hover:not(:disabled) { color: #0d99ff; background: #eef6ff; }
+.hi-align-row button:disabled { cursor: default; opacity: .35; }
+.hi-align-grid { display: grid; width: 66px; padding: 3px; grid-template-columns: repeat(3, 1fr); gap: 2px; border: 1px solid var(--tool-border); border-radius: 6px; background: #fff; }
+.hi-align-grid button { display: grid; height: 18px; padding: 0; place-items: center; border: 0; border-radius: 3px; background: transparent; cursor: pointer; }
+.hi-align-grid button i { width: 5px; height: 5px; border-radius: 50%; background: #c5c8cf; }
+.hi-align-grid button:hover i { background: #0d99ff; }
+.hi-align-grid button.is-active { background: #eef6ff; }
+.hi-align-grid button.is-active i { width: 10px; height: 6px; border-radius: 2px; background: #0d99ff; }
+.hi-control-pair--lock { grid-template-columns: 1fr 24px 1fr; gap: 3px; }
+.hi-ratio-lock { display: grid; width: 24px; height: 28px; padding: 0; align-self: center; place-items: center; border: 0; border-radius: 4px; color: var(--tool-muted); background: transparent; cursor: pointer; }
+.hi-ratio-lock.is-active { color: #0d99ff; }
+.hi-segmented--display { grid-template-columns: repeat(6, 1fr); }
+.hi-segmented--display button { font-size: 8px; text-transform: lowercase; }
+.hi-pattern-presets button { background-color: #fff; }
 
 /* Big enough to actually judge a colour, and to hit on a laptop trackpad. */
 .hi-color-grid { display: grid; gap: 7px; grid-template-columns: repeat(auto-fill, minmax(34px, 1fr)); }
@@ -2223,6 +2215,16 @@
 .hi-guide--gap.is-y::after { position: absolute; top: calc(-4px * var(--hi-chrome-scale, 1)); width: 0; height: calc(8px * var(--hi-chrome-scale, 1)); content: ""; border-left: calc(1px * var(--hi-chrome-scale, 1)) solid var(--hi-guide-color); }
 .hi-guide--gap.is-y::before { left: 0; }
 .hi-guide--gap.is-y::after { right: 0; }
+.hi-guide--measure { --hi-guide-color: #f24822; }
+.hi-guide--measure.is-x::before,
+.hi-guide--measure.is-x::after { position: absolute; left: calc(-3px * var(--hi-chrome-scale, 1)); width: calc(6px * var(--hi-chrome-scale, 1)); height: 0; content: ""; border-top: calc(1px * var(--hi-chrome-scale, 1)) solid var(--hi-guide-color); }
+.hi-guide--measure.is-x::before { top: 0; }
+.hi-guide--measure.is-x::after { bottom: 0; }
+.hi-guide--measure.is-y::before,
+.hi-guide--measure.is-y::after { position: absolute; top: calc(-3px * var(--hi-chrome-scale, 1)); width: 0; height: calc(6px * var(--hi-chrome-scale, 1)); content: ""; border-left: calc(1px * var(--hi-chrome-scale, 1)) solid var(--hi-guide-color); }
+.hi-guide--measure.is-y::before { left: 0; }
+.hi-guide--measure.is-y::after { right: 0; }
+.hi-guide--measure b { top: 50%; left: 50%; transform: translate(-50%, -50%); }
 .hi-guide--insert { --hi-guide-color: #0d99ff; }
 .hi-guide--insert.is-x { border-left-width: calc(2px * var(--hi-chrome-scale, 1)); margin-left: calc(-1px * var(--hi-chrome-scale, 1)); }
 .hi-guide--insert.is-y { border-top-width: calc(2px * var(--hi-chrome-scale, 1)); margin-top: calc(-1px * var(--hi-chrome-scale, 1)); }
@@ -2498,3 +2500,16 @@
   .hi-canvas-toolbar.is-device.has-layers.hi-canvas-toolbar--right { left: calc(212px + (100vw - min(360px, 44vw) - 212px) / 2); }
   .hi-canvas-toolbar.is-device.has-layers.hi-canvas-toolbar--left { left: calc(min(360px, 44vw) + (100vw - min(360px, 44vw) - 212px) / 2); }
 }
+
+.hi-panel--workspace .hi-color-field-row { grid-template-columns: 56px 36px minmax(0, 1fr) 68px 36px; }
+.hi-panel--workspace .hi-color-field-label { color: #737782; font-size: 12px; }
+.hi-panel--workspace .hi-color-field-swatch,
+.hi-panel--workspace .hi-color-field-palette { width: 36px; height: 36px; border-color: #dfe1e5; }
+.hi-panel--workspace .hi-color-field-hex,
+.hi-panel--workspace .hi-color-field-alpha { height: 36px; font-size: 12px; }
+.hi-panel--workspace .hi-align-row { margin: 10px 14px 0; border-color: #dfe1e5; background: #f7f8f9; }
+.hi-panel--workspace .hi-align-row button { height: 34px; color: #6c7079; }
+.hi-panel--workspace .hi-align-grid { width: 84px; border-color: #dfe1e5; background: #f7f8f9; }
+.hi-panel--workspace .hi-align-grid button { height: 24px; }
+.hi-panel--workspace .hi-ratio-lock { height: 36px; }
+.hi-panel--workspace .hi-segmented--display button { font-size: 10px; }

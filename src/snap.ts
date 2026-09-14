@@ -22,8 +22,8 @@ export type SnapGuide = {
   /** Extent along the other axis. */
   from: number;
   to: number;
-  /** `insert` is the reorder drop line; the rest are alignment guides. */
-  kind: 'edge' | 'center' | 'gap' | 'insert';
+  /** `insert` is the reorder drop line, `measure` an Alt-hover distance; the rest are alignment guides. */
+  kind: 'edge' | 'center' | 'gap' | 'insert' | 'measure';
   /** Distance readout for gap guides. */
   label?: string;
 };
@@ -126,18 +126,19 @@ function equalGapOnAxis(candidate: SnapRect, targets: SnapTarget[], axis: 'x' | 
  * spacing is offered when nothing else is closer. The result is a delta, not a rect, so a caller
  * that only writes one axis can ignore the other.
  */
-export function computeSnap(candidate: SnapRect, targets: SnapTarget[], threshold: number, options: { lockX?: boolean; lockY?: boolean } = {}): SnapResult {
+export function computeSnap(candidate: SnapRect, targets: SnapTarget[], threshold: number, options: { lockX?: boolean; lockY?: boolean; gaps?: boolean } = {}): SnapResult {
   const guides: SnapGuide[] = [];
+  const withGaps = options.gaps !== false;
   let dx = 0;
   let dy = 0;
   if (!options.lockX) {
-    const gap = equalGapOnAxis(candidate, targets, 'x', threshold);
+    const gap = withGaps ? equalGapOnAxis(candidate, targets, 'x', threshold) : null;
     const line = bestOnAxis(candidate, targets, 'x', threshold);
     if (gap && (!line || Math.abs(gap.delta) <= Math.abs(line.delta))) { dx = gap.delta; guides.push(...gap.guides); }
     else if (line) { dx = line.delta; guides.push(line.guide); }
   }
   if (!options.lockY) {
-    const gap = equalGapOnAxis(candidate, targets, 'y', threshold);
+    const gap = withGaps ? equalGapOnAxis(candidate, targets, 'y', threshold) : null;
     const line = bestOnAxis(candidate, targets, 'y', threshold);
     if (gap && (!line || Math.abs(gap.delta) <= Math.abs(line.delta))) { dy = gap.delta; guides.push(...gap.guides); }
     else if (line) { dy = line.delta; guides.push(line.guide); }
@@ -190,4 +191,48 @@ export function findInsertion(pointer: { x: number; y: number }, siblings: SnapR
     ? { axis: 'x', at: before ? rect.left : rect.left + rect.width, from: rect.top, to: rect.top + rect.height, kind: 'insert' }
     : { axis: 'y', at: before ? rect.top : rect.top + rect.height, from: rect.left, to: rect.left + rect.width, kind: 'insert' };
   return { index, guide };
+}
+
+/**
+ * The distances between two boxes, the way Alt-hover reads them in Figma: one line per axis where
+ * the boxes do not overlap, labelled with the gap, drawn from the middle of the box being measured.
+ * When one box is inside the other, the four inner distances are given instead.
+ */
+export function measureBetween(from: SnapRect, to: SnapRect): SnapGuide[] {
+  const guides: SnapGuide[] = [];
+  const fromRight = from.left + from.width;
+  const fromBottom = from.top + from.height;
+  const toRight = to.left + to.width;
+  const toBottom = to.top + to.height;
+  const midX = from.left + from.width / 2;
+  const midY = from.top + from.height / 2;
+  const line = (axis: 'x' | 'y', at: number, a: number, b: number): SnapGuide | null => {
+    const distance = Math.abs(b - a);
+    if (distance < 1) return null;
+    return { axis, at, from: Math.min(a, b), to: Math.max(a, b), kind: 'measure', label: `${Math.round(distance)}` };
+  };
+  const inside = to.left <= from.left && toRight >= fromRight && to.top <= from.top && toBottom >= fromBottom;
+  const contains = from.left <= to.left && fromRight >= toRight && from.top <= to.top && fromBottom >= toBottom;
+  if (inside || contains) {
+    const [outer, inner] = inside ? [to, from] : [from, to];
+    const innerRight = inner.left + inner.width;
+    const innerBottom = inner.top + inner.height;
+    const y = inner.top + inner.height / 2;
+    const x = inner.left + inner.width / 2;
+    [
+      line('y', y, outer.left, inner.left),
+      line('y', y, innerRight, outer.left + outer.width),
+      line('x', x, outer.top, inner.top),
+      line('x', x, innerBottom, outer.top + outer.height),
+    ].forEach((guide) => { if (guide) guides.push(guide); });
+    return guides;
+  }
+  // Side by side: a horizontal line at the measured box's middle, clamped into the other's span when they share one.
+  const y = to.top < fromBottom && toBottom > from.top ? Math.max(Math.min(midY, toBottom), to.top) : midY;
+  const x = to.left < fromRight && toRight > from.left ? Math.max(Math.min(midX, toRight), to.left) : midX;
+  if (toRight <= from.left) { const guide = line('y', y, toRight, from.left); if (guide) guides.push(guide); }
+  else if (to.left >= fromRight) { const guide = line('y', y, fromRight, to.left); if (guide) guides.push(guide); }
+  if (toBottom <= from.top) { const guide = line('x', x, toBottom, from.top); if (guide) guides.push(guide); }
+  else if (to.top >= fromBottom) { const guide = line('x', x, fromBottom, to.top); if (guide) guides.push(guide); }
+  return guides;
 }

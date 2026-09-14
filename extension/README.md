@@ -53,7 +53,8 @@ The selection is edited by hand, with Figma's gestures and keys where the DOM ha
 | **`Alt` + drag** | Free move even inside a flex row |
 | **`Shift` + drag** | Snapping off |
 | **Red guides** | The box is snapping to a sibling's edge or centre, or the parent's centre. Pink ticks with a number: the gaps either side have come out equal |
-| **Handles** | Resize. `Shift` keeps the ratio, `Alt` resizes from the centre |
+| **Handles** | Resize. The dragged edge snaps to siblings' edges and centres; `Shift` keeps the ratio, `Alt` resizes from the centre |
+| **`Alt` + hover** | Measures: red lines with the distance from the selection to whatever is under the pointer |
 | **Arrows / `Shift` + arrows** | Nudge 1px / 10px |
 | **`Shift` `H` / `Shift` `V`** | Flip horizontal / vertical |
 | **`Ctrl` `D`** | Duplicate — a copy after the original, selected |
@@ -61,9 +62,21 @@ The selection is edited by hand, with Figma's gestures and keys where the DOM ha
 | **`Ctrl` `Z` / `Ctrl` `Shift` `Z`** | Undo / redo, including moves, flips and duplicates |
 | **`Ctrl` `Shift` `L`** | The **Layers** column: the page as a tree. Hover outlines, click selects, the chevron unfolds, the eye hides or shows |
 | **Click inside a selected group** | Keeps the group selected, so any part of it can be dragged. `Ctrl` + click or double-click reaches the child |
+| **`Shift` + click** | Adds to the selection; a drag then moves everything selected together |
 
-The Layout section has the same actions as buttons — rotate, flip, duplicate, hide — and Fill &
-stroke takes a background image by URL or upload, with fit and alignment, or a gradient.
+### The panel
+
+The Design tab is laid out the way Figma's is, and only shows what applies to the selection:
+
+- **Align** — six buttons: left, centre, right within the parent; top, middle, bottom when the parent is flex or grid.
+- **Position & size** — X, Y, W, H (with a ratio lock), rotate, flip, display, margin, order, duplicate, hide.
+- **Auto layout** — only for a flex or grid element: direction, gap, wrap, the nine-dot alignment grid, distribution, padding.
+- **Fill** — colour with opacity, a background image by URL or upload with fit, alignment, repeat and its own opacity, gradient and pattern presets whose opacity can be set too.
+- **Stroke** — colour with opacity, width, style.
+- **Effects** — shadow, radius, opacity, layer blur, backdrop blur, brightness, saturation.
+- **Text** — only for text-like elements: font, size, weight, line, tracking, alignment, colour with opacity, presets, and the content itself.
+
+Every colour is the same control: swatch, hex, opacity, and the design system's palette behind the palette button.
 
 ### The Handoff tab
 

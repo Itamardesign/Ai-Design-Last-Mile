@@ -1,8 +1,14 @@
 import {
   AlignCenter,
+  AlignCenterHorizontal,
+  AlignCenterVertical,
+  AlignEndHorizontal,
+  AlignEndVertical,
   AlignJustify,
   AlignLeft,
   AlignRight,
+  AlignStartHorizontal,
+  AlignStartVertical,
   ArrowDown,
   ArrowLeft,
   ArrowRight,
@@ -38,6 +44,7 @@ import {
   Pipette,
   Monitor,
   MousePointerClick,
+  Move,
   MousePointer2,
   Palette,
   PanelLeft,
@@ -80,7 +87,7 @@ import type { ColorToken as BrandColorToken, RadiusToken, SpacingToken } from '.
 import { ensureDesignToolsStyles } from './injectStyles.js';
 import { detectFontStacksFromPage, primaryFontFamily } from './detect/detectFromPage.js';
 import { buildFontGroups, ensureGoogleFontsLoaded, type FontOption } from './fontCatalog.js';
-import { computeSnap, findInsertion, type InsertionPoint, type SnapGuide, type SnapRect, type SnapTarget } from './snap.js';
+import { computeSnap, findInsertion, measureBetween, type InsertionPoint, type SnapGuide, type SnapRect, type SnapTarget } from './snap.js';
 
 /**
  * Module-level (not React state): a handful of top-level helper functions below the component
@@ -2192,6 +2199,159 @@ function FontField({ label, value, projectFonts, onChange }: { label: string; va
   </div>;
 }
 
+/* Colour with opacity, gradients and patterns with opacity, and blur as a filter part. */
+
+/** 0–100 from the alpha byte of an 8-digit hex; a colour without one is opaque. */
+function colorAlpha(value: string) {
+  const hex = toHex(value);
+  if (/^#[0-9a-f]{8}$/i.test(hex)) return Math.round((Number.parseInt(hex.slice(7, 9), 16) / 255) * 100);
+  return value === 'transparent' || /rgba\([^)]*,\s*0\)$/.test(value) ? 0 : 100;
+}
+
+/** The colour with its alpha set, as hex — six digits when fully opaque, eight otherwise. */
+function withAlpha(value: string, alphaPercent: number) {
+  const base = toColorInput(value);
+  const alpha = Math.max(0, Math.min(100, Math.round(alphaPercent)));
+  if (alpha >= 100) return base;
+  return `${base}${Math.round((alpha / 100) * 255).toString(16).padStart(2, '0')}`;
+}
+
+const COLOR_TOKEN_RE = /(#[0-9a-f]{3,8}\b|rgba?\([^)]*\)|hsla?\([^)]*\)|\btransparent\b)/gi;
+
+/**
+ * Sets a gradient's (or pattern's) overall opacity by scaling every colour stop, keeping the
+ * shape of a fade: the most opaque stop lands on the requested value and the rest follow.
+ */
+function scaleGradientAlpha(image: string, alphaPercent: number) {
+  const stops = image.match(COLOR_TOKEN_RE) ?? [];
+  const peak = Math.max(1, ...stops.map(colorAlpha));
+  return image.replace(COLOR_TOKEN_RE, (token) => {
+    const current = colorAlpha(token);
+    const scaled = (current / peak) * alphaPercent;
+    const hex = toColorInput(token);
+    return token.toLowerCase() === 'transparent' ? token : withAlpha(hex, scaled);
+  });
+}
+
+/** The strongest stop in a gradient: what its opacity reads as. */
+function gradientAlpha(image: string) {
+  const stops = image.match(COLOR_TOKEN_RE) ?? [];
+  return stops.length ? Math.max(...stops.map(colorAlpha)) : 100;
+}
+
+const IMAGE_OVERLAY_RE = /^linear-gradient\(rgba\((\d+), (\d+), (\d+), ([\d.]+)\), rgba\(\1, \2, \3, \4\)\), (.*)$/;
+
+/**
+ * A picture cannot be made translucent by CSS alone, so its opacity is a veil of the fill colour
+ * laid over it — which is what a faded image over that fill looks like. Reads back from the veil.
+ */
+function readImageOpacity(image: string) {
+  const match = image.match(IMAGE_OVERLAY_RE);
+  return match ? Math.round((1 - Number.parseFloat(match[4])) * 100) : 100;
+}
+
+function withImageOpacity(image: string, fill: string, alphaPercent: number) {
+  const match = image.match(IMAGE_OVERLAY_RE);
+  const picture = match ? match[5] : image;
+  if (alphaPercent >= 100) return picture;
+  const hex = toColorInput(fill);
+  const [r, g, b] = [1, 3, 5].map((offset) => Number.parseInt(hex.slice(offset, offset + 2), 16));
+  const veil = `rgba(${r}, ${g}, ${b}, ${Math.round((1 - alphaPercent / 100) * 100) / 100})`;
+  return `linear-gradient(${veil}, ${veil}), ${picture}`;
+}
+
+/** Repeating patterns drawn with gradients; opacity applies to them like any gradient. */
+const PATTERN_PRESETS = [
+  { label: 'Dots', image: 'radial-gradient(circle, #00000040 1px, transparent 1.5px)', size: '12px 12px' },
+  { label: 'Grid', image: 'linear-gradient(#00000026 1px, transparent 1px), linear-gradient(90deg, #00000026 1px, transparent 1px)', size: '16px 16px' },
+  { label: 'Stripes', image: 'repeating-linear-gradient(45deg, #00000026 0 6px, transparent 6px 12px)', size: 'auto' },
+  { label: 'Checks', image: 'linear-gradient(45deg, #00000022 25%, transparent 25% 75%, #00000022 75%), linear-gradient(45deg, #00000022 25%, transparent 25% 75%, #00000022 75%)', size: '16px 16px', position: '0 0, 8px 8px' },
+];
+
+/** The list of filter functions, from the inline style when it has one, else computed. */
+function filterParts(element: HTMLElement, property: 'filter' | 'backdrop-filter'): string[] {
+  const inline = element.style.getPropertyValue(property).trim();
+  const source = inline || getComputedStyle(element).getPropertyValue(property);
+  if (!source || source === 'none') return [];
+  return source.match(/[a-zA-Z-]+\([^)]*\)/g) ?? [];
+}
+
+function readFilterPart(element: HTMLElement, property: 'filter' | 'backdrop-filter', name: string) {
+  const part = filterParts(element, property).find((item) => item.startsWith(`${name}(`));
+  return part ? Number.parseFloat(part.slice(name.length + 1)) || 0 : 0;
+}
+
+/** Replaces one filter function, or adds it, leaving the others as they are. */
+function withFilterPart(element: HTMLElement, property: 'filter' | 'backdrop-filter', name: string, value: string | null) {
+  const parts = filterParts(element, property).filter((item) => !item.startsWith(`${name}(`));
+  if (value) parts.push(`${name}(${value})`);
+  return parts.join(' ') || 'none';
+}
+
+/**
+ * One colour: a swatch, the hex, and its opacity, with the system's palette a click away.
+ * Every fill, stroke and text colour is this same control, so there is no tab to land on wrong.
+ */
+function ColorField({ label, value, tokens, onChange, alpha = true }: { label: string; value: string; tokens: readonly BrandColorToken[]; onChange: (value: string) => void; alpha?: boolean }) {
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const hex = toColorInput(value);
+  const opacity = colorAlpha(value);
+  const matched = tokens.find((token) => toColorInput(token.value).toLowerCase() === hex.toLowerCase());
+  const commitHex = (next: string) => {
+    const trimmed = next.trim();
+    if (!/^#?[0-9a-f]{6}$/i.test(trimmed) && !toHex(trimmed).startsWith('#')) return;
+    onChange(withAlpha(trimmed.startsWith('#') ? trimmed : toHex(trimmed), opacity));
+  };
+  return <div className="hi-color-field">
+    <div className="hi-color-field-row">
+      <span className="hi-color-field-label">{label}</span>
+      <label className="hi-color-field-swatch" title={matched ? `${matched.label} · ${matched.value}` : 'Pick any colour'}>
+        <i style={{ background: withAlpha(hex, opacity) }} />
+        <input type="color" value={hex} onChange={(event) => onChange(withAlpha(event.target.value, opacity))} aria-label={`${label} colour`} />
+      </label>
+      <input key={hex} className="hi-color-field-hex" defaultValue={matched ? matched.label : hex.toUpperCase()} aria-label={`${label} hex`} spellCheck={false}
+        onFocus={(event) => { if (matched) event.target.value = hex.toUpperCase(); event.target.select(); }}
+        onKeyDown={(event) => { if (event.key === 'Enter') { commitHex(event.currentTarget.value); event.currentTarget.blur(); } }}
+        onBlur={(event) => { if (event.target.value.trim().toUpperCase() !== hex.toUpperCase() && event.target.value.trim() !== matched?.label) commitHex(event.target.value); }} />
+      {alpha && <div className="hi-number-field hi-color-field-alpha"><DraftNumberInput ariaLabel={`${label} opacity`} value={opacity} min={0} max={100} onCommit={(next) => onChange(withAlpha(hex, Number(next) || 0))} /><em>%</em></div>}
+      {tokens.length > 0 && <button type="button" className={`hi-color-field-palette ${paletteOpen ? 'is-active' : ''}`} title="Design system colours" aria-label="Design system colours" aria-expanded={paletteOpen} onClick={() => setPaletteOpen((open) => !open)}><Palette size={13} /></button>}
+    </div>
+    {paletteOpen && tokens.length > 0 && <div className="hi-color-grid">
+      {tokens.map((token) => {
+        const on = toColorInput(token.value).toLowerCase() === hex.toLowerCase();
+        return <button type="button" key={`${token.label}-${token.value}`} className={`hi-swatch ${on ? 'is-active' : ''}`} style={{ background: token.value }} title={`${token.label} · ${token.value}${token.usage ? ` · ${token.usage}` : ''}`} aria-label={`${token.label} ${token.value}`} aria-pressed={on} onClick={() => onChange(withAlpha(token.value, opacity))} />;
+      })}
+    </div>}
+  </div>;
+}
+
+const FLEX_DIRECTION_ICONS: Array<{ value: string; label: string; Icon: typeof ArrowRight }> = [
+  { value: 'row', label: 'Row', Icon: ArrowRight },
+  { value: 'column', label: 'Column', Icon: ArrowDown },
+  { value: 'row-reverse', label: 'Row reverse', Icon: ArrowLeft },
+  { value: 'column-reverse', label: 'Column reverse', Icon: ArrowUp },
+];
+
+const ALIGN_ROW_ACTIONS: Array<{ id: AlignAction; label: string; Icon: typeof AlignLeft }> = [
+  { id: 'left', label: 'Align left', Icon: AlignStartVertical },
+  { id: 'center', label: 'Align horizontal centres', Icon: AlignCenterVertical },
+  { id: 'right', label: 'Align right', Icon: AlignEndVertical },
+  { id: 'top', label: 'Align top', Icon: AlignStartHorizontal },
+  { id: 'middle', label: 'Align vertical centres', Icon: AlignCenterHorizontal },
+  { id: 'bottom', label: 'Align bottom', Icon: AlignEndHorizontal },
+];
+type AlignAction = 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom';
+
+/** Computed alignment keywords folded onto the three the grid draws. */
+function normalizeAlign(value: string) {
+  if (value === 'start' || value === 'normal' || value === 'stretch' || value === 'baseline' || value === 'left') return 'flex-start';
+  if (value === 'end' || value === 'right') return 'flex-end';
+  return value;
+}
+
+/** The nine positions of Figma's auto-layout alignment grid, as align-items × justify-content. */
+const AUTO_LAYOUT_GRID = ['flex-start', 'center', 'flex-end'];
+
 const BACKGROUND_FITS = [
   { value: 'cover', label: 'Fill' },
   { value: 'contain', label: 'Fit' },
@@ -2230,10 +2390,12 @@ function backgroundPositionOption(position: string) {
  * Background image, on top of the fill colour: a picture by URL or upload, a gradient, or none —
  * with how it sits in the box. Written as ordinary CSS so it lands in the handoff like everything else.
  */
-function BackgroundField({ image, size, position, repeat, onChange }: { image: string; size: string; position: string; repeat: string; onChange: (property: string, value: string) => void }) {
+function BackgroundField({ image, size, position, repeat, fill, onChange, onBatch }: { image: string; size: string; position: string; repeat: string; fill: string; onChange: (property: string, value: string) => void; onBatch: (label: string, apply: () => void) => void }) {
   const url = backgroundUrl(image);
   const hasImage = image !== 'none' && image !== '';
   const isGradient = hasImage && !url;
+  const opacity = !hasImage ? 100 : url ? readImageOpacity(image) : gradientAlpha(image);
+  const setOpacity = (value: number) => onChange('background-image', url ? withImageOpacity(image, fill, value) : scaleGradientAlpha(image, value));
   const setUrl = (value: string) => {
     const trimmed = value.trim();
     if (!trimmed) return;
@@ -2262,74 +2424,15 @@ function BackgroundField({ image, size, position, repeat, onChange }: { image: s
       <SelectField label="Fit" compact value={BACKGROUND_FITS.some((fit) => fit.value === size) ? size : 'auto'} options={BACKGROUND_FITS} onChange={(value) => onChange('background-size', value)} />
       <SelectField label="Align" compact value={backgroundPositionOption(position)} options={BACKGROUND_POSITIONS} onChange={(value) => onChange('background-position', value)} />
     </div>}
-    {url && <label className="hi-control hi-control--check"><span>Repeat</span><input type="checkbox" checked={repeat !== 'no-repeat'} onChange={(event) => onChange('background-repeat', event.target.checked ? 'repeat' : 'no-repeat')} /></label>}
+    {hasImage && <div className="hi-control-pair">
+      <NumberField label={url ? 'Image opacity' : 'Opacity'} value={opacity} min={0} max={100} suffix="%" onChange={(value) => setOpacity(Number(value) || 0)} />
+      {url && <label className="hi-control hi-control--check"><span>Repeat</span><input type="checkbox" checked={repeat !== 'no-repeat'} onChange={(event) => onChange('background-repeat', event.target.checked ? 'repeat' : 'no-repeat')} /></label>}
+    </div>}
     <div className="hi-gradient-presets" aria-label="Gradient presets">
       {GRADIENT_PRESETS.map((gradient) => <button key={gradient} title="Apply gradient" aria-label="Apply gradient" className={image === gradient ? 'is-active' : ''} style={{ backgroundImage: gradient }} onClick={() => onChange('background-image', gradient)} />)}
     </div>
-  </div>;
-}
-
-/**
- * One palette, with tabs choosing which property it paints.
- *
- * Fill, text and stroke were each rendering the full palette, so the same twenty swatches
- * appeared three times over — sixty targets for what is really one set of colours and a choice
- * of destination. Tabs make the destination the small decision it is and leave a single palette
- * on screen, which also buys the room to draw the swatches large enough to judge.
- */
-function ColorTabsField({ channels, tokens }: { channels: Array<{ id: string; label: string; icon: typeof Palette; value: string; onChange: (value: string) => void }>; tokens: readonly BrandColorToken[] }) {
-  const [activeId, setActiveId] = useState(channels[0]?.id);
-  const active = channels.find((channel) => channel.id === activeId) ?? channels[0];
-  if (!active) return null;
-
-  const hex = toColorInput(active.value);
-  const matched = tokens.find((token) => token.value.toLowerCase() === hex.toLowerCase());
-
-  return <div className="hi-color-tabs">
-    <div className="hi-color-tablist" role="tablist">
-      {channels.map((channel) => {
-        const Icon = channel.icon;
-        const on = channel.id === active.id;
-        return <button
-          key={channel.id}
-          role="tab"
-          aria-selected={on}
-          className={on ? 'is-active' : ''}
-          onClick={() => setActiveId(channel.id)}
-        >
-          <Icon size={13} />
-          {channel.label}
-          {/* The dot keeps every channel's current colour visible while only one palette shows. */}
-          <i style={{ background: toColorInput(channel.value) }} />
-        </button>;
-      })}
-    </div>
-
-    <div className="hi-color-body">
-      <div className="hi-color-current">
-        <span style={{ background: hex }} />
-        <div><strong>{matched ? matched.label : toHex(active.value)}</strong>{matched && <small>{matched.value}</small>}</div>
-        <label className="hi-color-custom" title="Pick any colour">
-          <Pipette size={13} />
-          <input type="color" value={hex} onChange={(event) => active.onChange(event.target.value)} aria-label={`${active.label} custom colour`} />
-        </label>
-      </div>
-
-      <div className="hi-color-grid">
-        {tokens.map((token) => {
-          const on = token.value.toLowerCase() === hex.toLowerCase();
-          return <button
-            type="button"
-            key={`${token.label}-${token.value}`}
-            className={`hi-swatch ${on ? 'is-active' : ''}`}
-            style={{ background: token.value }}
-            title={`${token.label} · ${token.value}${token.usage ? ` · ${token.usage}` : ''}`}
-            aria-label={`${token.label} ${token.value}`}
-            aria-pressed={on}
-            onClick={() => active.onChange(token.value)}
-          />;
-        })}
-      </div>
+    <div className="hi-gradient-presets hi-pattern-presets" aria-label="Pattern presets">
+      {PATTERN_PRESETS.map((pattern) => <button key={pattern.label} title={`${pattern.label} pattern`} aria-label={`${pattern.label} pattern`} style={{ backgroundImage: pattern.image, backgroundSize: pattern.size, backgroundPosition: pattern.position }} onClick={() => onBatch(`Apply ${pattern.label.toLowerCase()} pattern`, () => { onChange('background-image', pattern.image); onChange('background-size', pattern.size); onChange('background-position', pattern.position ?? '0 0'); })} />)}
     </div>
   </div>;
 }
@@ -2569,6 +2672,11 @@ type ResizeSession = {
   marginTop: number;
   fromCenter: boolean;
   moved: boolean;
+  /** Geometry of the box the designer is looking at, and what its dragged edge can snap to. */
+  startRect: SnapRect;
+  targets: SnapTarget[];
+  threshold: number;
+  guides: SnapGuide[];
 };
 
 function pixels(value: number) {
@@ -2580,9 +2688,14 @@ function beginResize(element: HTMLElement, direction: ResizeDirection, event: Po
   const style = getComputedStyle(element);
   const marginLeft = Number.parseFloat(style.marginLeft) || 0;
   const marginTop = Number.parseFloat(style.marginTop) || 0;
+  const view = mirror ?? element;
   return {
     element,
     direction,
+    startRect: snapRectOf(view),
+    targets: gatherSnapTargets(view),
+    threshold: SNAP_THRESHOLD / Math.max(scale || 1, .01),
+    guides: [],
     scale: scale || 1,
     startX: event.clientX,
     startY: event.clientY,
@@ -2621,6 +2734,24 @@ function resizeFrame(session: ResizeSession, event: PointerEvent) {
   session.width = snap(width);
   session.height = snap(height);
   session.fromCenter = event.altKey;
+  // The dragged edge snaps to the siblings' edges and centres, as a moved box does. Shift and Alt
+  // already mean something on a handle (ratio, from centre), so geometry snapping steps aside for them.
+  session.guides = [];
+  if (!event.shiftKey && !event.altKey) {
+    const rect = session.startRect;
+    if (horizontal) {
+      const left = rect.left + (horizontal < 0 ? session.startWidth - session.width : 0);
+      const edge = horizontal > 0 ? left + session.width : left;
+      const result = computeSnap({ left: edge, top: rect.top, width: 0, height: rect.height }, session.targets, session.threshold, { lockY: true, gaps: false });
+      if (result.dx) { session.width = Math.max(MIN_CANVAS_SIZE, session.width + horizontal * result.dx); session.guides.push(...result.guides); }
+    }
+    if (vertical) {
+      const top = rect.top + (vertical < 0 ? session.startHeight - session.height : 0);
+      const edge = vertical > 0 ? top + session.height : top;
+      const result = computeSnap({ left: rect.left, top: edge, width: rect.width, height: 0 }, session.targets, session.threshold, { lockX: true, gaps: false });
+      if (result.dy) { session.height = Math.max(MIN_CANVAS_SIZE, session.height + vertical * result.dy); session.guides.push(...result.guides); }
+    }
+  }
   // A left or top handle has to move the box as well as size it, or the opposite edge walks away
   // from the pointer and the drag feels like it is fighting back.
   session.marginLeft = event.altKey && horizontal
@@ -2683,11 +2814,10 @@ type MoveSession = {
   startRect: SnapRect;
   targets: SnapTarget[];
   threshold: number;
-  /** `margin-*` in flow, `left`/`top` once the element is positioned — whichever actually moves it. */
-  offsetProperties: [string, string];
-  startOffsets: [number, number];
-  offsets: [number, number];
-  inline: Record<string, string>;
+  /** Everything moving together: the primary first, then the rest of a multi-selection, each from its own start. */
+  members: MoveMember[];
+  /** The snapped travel since the press, shared by every member. */
+  delta: [number, number];
   /** Reorder: the visible siblings, their boxes, and where the drag currently says to drop. */
   siblingPaths: string[];
   siblingRects: SnapRect[];
@@ -2698,6 +2828,29 @@ type MoveSession = {
   moved: boolean;
   onUpdate: (() => void) | null;
 };
+
+type MoveMember = {
+  element: HTMLElement;
+  mirror: HTMLElement | null;
+  /** `margin-*` in flow, `left`/`top` once the element is positioned — whichever actually moves it. */
+  offsetProperties: [string, string];
+  startOffsets: [number, number];
+  inline: Record<string, string>;
+};
+
+/** How an element is moved and where it starts from, read once at the press. */
+function moveMember(element: HTMLElement, mirror: HTMLElement | null): MoveMember {
+  const style = getComputedStyle(element);
+  const positioned = style.position === 'absolute' || style.position === 'fixed';
+  const offsetProperties: [string, string] = positioned ? ['left', 'top'] : ['margin-left', 'margin-top'];
+  return {
+    element,
+    mirror,
+    offsetProperties,
+    startOffsets: [Number.parseFloat(style.getPropertyValue(offsetProperties[0])) || 0, Number.parseFloat(style.getPropertyValue(offsetProperties[1])) || 0],
+    inline: Object.fromEntries(offsetProperties.map((property) => [property, element.style.getPropertyValue(property)])),
+  };
+}
 
 function snapRectOf(node: Element): SnapRect {
   const rect = node.getBoundingClientRect();
@@ -2722,19 +2875,15 @@ function gatherSnapTargets(view: HTMLElement): SnapTarget[] {
   return targets;
 }
 
-function beginMove(element: HTMLElement, view: HTMLElement, event: PointerEvent, zoom: number, mirror: HTMLElement | null, onUpdate: (() => void) | null): MoveSession {
+function beginMove(element: HTMLElement, view: HTMLElement, event: PointerEvent, zoom: number, mirror: HTMLElement | null, members: MoveMember[], onUpdate: (() => void) | null): MoveSession {
   const parent = view.parentElement;
   const parentStyle = parent ? getComputedStyle(parent) : null;
   const style = getComputedStyle(view);
   const positioned = style.position === 'absolute' || style.position === 'fixed';
   const inFlow = parentStyle ? parentStyle.display.includes('flex') || parentStyle.display.includes('grid') : false;
-  // Alt asks for a free move even inside a flex row — the way Alt-drag ignores auto layout in Figma.
-  const mode: MoveSession['mode'] = inFlow && !positioned && !event.altKey ? 'reorder' : 'free';
-  const offsetProperties: [string, string] = positioned ? ['left', 'top'] : ['margin-left', 'margin-top'];
-  const startOffsets: [number, number] = [
-    Number.parseFloat(style.getPropertyValue(offsetProperties[0])) || 0,
-    Number.parseFloat(style.getPropertyValue(offsetProperties[1])) || 0,
-  ];
+  // Alt asks for a free move even inside a flex row — the way Alt-drag ignores auto layout in
+  // Figma — and a multi-selection always moves freely: there is no one row to reorder within.
+  const mode: MoveSession['mode'] = inFlow && !positioned && !event.altKey && members.length === 1 ? 'reorder' : 'free';
   const siblings = parent ? Array.from(parent.children).filter((node): node is HTMLElement => isElementNode(node) && visible(node)) : [];
   const flow: MoveSession['flow'] = parentStyle && (parentStyle.flexDirection.startsWith('column') || (parentStyle.display.includes('grid') && parentStyle.gridAutoFlow.startsWith('column')) || (parentStyle.display.includes('grid') && parentStyle.gridTemplateColumns.split(' ').length <= 1)) ? 'column' : 'row';
   return {
@@ -2747,10 +2896,8 @@ function beginMove(element: HTMLElement, view: HTMLElement, event: PointerEvent,
     startRect: snapRectOf(view),
     targets: gatherSnapTargets(view),
     threshold: SNAP_THRESHOLD / Math.max(zoom, .01),
-    offsetProperties,
-    startOffsets,
-    offsets: startOffsets,
-    inline: Object.fromEntries(offsetProperties.map((property) => [property, element.style.getPropertyValue(property)])),
+    members,
+    delta: [0, 0],
     siblingPaths: siblings.map(getUniquePath),
     siblingRects: siblings.map(snapRectOf),
     flow,
@@ -2776,30 +2923,40 @@ function moveFrame(session: MoveSession, event: PointerEvent) {
   const candidate = { ...session.startRect, left: session.startRect.left + dx, top: session.startRect.top + dy };
   // Shift switches snapping off for the gesture, Figma's convention.
   const snap = event.shiftKey ? { dx: 0, dy: 0, guides: [] } : computeSnap(candidate, session.targets, session.threshold);
-  session.offsets = [Math.round(session.startOffsets[0] + dx + snap.dx), Math.round(session.startOffsets[1] + dy + snap.dy)];
+  session.delta = [Math.round(dx + snap.dx), Math.round(dy + snap.dy)];
   session.guides = snap.guides;
   return true;
 }
 
+/** Where a member lands: its own start plus the shared travel. */
+function memberOffsets(member: MoveMember, delta: [number, number]): [string, string] {
+  return [pixels(member.startOffsets[0] + delta[0]), pixels(member.startOffsets[1] + delta[1])];
+}
+
 function previewMove(session: MoveSession) {
   if (session.mode !== 'free') return;
-  const nodes = new Set([session.element, session.view, session.mirror]);
-  nodes.forEach((node) => {
-    if (!node) return;
-    node.style.setProperty(session.offsetProperties[0], pixels(session.offsets[0]));
-    node.style.setProperty(session.offsetProperties[1], pixels(session.offsets[1]));
+  session.members.forEach((member) => {
+    const [x, y] = memberOffsets(member, session.delta);
+    const nodes = new Set([member.element, member.mirror, member.element === session.element ? session.view : null]);
+    nodes.forEach((node) => {
+      if (!node) return;
+      node.style.setProperty(member.offsetProperties[0], x);
+      node.style.setProperty(member.offsetProperties[1], y);
+    });
   });
   session.onUpdate?.();
 }
 
 function rollbackMove(session: MoveSession) {
-  const nodes = new Set([session.element, session.view, session.mirror]);
-  nodes.forEach((node) => {
-    if (!node) return;
-    session.offsetProperties.forEach((property) => {
-      const value = session.inline[property];
-      if (value) node.style.setProperty(property, value);
-      else node.style.removeProperty(property);
+  session.members.forEach((member) => {
+    const nodes = new Set([member.element, member.mirror, member.element === session.element ? session.view : null]);
+    nodes.forEach((node) => {
+      if (!node) return;
+      member.offsetProperties.forEach((property) => {
+        const value = member.inline[property];
+        if (value) node.style.setProperty(property, value);
+        else node.style.removeProperty(property);
+      });
     });
   });
 }
@@ -3176,6 +3333,10 @@ function DeviceOverlay({ presetId, orientation, freezeReveals, reloadKey, snapsh
   const [hoverBox, setHoverBox] = useState<ChromeRect | null>(null);
   const [selectionBox, setSelectionBox] = useState<{ top: number; left: number; width: number; height: number } | null>(null);
   const [parentBox, setParentBox] = useState<ChromeRect | null>(null);
+  /** Alt-hover: distances from the selection to whatever is under the pointer. */
+  const [measure, setMeasure] = useState<SnapGuide[]>([]);
+  const selectionBoxRef = useRef<ChromeRect | null>(null);
+  selectionBoxRef.current = selectionBox;
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const stageRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLIFrameElement>(null);
@@ -3428,11 +3589,14 @@ function DeviceOverlay({ presetId, orientation, freezeReveals, reloadKey, snapsh
     if (!frameDoc || tool === 'hand') { setHoverBox(null); return; }
     const onMove = (event: PointerEvent) => {
       const target = frameDoc.elementFromPoint(event.clientX, event.clientY);
-      if (!isElementNode(target) || target.closest(IGNORED_SELECTOR)) return setHoverBox(null);
+      if (!isElementNode(target) || target.closest(IGNORED_SELECTOR)) { setHoverBox(null); setMeasure([]); return; }
       const rect = target.getBoundingClientRect();
       setHoverBox({ top: rect.top, left: rect.left, width: rect.width, height: rect.height });
+      // Alt over another element reads the distance to it, without changing anything.
+      const selection = selectionBoxRef.current;
+      setMeasure(event.altKey && selection && (rect.top !== selection.top || rect.left !== selection.left) ? measureBetween(selection, snapRectOf(target)) : []);
     };
-    const onLeave = () => setHoverBox(null);
+    const onLeave = () => { setHoverBox(null); setMeasure([]); };
     const onClickCapture = (event: MouseEvent) => {
       const target = frameDoc.elementFromPoint(event.clientX, event.clientY);
       // Page chrome inside the frame — the article's own navigation — has to keep working, so the
@@ -3540,7 +3704,7 @@ function DeviceOverlay({ presetId, orientation, freezeReveals, reloadKey, snapsh
             <iframe key={reloadKey} ref={frameRef} name={DESIGN_PREVIEW_FRAME_NAME} title={`${preset.label} live preview`} src={previewUrl} onLoad={handleLoad} style={{ width, height }} />
             {selectionBox && <SelectionChrome rect={selectionBox} parentRect={parentBox} scale={scale} className="is-selected" label={canvasSize ?? `${round(selectionBox.width)} × ${round(selectionBox.height)}`} handles={canvasEdit && snapshot ? <CanvasHandles size={null} onStart={(direction, event) => onCanvasResize(direction, event, scale, sync)} /> : null} />}
             {tool !== 'hand' && hoverBox && (!selectionBox || hoverBox.top !== selectionBox.top || hoverBox.left !== selectionBox.left) && <SelectionChrome rect={hoverBox} scale={scale} className="is-hovered" />}
-            <GuideLayer guides={guides} scale={scale} />
+            <GuideLayer guides={measure.length ? [...guides, ...measure] : guides} scale={scale} />
             {/* Counter-scaled so a pin stays legible at 50% zoom instead of shrinking with the shell. */}
             {pins.map((pin) => <button
               key={pin.path}
@@ -4068,6 +4232,10 @@ function HandoffInspectorPanel() {
   const [guides, setGuides] = useState<SnapGuide[]>([]);
   /** The element the layers panel is hovering, as a structural path so both documents can show it. */
   const [layerHoverPath, setLayerHoverPath] = useState<string | null>(null);
+  /** Alt-hover distances on the live page; the frame keeps its own. */
+  const [measureGuides, setMeasureGuides] = useState<SnapGuide[]>([]);
+  /** Position & size: W and H move together while this is on. */
+  const [ratioLocked, setRatioLocked] = useState(false);
   const [layersOpen, setLayersOpen] = useState(() => isBrowser && window.localStorage.getItem('meraki-inspector-layers') === 'open');
   const textEditRef = useRef<TextEditSession | null>(null);
   const canvasBusyRef = useRef(false);
@@ -4439,6 +4607,25 @@ function HandoffInspectorPanel() {
   useEffect(() => {
     window.localStorage.setItem('meraki-inspector-layers', layersOpen ? 'open' : 'closed');
   }, [layersOpen]);
+
+  // Alt + hover on the live page: the distance from the selection to the element under the pointer.
+  useEffect(() => {
+    if (!open || deviceOpen || !locked || mode === 'handoff') { setMeasureGuides([]); return; }
+    let shown = false;
+    const clear = () => { if (shown) { shown = false; setMeasureGuides([]); } };
+    const onMove = (event: PointerEvent) => {
+      const selected = selectedRef.current;
+      if (!event.altKey || !selected) return clear();
+      const target = document.elementsFromPoint(event.clientX, event.clientY).find((node): node is HTMLElement => isElementNode(node) && !node.closest(IGNORED_SELECTOR));
+      if (!target || target === selected) return clear();
+      shown = true;
+      setMeasureGuides(measureBetween(snapRectOf(selected), snapRectOf(target)));
+    };
+    const onKeyUp = (event: KeyboardEvent) => { if (event.key === 'Alt') clear(); };
+    document.addEventListener('pointermove', onMove, true);
+    window.addEventListener('keyup', onKeyUp, true);
+    return () => { document.removeEventListener('pointermove', onMove, true); window.removeEventListener('keyup', onKeyUp, true); };
+  }, [deviceOpen, locked, mode, open]);
 
   useEffect(() => { writeStoredComments(comments); }, [comments]);
 
@@ -5024,6 +5211,7 @@ function HandoffInspectorPanel() {
       moveEvent.preventDefault();
       resizeFrame(active, moveEvent);
       previewResize(active);
+      setGuides(active.guides);
       // Read the box back rather than trusting the requested size: a flex child or a wrapping
       // paragraph settles somewhere else, and the overlay has to sit on what actually rendered.
       const rect = active.element.getBoundingClientRect();
@@ -5040,6 +5228,7 @@ function HandoffInspectorPanel() {
       resizeRef.current = null;
       canvasBusyRef.current = false;
       setCanvasSize(null);
+      setGuides([]);
       if (!active) return;
       rollbackResize(active);
       if (!commit || !active.moved) {
@@ -5085,7 +5274,13 @@ function HandoffInspectorPanel() {
     else { try { element = document.querySelector<HTMLElement>(path); } catch { element = null; } }
     if (!element || element.closest(IGNORED_SELECTOR)) element = view;
     const mirror = view === element ? (deviceDocRef.current?.querySelector<HTMLElement>(path) ?? null) : view;
-    const session = beginMove(element, view, event, zoom, mirror === element ? null : mirror, onUpdate);
+    // The rest of a multi-selection travels with the primary, each from its own margins.
+    const twinOf = (node: HTMLElement) => {
+      if (node === element) return mirror === element ? null : mirror;
+      try { return deviceDocRef.current?.querySelector<HTMLElement>(getUniquePath(node)) ?? null; } catch { return null; }
+    };
+    const members = [element, ...targetsFor(element).filter((node) => node !== element)].map((node) => moveMember(node, twinOf(node)));
+    const session = beginMove(element, view, event, zoom, mirror === element ? null : mirror, members, onUpdate);
     if (session.mode === 'reorder' && session.siblingRects.length < 2) session.mode = 'free';
     moveRef.current = session;
     const win = view.ownerDocument.defaultView ?? window;
@@ -5127,10 +5322,12 @@ function HandoffInspectorPanel() {
       setCanvasRect(null);
       if (!commit) { active.onUpdate?.(); return; }
       if (active.mode === 'free') {
-        const targets = targetsFor(active.element);
         beginHistoryBatch('Move selection');
-        applyStyleTo(targets, active.offsetProperties[0], pixels(active.offsets[0]));
-        applyStyleTo(targets, active.offsetProperties[1], pixels(active.offsets[1]));
+        active.members.forEach((member) => {
+          const [x, y] = memberOffsets(member, active.delta);
+          applyStyleTo([member.element], member.offsetProperties[0], x);
+          applyStyleTo([member.element], member.offsetProperties[1], y);
+        });
         finishHistoryBatch();
         return;
       }
@@ -5344,6 +5541,50 @@ function HandoffInspectorPanel() {
     const element = elementForPath(path);
     if (!element) return;
     if (hidden) hideElements([element]); else showElements([element]);
+  };
+
+  /* The Position & size and Align sections read and write through these. */
+
+  const parentIsFlexOrGrid = Boolean(snapshot?.element.parentElement && /flex|grid/.test(getComputedStyle(snapshot.element.parentElement).display));
+  const isPositioned = Boolean(snapshot && /^(absolute|fixed)$/.test(getComputedStyle(snapshot.element).position));
+  /** X and Y are the offsets that actually move the element: left/top when positioned, margins otherwise. */
+  const positionProperty = (axis: 'x' | 'y') => (isPositioned ? (axis === 'x' ? 'left' : 'top') : (axis === 'x' ? 'margin-left' : 'margin-top'));
+  const positionValue = (axis: 'x' | 'y') => (snapshot ? Math.round(Number.parseFloat(getComputedStyle(snapshot.element).getPropertyValue(positionProperty(axis))) || 0) : 0);
+
+  /** W and H from the panel; with the ratio locked the other side follows. */
+  const resizeTo = (dimension: 'width' | 'height', value: number) => {
+    if (!snapshot || !Number.isFinite(value) || value <= 0) return;
+    const targets = currentTargets();
+    beginHistoryBatch(`Set ${dimension}`);
+    if (getComputedStyle(snapshot.element).display === 'inline') applyStyleTo(targets, 'display', 'inline-block');
+    applyStyleTo(targets, dimension, `${Math.round(value)}px`);
+    if (ratioLocked && snapshot.rect.width > 0 && snapshot.rect.height > 0) {
+      const ratio = snapshot.rect.width / snapshot.rect.height;
+      applyStyleTo(targets, dimension === 'width' ? 'height' : 'width', `${Math.round(dimension === 'width' ? value / ratio : value * ratio)}px`);
+    }
+    finishHistoryBatch();
+  };
+
+  /**
+   * Align within the parent. Horizontally, auto margins do it in block and flex parents alike;
+   * vertically only a flex or grid parent has a say, through align-self.
+   */
+  const alignSelection = (action: AlignAction) => {
+    if (!snapshot) return;
+    const targets = currentTargets();
+    const style = getComputedStyle(snapshot.element);
+    beginHistoryBatch(`Align ${action}`);
+    if (action === 'left' || action === 'center' || action === 'right') {
+      // An inline box has no margins to push against; give it a block of its own width first.
+      if (/inline/.test(style.display)) { applyStyleTo(targets, 'display', 'block'); applyStyleTo(targets, 'width', 'fit-content'); }
+      applyStyleTo(targets, 'margin-left', action === 'left' ? '0px' : 'auto');
+      applyStyleTo(targets, 'margin-right', action === 'right' ? '0px' : 'auto');
+    } else {
+      const grid = snapshot.element.parentElement ? getComputedStyle(snapshot.element.parentElement).display.includes('grid') : false;
+      const value = action === 'top' ? (grid ? 'start' : 'flex-start') : action === 'middle' ? 'center' : (grid ? 'end' : 'flex-end');
+      applyStyleTo(targets, 'align-self', value);
+    }
+    finishHistoryBatch();
   };
 
   /** Returns true when the key was a selection command and has been carried out. */
@@ -5680,7 +5921,7 @@ function HandoffInspectorPanel() {
         onRedo={redoHistory}
         onNotice={(label) => setToast({ id: Date.now(), label })}
       />}
-      {!deviceOpen && <GuideLayer guides={guides} live />}
+      {!deviceOpen && <GuideLayer guides={measureGuides.length ? [...guides, ...measureGuides] : guides} live />}
       {!deviceOpen && mode !== 'handoff' && parentRect && <div className="hi-selection-parent" style={{ top: parentRect.top, left: parentRect.left, width: parentRect.width, height: parentRect.height }} />}
       {!deviceOpen && mode !== 'handoff' && locked && liveSelection.filter((element) => element.ownerDocument === document && element !== overlaySnapshot?.element).map((element) => {
         const rect = element.getBoundingClientRect();
@@ -5833,38 +6074,25 @@ function HandoffInspectorPanel() {
                   ><span>{comment.label}</span><small>{comment.text}</small></button>)}
                 </div>}
               </ToolSection>}
-              {mode === 'design' && <>{['text', 'button', 'link', 'input'].includes(snapshot.kind) && <ToolSection title="Content" icon={Type}><label className="hi-control hi-control-stack"><span>{snapshot.kind === 'input' ? 'Value' : 'Text'}</span><DraftTextArea key={snapshot.uniquePath} ariaLabel={snapshot.kind === 'input' ? 'Value' : 'Text'} value={snapshot.rawText} onChange={applyText} /></label>{snapshot.hasMarkup && <p className="hi-empty-note hi-content-warning"><CircleAlert size={13} />This element wraps markup (line breaks, nested spans). Editing the text here replaces all of it with plain text.</p>}{snapshot.kind === 'link' && <label className="hi-control"><span>Link</span><input defaultValue={snapshot.attributes.href || ''} onBlur={(event) => applyAttribute('href', event.target.value)} /></label>}{snapshot.kind === 'input' && <><label className="hi-control"><span>Placeholder</span><input defaultValue={snapshot.attributes.placeholder || ''} onBlur={(event) => applyAttribute('placeholder', event.target.value)} /></label><label className="hi-control"><span>ARIA label</span><input defaultValue={snapshot.attributes['aria-label'] || ''} onBlur={(event) => applyAttribute('aria-label', event.target.value)} /></label></>}</ToolSection>}
-              {/* The properties you edit while designing stay open; checks and audits below are opened on demand. */}
-              {['text', 'button', 'link', 'input'].includes(snapshot.kind) && <ToolSection title="Typography" icon={Type}>
-                <FontField label="Font" value={snapshot.styles['font-family']} projectFonts={pageFonts} onChange={(value) => applyStyle('font-family', value)} />
-                <div className="hi-control-pair"><SizeField label="Size" compact value={snapshot.styles['font-size']} presets={FONT_SIZES} onChange={(value) => applyStyle('font-size', value)} /><SelectField label="Weight" compact value={String(cssNumber(snapshot.styles['font-weight'], 400))} options={FONT_WEIGHTS} onChange={(value) => applyStyle('font-weight', value)} /></div>
-                <div className="hi-control-pair"><NumberField label="Line" value={snapshot.styles['line-height']} onChange={(value) => applyStyle('line-height', value)} /><NumberField label="Track" value={snapshot.styles['letter-spacing']} step={0.1} onChange={(value) => applyStyle('letter-spacing', value)} /></div>
-                <div className="hi-segmented" aria-label="Text alignment">{TEXT_ALIGNMENTS.map(({ value, label, Icon }) => <button key={value} title={label} aria-label={label} className={snapshot.styles['text-align'] === value ? 'is-active' : ''} onClick={() => applyStyle('text-align', value)}><Icon size={14} /></button>)}</div>
-                <div className="hi-type-presets">{typePresets.map((recipe) => <button key={recipe.label} onClick={() => recipe.css.split(';').filter(Boolean).forEach((part) => { const [property, ...value] = part.split(':'); applyStyle(property.trim(), value.join(':').trim()); })}>{recipe.label}</button>)}</div>
-              </ToolSection>}
-              <ToolSection title="Fill & stroke" icon={Palette}>
-                <ColorTabsField
-                  tokens={colorTokens}
-                  channels={[
-                    { id: 'fill', label: 'Fill', icon: PaintBucket, value: snapshot.styles.background, onChange: (value) => applyStyle('background-color', value) },
-                    ...(['text', 'button', 'link', 'input'].includes(snapshot.kind)
-                      ? [{ id: 'text', label: 'Text', icon: Type, value: snapshot.styles.color, onChange: (value: string) => applyStyle('color', value) }]
-                      : []),
-                    { id: 'stroke', label: 'Stroke', icon: Square, value: liveStyle?.borderColor ?? snapshot.styles.border, onChange: (value) => applyStyle('border-color', value) },
-                  ]}
-                />
-                <BackgroundField image={liveStyle?.backgroundImage ?? 'none'} size={liveStyle?.backgroundSize ?? 'auto'} position={liveStyle?.backgroundPosition ?? 'center'} repeat={liveStyle?.backgroundRepeat ?? 'repeat'} onChange={applyStyle} />
-                <div className="hi-control-pair"><NumberField label="Stroke" value={liveStyle?.borderWidth ?? 0} min={0} onChange={(value) => applyStyle('border-width', value)} /><SelectField label="Style" compact value={liveStyle?.borderStyle ?? 'solid'} options={BORDER_STYLES} onChange={(value) => applyStyle('border-style', value)} /></div>
-                <NumberField label="Corner radius" value={snapshot.styles['border-radius']} min={0} onChange={(value) => applyStyle('border-radius', value)} />
-                <NumberField label="Opacity" value={cssNumber(snapshot.styles.opacity, 1) * 100} min={0} max={100} suffix="%" onChange={(value) => applyStyle('opacity', String(Number(value) / 100))} />
-              </ToolSection>
-              <ToolSection title="Layout" icon={Layers3}>
-                <SelectField label="Display" value={snapshot.styles.display} options={DISPLAY_MODES} onChange={(value) => applyStyle('display', value)} />
-                <div className="hi-control-pair"><NumberField label="W" value={snapshot.rect.width} onChange={(value) => applyStyle('width', value)} /><NumberField label="H" value={snapshot.rect.height} onChange={(value) => applyStyle('height', value)} /></div>
-                {snapshot.styles.display.includes('flex') && <><SelectField label="Direction" value={snapshot.styles['flex-direction']} options={FLEX_DIRECTIONS} onChange={(value) => applyStyle('flex-direction', value)} /><SelectField label="Align items" value={snapshot.styles['align-items']} options={ALIGN_ITEMS} onChange={(value) => applyStyle('align-items', value)} /><SelectField label="Justify" value={snapshot.styles['justify-content']} options={JUSTIFY_CONTENT} onChange={(value) => applyStyle('justify-content', value)} /></>}
-                <NumberField label="Gap" value={liveStyle?.gap ?? 0} onChange={(value) => applyStyle('gap', value)} />
-                <BoxSidesField label="Padding" property="padding" element={snapshot.element} onChange={applyStyle} />
-                <BoxSidesField label="Margin" property="margin" element={snapshot.element} onChange={applyStyle} />
+              {mode === 'design' && <>
+              {/* The panel in Figma's shape: what applies to the selection is shown, what does not is not. */}
+              <div className="hi-align-row" role="toolbar" aria-label="Align">
+                {ALIGN_ROW_ACTIONS.map(({ id, label, Icon }) => {
+                  const vertical = id === 'top' || id === 'middle' || id === 'bottom';
+                  const disabled = vertical && !parentIsFlexOrGrid;
+                  return <button key={id} title={disabled ? `${label} — needs a flex or grid parent` : label} aria-label={label} disabled={disabled} onClick={() => alignSelection(id)}><Icon size={14} /></button>;
+                })}
+              </div>
+              <ToolSection title="Position & size" icon={Move}>
+                <div className="hi-control-pair">
+                  <NumberField label="X" value={positionValue('x')} onChange={(value) => applyStyle(positionProperty('x'), value)} />
+                  <NumberField label="Y" value={positionValue('y')} onChange={(value) => applyStyle(positionProperty('y'), value)} />
+                </div>
+                <div className="hi-control-pair hi-control-pair--lock">
+                  <NumberField label="W" value={round(snapshot.rect.width)} min={1} onChange={(value) => resizeTo('width', Number(value))} />
+                  <button className={`hi-ratio-lock ${ratioLocked ? 'is-active' : ''}`} title={ratioLocked ? 'Unlock proportions' : 'Lock proportions'} aria-pressed={ratioLocked} onClick={() => setRatioLocked((locked) => !locked)}>{ratioLocked ? <Link2 size={12} /> : <Unlink size={12} />}</button>
+                  <NumberField label="H" value={round(snapshot.rect.height)} min={1} onChange={(value) => resizeTo('height', Number(value))} />
+                </div>
                 <div className="hi-control-pair">
                   <NumberField label="Rotate" value={readRotation(snapshot.element)} step={1} suffix="°" onChange={(value) => rotate(Number.parseFloat(value) || 0)} />
                   <div className="hi-segmented hi-segmented--flip" aria-label="Flip">
@@ -5872,14 +6100,74 @@ function HandoffInspectorPanel() {
                     <button title="Flip vertical (Shift+V)" aria-label="Flip vertical" aria-pressed={isFlipped(snapshot.element, 'y')} className={isFlipped(snapshot.element, 'y') ? 'is-active' : ''} onClick={() => flip('y')}><FlipVertical2 size={14} /></button>
                   </div>
                 </div>
+                <div className="hi-segmented hi-segmented--display" aria-label="Display">
+                  {DISPLAY_MODES.map(({ value, label }) => <button key={value} title={value === 'none' ? 'Hidden' : label} aria-pressed={snapshot.styles.display === value} className={snapshot.styles.display === value ? 'is-active' : ''} onClick={() => applyStyle('display', value)}>{value === 'none' ? 'hidden' : label}</button>)}
+                </div>
+                <BoxSidesField label="Margin" property="margin" element={snapshot.element} onChange={applyStyle} />
                 <div className="hi-reorder"><button onClick={() => reorder(-1)}><ArrowLeft size={13} /><ArrowUp size={13} />Earlier</button><button onClick={() => reorder(1)}>Later<ArrowDown size={13} /><ArrowRight size={13} /></button></div>
                 <div className="hi-reorder"><button title="Duplicate (Ctrl+D)" onClick={duplicateSelection}><Copy size={13} />Duplicate</button><button title="Hide (Delete) · the layers panel or Undo brings it back" onClick={() => hideElements(currentTargets())}><EyeOff size={13} />Hide</button></div>
               </ToolSection>
+              {(snapshot.styles.display.includes('flex') || snapshot.styles.display.includes('grid')) && <ToolSection title="Auto layout" icon={Layers3}>
+                {snapshot.styles.display.includes('flex') && <div className="hi-control"><span>Direction</span><div className="hi-segmented" aria-label="Direction">{FLEX_DIRECTION_ICONS.map(({ value, label, Icon }) => <button key={value} title={label} aria-label={label} aria-pressed={snapshot.styles['flex-direction'] === value} className={snapshot.styles['flex-direction'] === value ? 'is-active' : ''} onClick={() => applyStyle('flex-direction', value)}><Icon size={14} /></button>)}</div></div>}
+                {snapshot.styles.display.includes('grid') && <label className="hi-control"><span>Columns</span><input defaultValue={snapshot.styles['grid-template-columns']} onBlur={(event) => applyStyle('grid-template-columns', event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') applyStyle('grid-template-columns', event.currentTarget.value); }} /></label>}
+                <div className="hi-control-pair">
+                  <NumberField label="Gap" value={liveStyle?.gap ?? 0} min={0} onChange={(value) => applyStyle('gap', value)} />
+                  {snapshot.styles.display.includes('flex') && <label className="hi-control hi-control--check"><span>Wrap</span><input type="checkbox" checked={liveStyle?.flexWrap === 'wrap'} onChange={(event) => applyStyle('flex-wrap', event.target.checked ? 'wrap' : 'nowrap')} /></label>}
+                </div>
+                <div className="hi-control">
+                  <span>Align</span>
+                  <div className="hi-align-grid" role="grid" aria-label="Alignment">
+                    {AUTO_LAYOUT_GRID.map((row) => AUTO_LAYOUT_GRID.map((column) => {
+                      const on = normalizeAlign(liveStyle?.alignItems ?? '') === row && normalizeAlign(liveStyle?.justifyContent ?? '') === column;
+                      return <button key={`${row}-${column}`} role="gridcell" aria-label={`${column} ${row}`} aria-pressed={on} className={on ? 'is-active' : ''} onClick={() => { beginHistoryBatch('Align items'); applyStyle('align-items', row); applyStyle('justify-content', column); finishHistoryBatch(); }}><i /></button>;
+                    }))}
+                  </div>
+                </div>
+                <div className="hi-control"><span>Distribute</span><SelectField label="Distribute" compact value={liveStyle?.justifyContent ?? 'flex-start'} options={JUSTIFY_CONTENT} onChange={(value) => applyStyle('justify-content', value)} /></div>
+                <BoxSidesField label="Padding" property="padding" element={snapshot.element} onChange={applyStyle} />
+              </ToolSection>}
+              {!(snapshot.styles.display.includes('flex') || snapshot.styles.display.includes('grid')) && <ToolSection title="Padding" icon={Square} defaultOpen={false}>
+                <BoxSidesField label="Padding" property="padding" element={snapshot.element} onChange={applyStyle} />
+              </ToolSection>}
+              <ToolSection title="Fill" icon={PaintBucket}>
+                <ColorField label="Colour" value={liveStyle?.backgroundColor ?? snapshot.styles.background} tokens={colorTokens} onChange={(value) => applyStyle('background-color', value)} />
+                <BackgroundField image={liveStyle?.backgroundImage ?? 'none'} size={liveStyle?.backgroundSize ?? 'auto'} position={liveStyle?.backgroundPosition ?? 'center'} repeat={liveStyle?.backgroundRepeat ?? 'repeat'} fill={liveStyle?.backgroundColor ?? snapshot.styles.background} onChange={applyStyle} onBatch={(label, apply) => { beginHistoryBatch(label); apply(); finishHistoryBatch(); }} />
+                {snapshot.kind === 'image' && <NumberField label="Image opacity" value={cssNumber(snapshot.styles.opacity, 1) * 100} min={0} max={100} suffix="%" onChange={(value) => applyStyle('opacity', String(Number(value) / 100))} />}
+              </ToolSection>
+              <ToolSection title="Stroke" icon={Square} defaultOpen={Boolean(liveStyle && Number.parseFloat(liveStyle.borderWidth) > 0 && liveStyle.borderStyle !== 'none')}>
+                <ColorField label="Colour" value={liveStyle?.borderColor ?? snapshot.styles.border} tokens={colorTokens} onChange={(value) => applyStyle('border-color', value)} />
+                <div className="hi-control-pair"><NumberField label="Width" value={liveStyle?.borderWidth ?? 0} min={0} onChange={(value) => { beginHistoryBatch('Set stroke'); applyStyle('border-width', value); if ((liveStyle?.borderStyle ?? 'none') === 'none' && Number(value) > 0) applyStyle('border-style', 'solid'); finishHistoryBatch(); }} /><SelectField label="Style" compact value={liveStyle?.borderStyle ?? 'solid'} options={BORDER_STYLES} onChange={(value) => applyStyle('border-style', value)} /></div>
+              </ToolSection>
               <ToolSection title="Effects" icon={Sparkles}>
                 <SelectField label="Shadow" value={snapshot.styles['box-shadow']} options={shadowOptions(snapshot.styles['box-shadow'])} onChange={(value) => applyStyle('box-shadow', value)} />
+                <div className="hi-control-pair">
+                  <NumberField label="Radius" value={snapshot.styles['border-radius']} min={0} onChange={(value) => applyStyle('border-radius', value)} />
+                  <NumberField label="Opacity" value={cssNumber(snapshot.styles.opacity, 1) * 100} min={0} max={100} suffix="%" onChange={(value) => applyStyle('opacity', String(Number(value) / 100))} />
+                </div>
+                <div className="hi-control-pair">
+                  <NumberField label="Layer blur" value={readFilterPart(snapshot.element, 'filter', 'blur')} min={0} onChange={(value) => applyStyle('filter', withFilterPart(snapshot.element, 'filter', 'blur', Number(value) > 0 ? `${Number(value)}px` : null))} />
+                  <NumberField label="Backdrop blur" value={readFilterPart(snapshot.element, 'backdrop-filter', 'blur')} min={0} onChange={(value) => applyStyle('backdrop-filter', withFilterPart(snapshot.element, 'backdrop-filter', 'blur', Number(value) > 0 ? `${Number(value)}px` : null))} />
+                </div>
+                <div className="hi-control-pair">
+                  <NumberField label="Brightness" value={Math.round((readFilterPart(snapshot.element, 'filter', 'brightness') || 1) * 100)} min={0} max={300} suffix="%" onChange={(value) => applyStyle('filter', withFilterPart(snapshot.element, 'filter', 'brightness', Number(value) === 100 ? null : `${Number(value) / 100}`))} />
+                  <NumberField label="Saturate" value={Math.round((readFilterPart(snapshot.element, 'filter', 'saturate') || 1) * 100)} min={0} max={300} suffix="%" onChange={(value) => applyStyle('filter', withFilterPart(snapshot.element, 'filter', 'saturate', Number(value) === 100 ? null : `${Number(value) / 100}`))} />
+                </div>
                 <label className="hi-control"><span>Filter</span><input value={snapshot.styles.filter} onChange={(event) => applyStyle('filter', event.target.value)} /></label>
                 <label className="hi-control"><span>Transform</span><input value={snapshot.styles.transform} onChange={(event) => applyStyle('transform', event.target.value)} /></label>
-              </ToolSection></>}
+              </ToolSection>
+              {['text', 'button', 'link', 'input'].includes(snapshot.kind) && <ToolSection title="Text" icon={Type}>
+                <FontField label="Font" value={snapshot.styles['font-family']} projectFonts={pageFonts} onChange={(value) => applyStyle('font-family', value)} />
+                <div className="hi-control-pair"><SizeField label="Size" compact value={snapshot.styles['font-size']} presets={FONT_SIZES} onChange={(value) => applyStyle('font-size', value)} /><SelectField label="Weight" compact value={String(cssNumber(snapshot.styles['font-weight'], 400))} options={FONT_WEIGHTS} onChange={(value) => applyStyle('font-weight', value)} /></div>
+                <div className="hi-control-pair"><NumberField label="Line" value={snapshot.styles['line-height']} onChange={(value) => applyStyle('line-height', value)} /><NumberField label="Track" value={snapshot.styles['letter-spacing']} step={0.1} onChange={(value) => applyStyle('letter-spacing', value)} /></div>
+                <div className="hi-segmented" aria-label="Text alignment">{TEXT_ALIGNMENTS.map(({ value, label, Icon }) => <button key={value} title={label} aria-label={label} className={snapshot.styles['text-align'] === value ? 'is-active' : ''} onClick={() => applyStyle('text-align', value)}><Icon size={14} /></button>)}</div>
+                <ColorField label="Colour" value={liveStyle?.color ?? snapshot.styles.color} tokens={colorTokens} onChange={(value) => applyStyle('color', value)} />
+                <div className="hi-type-presets">{typePresets.map((recipe) => <button key={recipe.label} onClick={() => recipe.css.split(';').filter(Boolean).forEach((part) => { const [property, ...value] = part.split(':'); applyStyle(property.trim(), value.join(':').trim()); })}>{recipe.label}</button>)}</div>
+                <label className="hi-control hi-control-stack"><span>{snapshot.kind === 'input' ? 'Value' : 'Content'}</span><DraftTextArea key={snapshot.uniquePath} ariaLabel={snapshot.kind === 'input' ? 'Value' : 'Text'} value={snapshot.rawText} onChange={applyText} /></label>
+                {snapshot.hasMarkup && <p className="hi-empty-note hi-content-warning"><CircleAlert size={13} />This element wraps markup (line breaks, nested spans). Editing the text here replaces all of it with plain text.</p>}
+                {snapshot.kind === 'link' && <label className="hi-control"><span>Link</span><input defaultValue={snapshot.attributes.href || ''} onBlur={(event) => applyAttribute('href', event.target.value)} /></label>}
+                {snapshot.kind === 'input' && <><label className="hi-control"><span>Placeholder</span><input defaultValue={snapshot.attributes.placeholder || ''} onBlur={(event) => applyAttribute('placeholder', event.target.value)} /></label><label className="hi-control"><span>ARIA label</span><input defaultValue={snapshot.attributes['aria-label'] || ''} onBlur={(event) => applyAttribute('aria-label', event.target.value)} /></label></>}
+              </ToolSection>}
+              </>}
               {mode === 'design' && deviceOpen && <ToolSection title="Responsive" icon={Monitor} defaultOpen={false} badge={responsiveIssueCount ? { text: String(responsiveIssueCount), tone: 'alert' } : undefined}><ResponsivePanel presetId={devicePreset} snapshot={snapshot} frameDocument={deviceDocument} editVersion={editVersion} onPresetChange={setDevicePreset} onReplay={replayIntoDevice} /></ToolSection>}
               {mode === 'design' && <>{snapshot.assets.length > 0 && <ToolSection title={`Assets · ${snapshot.assets.length}`} icon={ImageIcon} defaultOpen={false}><div className="hi-design-assets">{snapshot.assets.map((asset) => <article key={asset.id}><div className="hi-asset-head"><img src={asset.src} alt="" /><span><strong>{asset.label}</strong><small>{asset.type} · {asset.id}</small></span><div className="hi-asset-actions"><a href={asset.src} download={`${asset.id}.${asset.type === 'svg' ? 'svg' : 'png'}`} title="Download asset" aria-label={`Download ${asset.label}`}><Download size={14} /></a><button className="is-danger" title="Remove from canvas · Undo restores it" aria-label={`Remove ${asset.label}`} onClick={() => removeAsset(asset)}><Trash2 size={14} /></button></div></div><label><span>Replace by URL</span><input placeholder="https://…" onKeyDown={(event) => { if (event.key === 'Enter') applyAsset(asset, event.currentTarget.value, 'URL replacement'); }} /></label><label className="hi-upload"><input type="file" accept="image/*,.svg" onChange={(event) => onAssetFile(asset, event.target.files?.[0])} />Upload image or SVG</label>{asset.type === 'svg' && <div className="hi-icon-library">{ICON_LIBRARY.map((icon) => <button key={icon.label} title={icon.label} onClick={() => applyAsset(asset, icon.svg, `${icon.label} icon`)} dangerouslySetInnerHTML={{ __html: icon.svg }} />)}</div>}</article>)}</div></ToolSection>}
               <ToolSection title="Component states · 6" icon={MousePointer2} defaultOpen={false}>

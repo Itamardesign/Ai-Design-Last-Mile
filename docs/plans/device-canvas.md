@@ -1,6 +1,6 @@
 # Plan: the device frame becomes the workspace
 
-Status: Phase 1 shipped. Phase 2.1–2.2 (move, snapping, guides) and Phase 4 (layers) shipped, plus flip/rotate/duplicate/hide from the keyboard map; 2.3 (resize snapping), 2.4 (Alt-measure) and Phase 3 (panel restructure) remain · Scope: `src/HandoffInspector.tsx`, `src/design-tools.css` (the extension picks both up unchanged)
+Status: shipped — Phases 1, 2 (move, snapping, guides, resize snapping, Alt-measure), 3 (panel in Figma's shape) and 4 (layers), plus flip/rotate/duplicate/hide from the keyboard map · Scope: `src/HandoffInspector.tsx`, `src/design-tools.css` (the extension picks both up unchanged)
 
 ## Why
 
