@@ -43,6 +43,42 @@ Everything the package does, the extension does: click any element to select it,
 typography, fill and layout, preview the page at real device sizes, run the accessibility checks,
 leave notes, and copy your changes out as CSS or as written handoff instructions.
 
+### On the canvas
+
+The selection is edited by hand, with Figma's gestures and keys where the DOM has the same meaning.
+
+| | |
+|---|---|
+| **Drag** | Moves the selection. Inside a flex or grid parent it *reorders* — a blue line shows where it will land. Anywhere else it moves freely by its margins; a positioned element moves by `left`/`top` |
+| **`Alt` + drag** | Free move even inside a flex row |
+| **`Shift` + drag** | Snapping off |
+| **Red guides** | The box is snapping to a sibling's edge or centre, or the parent's centre. Pink ticks with a number: the gaps either side have come out equal |
+| **Handles** | Resize. The dragged edge snaps to siblings' edges and centres; `Shift` keeps the ratio, `Alt` resizes from the centre |
+| **Just outside a corner** | Rotate — the cursor turns into an arc. `Shift` snaps to 15°. The exact angle is also in Position & size |
+| **`Alt` + hover** | Measures: red lines with the distance from the selection to whatever is under the pointer |
+| **Arrows / `Shift` + arrows** | Nudge 1px / 10px |
+| **`Shift` `H` / `Shift` `V`** | Flip horizontal / vertical |
+| **`Ctrl` `D`** | Duplicate — a copy after the original, selected |
+| **`Delete`** | Hide. The layers panel, or Undo, brings it back |
+| **`Ctrl` `Z` / `Ctrl` `Shift` `Z`** | Undo / redo, including moves, flips and duplicates |
+| **`Ctrl` `Shift` `L`** | The **Layers** column: the page as a tree. Hover outlines, click selects, the chevron unfolds, the eye hides or shows |
+| **Click inside a selected group** | Keeps the group selected, so any part of it can be dragged. `Ctrl` + click or double-click reaches the child |
+| **`Shift` + click** | Adds to the selection; a drag then moves everything selected together |
+
+### The panel
+
+The Design tab is laid out the way Figma's is, and only shows what applies to the selection:
+
+- **Align** — six buttons: left, centre, right within the parent; top, middle, bottom when the parent is flex or grid.
+- **Position & size** — X, Y, W, H (with a ratio lock), rotate, flip, display, margin, order, duplicate, hide.
+- **Auto layout** — only for a flex or grid element: direction, gap, wrap, the nine-dot alignment grid, distribution, padding.
+- **Fill** — one type at a time, like a Figma fill: **Solid** (colour with opacity), **Gradient** (linear / radial / angular, with draggable stops, each a colour with opacity), **Image** (URL or upload, fit, alignment, repeat, opacity), **Pattern** (dots, grid, stripes, checks, with opacity) or **None**. Gradients, images and patterns also show the colour behind them.
+- **Stroke** — colour with opacity, width, style.
+- **Effects** — shadow, radius, opacity, layer blur, backdrop blur, brightness, saturation.
+- **Text** — only for text-like elements: font, size, weight, line, tracking, alignment, colour with opacity, presets, and the content itself.
+
+Every colour is the same control: swatch, hex, opacity, and the design system's palette behind the palette button.
+
 ### The Handoff tab
 
 The third tab is the document the session produces, arranged the way the person receiving it reads:

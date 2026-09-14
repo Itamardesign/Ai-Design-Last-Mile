@@ -98,6 +98,11 @@ That's the whole install. If the button doesn't appear, see [Troubleshooting](#t
 
 - **Click any element** to select it — including elements nested inside other elements.
 - **Edit** its content, typography, fill and layout from the panel on the right.
+- **Drag it, resize it, flip it** on the canvas, with Figma's keys: drag moves (and reorders inside
+  a flex or grid row), red guides snap it to its siblings, `Shift` `H`/`V` flip, `Ctrl` `D`
+  duplicates, `Delete` hides, arrows nudge. `Ctrl` `Shift` `L` opens the **Layers** column, the page
+  as a tree you can hover, select and hide from. The full map is in
+  [extension/README.md](./extension/README.md#on-the-canvas).
 - **Preview** the page at real device sizes from the *Device preview* section.
 - **Check accessibility** — contrast, touch targets, readable type, focus states.
 - **Leave notes on the page** — pinned to the element, numbered, readable on hover, and answerable

@@ -1,8 +1,14 @@
 import {
   AlignCenter,
+  AlignCenterHorizontal,
+  AlignCenterVertical,
+  AlignEndHorizontal,
+  AlignEndVertical,
   AlignJustify,
   AlignLeft,
   AlignRight,
+  AlignStartHorizontal,
+  AlignStartVertical,
   ArrowDown,
   ArrowLeft,
   ArrowRight,
@@ -16,11 +22,17 @@ import {
   Cloud,
   Code2,
   Component,
+  Copy,
   Download,
   ExternalLink,
+  Eye,
+  EyeOff,
+  FlipHorizontal2,
+  FlipVertical2,
   FileCode2,
   Gauge,
   History,
+  Layers,
   Image as ImageIcon,
   Layers3,
   Link2,
@@ -32,6 +44,7 @@ import {
   Pipette,
   Monitor,
   MousePointerClick,
+  Move,
   MousePointer2,
   Palette,
   PanelLeft,
@@ -52,6 +65,7 @@ import {
   Type,
   Unlink,
   Unlock,
+  Upload,
   Wand2,
   X,
 } from 'lucide-react';
@@ -73,6 +87,8 @@ import type { ColorToken as BrandColorToken, RadiusToken, SpacingToken } from '.
 import { ensureDesignToolsStyles } from './injectStyles.js';
 import { detectFontStacksFromPage, primaryFontFamily } from './detect/detectFromPage.js';
 import { buildFontGroups, ensureGoogleFontsLoaded, type FontOption } from './fontCatalog.js';
+import { computeSnap, findInsertion, measureBetween, type InsertionPoint, type SnapGuide, type SnapRect, type SnapTarget } from './snap.js';
+import { defaultGradient, gradientBar, parseGradient, reverseGradient, sampleGradient, serializeGradient, sortStops, splitHexAlpha, stopColor, type Gradient, type GradientStop, type GradientType } from './gradient.js';
 
 /**
  * Module-level (not React state): a handful of top-level helper functions below the component
@@ -2184,69 +2200,399 @@ function FontField({ label, value, projectFonts, onChange }: { label: string; va
   </div>;
 }
 
+/* Colour with opacity, gradients and patterns with opacity, and blur as a filter part. */
+
+/** 0–100 from the alpha byte of an 8-digit hex; a colour without one is opaque. */
+function colorAlpha(value: string) {
+  const hex = toHex(value);
+  if (/^#[0-9a-f]{8}$/i.test(hex)) return Math.round((Number.parseInt(hex.slice(7, 9), 16) / 255) * 100);
+  return value === 'transparent' || /rgba\([^)]*,\s*0\)$/.test(value) ? 0 : 100;
+}
+
+/** The colour with its alpha set, as hex — six digits when fully opaque, eight otherwise. */
+function withAlpha(value: string, alphaPercent: number) {
+  const base = toColorInput(value);
+  const alpha = Math.max(0, Math.min(100, Math.round(alphaPercent)));
+  if (alpha >= 100) return base;
+  return `${base}${Math.round((alpha / 100) * 255).toString(16).padStart(2, '0')}`;
+}
+
+const COLOR_TOKEN_RE = /(#[0-9a-f]{3,8}\b|rgba?\([^)]*\)|hsla?\([^)]*\)|\btransparent\b)/gi;
+
 /**
- * One palette, with tabs choosing which property it paints.
- *
- * Fill, text and stroke were each rendering the full palette, so the same twenty swatches
- * appeared three times over — sixty targets for what is really one set of colours and a choice
- * of destination. Tabs make the destination the small decision it is and leave a single palette
- * on screen, which also buys the room to draw the swatches large enough to judge.
+ * Sets a gradient's (or pattern's) overall opacity by scaling every colour stop, keeping the
+ * shape of a fade: the most opaque stop lands on the requested value and the rest follow.
  */
-function ColorTabsField({ channels, tokens }: { channels: Array<{ id: string; label: string; icon: typeof Palette; value: string; onChange: (value: string) => void }>; tokens: readonly BrandColorToken[] }) {
-  const [activeId, setActiveId] = useState(channels[0]?.id);
-  const active = channels.find((channel) => channel.id === activeId) ?? channels[0];
-  if (!active) return null;
+function scaleGradientAlpha(image: string, alphaPercent: number) {
+  const stops = image.match(COLOR_TOKEN_RE) ?? [];
+  const peak = Math.max(1, ...stops.map(colorAlpha));
+  return image.replace(COLOR_TOKEN_RE, (token) => {
+    const current = colorAlpha(token);
+    const scaled = (current / peak) * alphaPercent;
+    const hex = toColorInput(token);
+    return token.toLowerCase() === 'transparent' ? token : withAlpha(hex, scaled);
+  });
+}
 
-  const hex = toColorInput(active.value);
-  const matched = tokens.find((token) => token.value.toLowerCase() === hex.toLowerCase());
+/** The strongest stop in a gradient: what its opacity reads as. */
+function gradientAlpha(image: string) {
+  const stops = image.match(COLOR_TOKEN_RE) ?? [];
+  return stops.length ? Math.max(...stops.map(colorAlpha)) : 100;
+}
 
-  return <div className="hi-color-tabs">
-    <div className="hi-color-tablist" role="tablist">
-      {channels.map((channel) => {
-        const Icon = channel.icon;
-        const on = channel.id === active.id;
-        return <button
-          key={channel.id}
-          role="tab"
-          aria-selected={on}
-          className={on ? 'is-active' : ''}
-          onClick={() => setActiveId(channel.id)}
-        >
-          <Icon size={13} />
-          {channel.label}
-          {/* The dot keeps every channel's current colour visible while only one palette shows. */}
-          <i style={{ background: toColorInput(channel.value) }} />
-        </button>;
-      })}
+const IMAGE_OVERLAY_RE = /^linear-gradient\(rgba\((\d+), (\d+), (\d+), ([\d.]+)\), rgba\(\1, \2, \3, \4\)\), (.*)$/;
+
+/**
+ * A picture cannot be made translucent by CSS alone, so its opacity is a veil of the fill colour
+ * laid over it — which is what a faded image over that fill looks like. Reads back from the veil.
+ */
+function readImageOpacity(image: string) {
+  const match = image.match(IMAGE_OVERLAY_RE);
+  return match ? Math.round((1 - Number.parseFloat(match[4])) * 100) : 100;
+}
+
+function withImageOpacity(image: string, fill: string, alphaPercent: number) {
+  const match = image.match(IMAGE_OVERLAY_RE);
+  const picture = match ? match[5] : image;
+  if (alphaPercent >= 100) return picture;
+  const hex = toColorInput(fill);
+  const [r, g, b] = [1, 3, 5].map((offset) => Number.parseInt(hex.slice(offset, offset + 2), 16));
+  const veil = `rgba(${r}, ${g}, ${b}, ${Math.round((1 - alphaPercent / 100) * 100) / 100})`;
+  return `linear-gradient(${veil}, ${veil}), ${picture}`;
+}
+
+/** Repeating patterns drawn with gradients; opacity applies to them like any gradient. */
+const PATTERN_PRESETS = [
+  { label: 'Dots', image: 'radial-gradient(circle, #00000040 1px, transparent 1.5px)', size: '12px 12px' },
+  { label: 'Grid', image: 'linear-gradient(#00000026 1px, transparent 1px), linear-gradient(90deg, #00000026 1px, transparent 1px)', size: '16px 16px' },
+  { label: 'Stripes', image: 'repeating-linear-gradient(45deg, #00000026 0 6px, transparent 6px 12px)', size: 'auto' },
+  { label: 'Checks', image: 'linear-gradient(45deg, #00000022 25%, transparent 25% 75%, #00000022 75%), linear-gradient(45deg, #00000022 25%, transparent 25% 75%, #00000022 75%)', size: '16px 16px', position: '0 0, 8px 8px' },
+];
+
+/** The list of filter functions, from the inline style when it has one, else computed. */
+function filterParts(element: HTMLElement, property: 'filter' | 'backdrop-filter'): string[] {
+  const inline = element.style.getPropertyValue(property).trim();
+  const source = inline || getComputedStyle(element).getPropertyValue(property);
+  if (!source || source === 'none') return [];
+  return source.match(/[a-zA-Z-]+\([^)]*\)/g) ?? [];
+}
+
+function readFilterPart(element: HTMLElement, property: 'filter' | 'backdrop-filter', name: string) {
+  const part = filterParts(element, property).find((item) => item.startsWith(`${name}(`));
+  return part ? Number.parseFloat(part.slice(name.length + 1)) || 0 : 0;
+}
+
+/** Replaces one filter function, or adds it, leaving the others as they are. */
+function withFilterPart(element: HTMLElement, property: 'filter' | 'backdrop-filter', name: string, value: string | null) {
+  const parts = filterParts(element, property).filter((item) => !item.startsWith(`${name}(`));
+  if (value) parts.push(`${name}(${value})`);
+  return parts.join(' ') || 'none';
+}
+
+/**
+ * One colour: a swatch, the hex, and its opacity, with the system's palette a click away.
+ * Every fill, stroke and text colour is this same control, so there is no tab to land on wrong.
+ */
+function ColorField({ label, value, tokens, onChange, alpha = true }: { label: string; value: string; tokens: readonly BrandColorToken[]; onChange: (value: string) => void; alpha?: boolean }) {
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const hex = toColorInput(value);
+  const opacity = colorAlpha(value);
+  const matched = tokens.find((token) => toColorInput(token.value).toLowerCase() === hex.toLowerCase());
+  const commitHex = (next: string) => {
+    const trimmed = next.trim();
+    if (!/^#?[0-9a-f]{6}$/i.test(trimmed) && !toHex(trimmed).startsWith('#')) return;
+    onChange(withAlpha(trimmed.startsWith('#') ? trimmed : toHex(trimmed), opacity));
+  };
+  return <div className="hi-color-field">
+    <div className="hi-color-field-row">
+      <span className="hi-color-field-label">{label}</span>
+      <label className="hi-color-field-swatch" title={matched ? `${matched.label} · ${matched.value}` : 'Pick any colour'}>
+        <i style={{ background: withAlpha(hex, opacity) }} />
+        <input type="color" value={hex} onChange={(event) => onChange(withAlpha(event.target.value, opacity))} aria-label={`${label} colour`} />
+      </label>
+      <input key={hex} className="hi-color-field-hex" defaultValue={matched ? matched.label : hex.toUpperCase()} aria-label={`${label} hex`} spellCheck={false}
+        onFocus={(event) => { if (matched) event.target.value = hex.toUpperCase(); event.target.select(); }}
+        onKeyDown={(event) => { if (event.key === 'Enter') { commitHex(event.currentTarget.value); event.currentTarget.blur(); } }}
+        onBlur={(event) => { if (event.target.value.trim().toUpperCase() !== hex.toUpperCase() && event.target.value.trim() !== matched?.label) commitHex(event.target.value); }} />
+      {alpha && <div className="hi-number-field hi-color-field-alpha"><DraftNumberInput ariaLabel={`${label} opacity`} value={opacity} min={0} max={100} onCommit={(next) => onChange(withAlpha(hex, Number(next) || 0))} /><em>%</em></div>}
+      {tokens.length > 0 && <button type="button" className={`hi-color-field-palette ${paletteOpen ? 'is-active' : ''}`} title="Design system colours" aria-label="Design system colours" aria-expanded={paletteOpen} onClick={() => setPaletteOpen((open) => !open)}><Palette size={13} /></button>}
     </div>
+    {paletteOpen && tokens.length > 0 && <div className="hi-color-grid">
+      {tokens.map((token) => {
+        const on = toColorInput(token.value).toLowerCase() === hex.toLowerCase();
+        return <button type="button" key={`${token.label}-${token.value}`} className={`hi-swatch ${on ? 'is-active' : ''}`} style={{ background: token.value }} title={`${token.label} · ${token.value}${token.usage ? ` · ${token.usage}` : ''}`} aria-label={`${token.label} ${token.value}`} aria-pressed={on} onClick={() => onChange(withAlpha(token.value, opacity))} />;
+      })}
+    </div>}
+  </div>;
+}
 
-    <div className="hi-color-body">
-      <div className="hi-color-current">
-        <span style={{ background: hex }} />
-        <div><strong>{matched ? matched.label : toHex(active.value)}</strong>{matched && <small>{matched.value}</small>}</div>
-        <label className="hi-color-custom" title="Pick any colour">
-          <Pipette size={13} />
-          <input type="color" value={hex} onChange={(event) => active.onChange(event.target.value)} aria-label={`${active.label} custom colour`} />
-        </label>
-      </div>
+const FLEX_DIRECTION_ICONS: Array<{ value: string; label: string; Icon: typeof ArrowRight }> = [
+  { value: 'row', label: 'Row', Icon: ArrowRight },
+  { value: 'column', label: 'Column', Icon: ArrowDown },
+  { value: 'row-reverse', label: 'Row reverse', Icon: ArrowLeft },
+  { value: 'column-reverse', label: 'Column reverse', Icon: ArrowUp },
+];
 
-      <div className="hi-color-grid">
-        {tokens.map((token) => {
-          const on = token.value.toLowerCase() === hex.toLowerCase();
-          return <button
-            type="button"
-            key={`${token.label}-${token.value}`}
-            className={`hi-swatch ${on ? 'is-active' : ''}`}
-            style={{ background: token.value }}
-            title={`${token.label} · ${token.value}${token.usage ? ` · ${token.usage}` : ''}`}
-            aria-label={`${token.label} ${token.value}`}
-            aria-pressed={on}
-            onClick={() => active.onChange(token.value)}
-          />;
-        })}
+const ALIGN_ROW_ACTIONS: Array<{ id: AlignAction; label: string; Icon: typeof AlignLeft }> = [
+  { id: 'left', label: 'Align left', Icon: AlignStartVertical },
+  { id: 'center', label: 'Align horizontal centres', Icon: AlignCenterVertical },
+  { id: 'right', label: 'Align right', Icon: AlignEndVertical },
+  { id: 'top', label: 'Align top', Icon: AlignStartHorizontal },
+  { id: 'middle', label: 'Align vertical centres', Icon: AlignCenterHorizontal },
+  { id: 'bottom', label: 'Align bottom', Icon: AlignEndHorizontal },
+];
+type AlignAction = 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom';
+
+/** Computed alignment keywords folded onto the three the grid draws. */
+function normalizeAlign(value: string) {
+  if (value === 'start' || value === 'normal' || value === 'stretch' || value === 'baseline' || value === 'left') return 'flex-start';
+  if (value === 'end' || value === 'right') return 'flex-end';
+  return value;
+}
+
+/** The nine positions of Figma's auto-layout alignment grid, as align-items × justify-content. */
+const AUTO_LAYOUT_GRID = ['flex-start', 'center', 'flex-end'];
+
+const BACKGROUND_FITS = [
+  { value: 'cover', label: 'Fill' },
+  { value: 'contain', label: 'Fit' },
+  { value: 'auto', label: 'Actual size' },
+];
+const BACKGROUND_POSITIONS = [
+  { value: 'center', label: 'Centre' },
+  { value: 'top', label: 'Top' },
+  { value: 'bottom', label: 'Bottom' },
+  { value: 'left', label: 'Left' },
+  { value: 'right', label: 'Right' },
+];
+/** A handful of starting points for the builder; the colours are meant to be swapped for the system's own. */
+const GRADIENT_PRESETS = [
+  'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+  'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)',
+  'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)',
+  'linear-gradient(135deg, #43e97b 0%, #38f9d7 100%)',
+  'linear-gradient(135deg, #fa709a 0%, #fee140 100%)',
+  'linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,.6) 100%)',
+];
+
+/** The first url() in a background-image, or nothing. */
+function backgroundUrl(image: string) {
+  const match = image.match(/url\((['"]?)(.*?)\1\)/);
+  return match ? match[2] : '';
+}
+
+/** The computed position, folded onto the one-word option that means the same thing. */
+function backgroundPositionOption(position: string) {
+  const match = BACKGROUND_POSITIONS.find((item) => position === item.value || position === `${item.value} center` || position === `center ${item.value}`);
+  return match?.value ?? 'center';
+}
+
+const GRADIENT_TYPES: Array<{ value: GradientType; label: string }> = [
+  { value: 'linear', label: 'Linear' },
+  { value: 'radial', label: 'Radial' },
+  { value: 'conic', label: 'Angular' },
+];
+
+/**
+ * The gradient builder — Figma's, on CSS.
+ *
+ * The presets were a menu of six looks; a gradient is a thing to make. So: a bar showing the
+ * stops as handles that drag, a click on the bar to add one where the pointer is, the selected
+ * stop's colour, opacity and position as fields, the type and the angle above. Everything is
+ * written straight to `background-image`, so the handoff reads the same CSS the page paints.
+ */
+function GradientBuilder({ image, fill, tokens, onChange }: { image: string; fill: string; tokens: readonly BrandColorToken[]; onChange: (value: string) => void }) {
+  const gradient = useMemo(() => parseGradient(image, resolveColor), [image]);
+  const [selected, setSelected] = useState(0);
+  const barRef = useRef<HTMLDivElement | null>(null);
+  const drag = useRef<{ index: number; moved: boolean } | null>(null);
+
+  const stops = gradient?.stops ?? [];
+  const current = Math.min(selected, Math.max(0, stops.length - 1));
+  const stop = stops[current];
+
+  const commit = (next: Gradient) => onChange(serializeGradient(next));
+  // The computed value comes back as rgb(), so a preset is matched by what it means, not how it is spelt.
+  const presetOn = (preset: string) => { const parsed = parseGradient(preset); return Boolean(gradient && parsed && serializeGradient(parsed) === serializeGradient(gradient)); };
+  const updateStop = (index: number, patch: Partial<GradientStop>) => {
+    if (!gradient) return;
+    commit({ ...gradient, stops: gradient.stops.map((item, at) => (at === index ? { ...item, ...patch } : item)) });
+  };
+  const positionAt = (clientX: number) => {
+    const rect = barRef.current?.getBoundingClientRect();
+    if (!rect || rect.width === 0) return 0;
+    return Math.round(Math.min(100, Math.max(0, ((clientX - rect.left) / rect.width) * 100)));
+  };
+  const addStop = (clientX: number) => {
+    if (!gradient) return;
+    const position = positionAt(clientX);
+    const sample = sampleGradient(gradient, position);
+    commit({ ...gradient, stops: [...gradient.stops, { ...sample, position }] });
+    setSelected(gradient.stops.length);
+  };
+  const removeStop = (index: number) => {
+    if (!gradient || gradient.stops.length <= 2) return;
+    commit({ ...gradient, stops: gradient.stops.filter((_, at) => at !== index) });
+    setSelected(Math.max(0, index - 1));
+  };
+  const setType = (type: GradientType) => {
+    if (type === gradient?.type) return;
+    commit(gradient ? { ...gradient, type } : { ...defaultGradient(fill, resolveColor), type });
+    setSelected(0);
+  };
+
+  return <div className="hi-gradient">
+    <div className="hi-segmented hi-gradient-types" aria-label="Gradient type">
+      {GRADIENT_TYPES.map((type) => <button key={type.value} type="button" className={gradient?.type === type.value ? 'is-active' : ''} aria-pressed={gradient?.type === type.value} onClick={() => setType(type.value)}>{type.label}</button>)}
+    </div>
+    {gradient && stop && <>
+      <div
+        ref={barRef}
+        className="hi-gradient-bar"
+        role="group"
+        aria-label="Gradient stops · click to add a stop"
+        onPointerDown={(event) => { if (event.target === event.currentTarget) { event.preventDefault(); addStop(event.clientX); } }}
+      >
+        <i style={{ backgroundImage: gradientBar(gradient) }} />
+        {gradient.stops.map((item, index) => <button
+          key={index}
+          type="button"
+          className={`hi-gradient-stop ${index === current ? 'is-active' : ''}`}
+          style={{ left: `${item.position}%` }}
+          title={`${stopColor(item)} · ${item.position}%`}
+          aria-label={`Stop ${index + 1}: ${stopColor(item)} at ${item.position}%`}
+          aria-pressed={index === current}
+          onPointerDown={(event) => {
+            event.preventDefault();
+            event.currentTarget.setPointerCapture(event.pointerId);
+            drag.current = { index, moved: false };
+            setSelected(index);
+          }}
+          onPointerMove={(event) => {
+            if (!drag.current || drag.current.index !== index) return;
+            drag.current.moved = true;
+            const position = positionAt(event.clientX);
+            if (position !== item.position) updateStop(index, { position });
+          }}
+          onPointerUp={(event) => {
+            event.currentTarget.releasePointerCapture(event.pointerId);
+            const moved = drag.current?.moved;
+            drag.current = null;
+            // Settle a drag that crossed another stop: sorted order, same stop still selected.
+            if (moved) { const sorted = sortStops(gradient); commit(sorted); setSelected(sorted.stops.indexOf(item)); }
+          }}
+          onPointerCancel={() => { drag.current = null; }}
+          onKeyDown={(event) => {
+            if (event.key === 'Backspace' || event.key === 'Delete') { event.preventDefault(); removeStop(index); }
+            if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+              event.preventDefault();
+              const step = (event.shiftKey ? 10 : 1) * (event.key === 'ArrowLeft' ? -1 : 1);
+              updateStop(index, { position: Math.min(100, Math.max(0, item.position + step)) });
+            }
+          }}
+        ><i style={{ background: stopColor(item) }} /></button>)}
       </div>
+      <div className="hi-gradient-stop-fields">
+        <ColorField label="Stop" value={stopColor(stop)} tokens={tokens} onChange={(value) => { const hex = resolveColor(value); if (hex) updateStop(current, splitHexAlpha(hex)); }} />
+        <div className="hi-gradient-stop-row">
+          <NumberField label="Position" value={stop.position} min={0} max={100} suffix="%" onChange={(value) => updateStop(current, { position: Number(value) || 0 })} />
+          <button type="button" className="hi-gradient-action" title="Remove stop" aria-label="Remove stop" disabled={gradient.stops.length <= 2} onClick={() => removeStop(current)}><Trash2 size={13} /></button>
+        </div>
+      </div>
+      <div className="hi-gradient-stop-row">
+        {gradient.type !== 'radial'
+          ? <NumberField label="Angle" value={gradient.angle} min={0} max={360} suffix="°" onChange={(value) => commit({ ...gradient, angle: ((Number(value) || 0) % 360 + 360) % 360 })} />
+          : <span className="hi-gradient-note">Radial, from the centre</span>}
+        {gradient.type !== 'radial' && <button type="button" className="hi-gradient-action" title="Rotate 45°" aria-label="Rotate gradient 45 degrees" onClick={() => commit({ ...gradient, angle: (gradient.angle + 45) % 360 })}><RotateCw size={13} /></button>}
+        <button type="button" className="hi-gradient-action" title="Reverse stops" aria-label="Reverse gradient" onClick={() => commit(reverseGradient(gradient))}><FlipHorizontal2 size={13} /></button>
+      </div>
+    </>}
+    <div className="hi-gradient-presets" aria-label="Gradient presets">
+      {GRADIENT_PRESETS.map((preset) => <button key={preset} type="button" title="Start from this gradient" aria-label="Start from this gradient" className={presetOn(preset) ? 'is-active' : ''} style={{ backgroundImage: preset }} onClick={() => { onChange(preset); setSelected(0); }} />)}
     </div>
   </div>;
+}
+
+/**
+ * Background image, on top of the fill colour: a picture by URL or upload, a gradient, or none —
+ * with how it sits in the box. Written as ordinary CSS so it lands in the handoff like everything else.
+ */
+function BackgroundField({ mode, image, size, position, repeat, fill, tokens, onChange, onBatch }: { mode: 'gradient' | 'image' | 'pattern'; image: string; size: string; position: string; repeat: string; fill: string; tokens: readonly BrandColorToken[]; onChange: (property: string, value: string) => void; onBatch: (label: string, apply: () => void) => void }) {
+  const url = backgroundUrl(image);
+  const hasImage = image !== 'none' && image !== '';
+  const opacity = !hasImage ? 100 : url ? readImageOpacity(image) : gradientAlpha(image);
+  const setOpacity = (value: number) => onChange('background-image', url ? withImageOpacity(image, fill, value) : scaleGradientAlpha(image, value));
+  const setUrl = (value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed) return;
+    onChange('background-image', `url("${trimmed.replace(/"/g, '%22')}")`);
+  };
+  const onFile = (file?: File) => {
+    if (!file) return;
+    if (file.type === 'image/svg+xml') file.text().then((text) => setUrl(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(text)}`));
+    else setUrl(URL.createObjectURL(file));
+  };
+  const opacityField = <NumberField label="Opacity" value={opacity} min={0} max={100} suffix="%" onChange={(value) => setOpacity(Number(value) || 0)} />;
+  if (mode === 'image') {
+    return <div className="hi-background">
+      <div className="hi-background-row">
+        <span className="hi-background-thumb" style={{ backgroundImage: url ? image : undefined }} aria-hidden>{!url && <ImageIcon size={14} />}</span>
+        <input
+          key={url}
+          defaultValue={url}
+          placeholder="Image URL…"
+          aria-label="Background image URL"
+          onKeyDown={(event) => { if (event.key === 'Enter') setUrl(event.currentTarget.value); }}
+          onBlur={(event) => { if (event.target.value.trim() && event.target.value.trim() !== url) setUrl(event.target.value); }}
+        />
+        <label className="hi-background-upload" title="Upload an image or SVG"><input type="file" accept="image/*,.svg" onChange={(event) => onFile(event.target.files?.[0])} /><Upload size={13} /></label>
+        {url && <button className="hi-background-clear" title="Remove image" aria-label="Remove image" onClick={() => onChange('background-image', 'none')}><X size={13} /></button>}
+      </div>
+      {url && <div className="hi-control-pair">
+        <SelectField label="Fit" compact value={BACKGROUND_FITS.some((fit) => fit.value === size) ? size : 'auto'} options={BACKGROUND_FITS} onChange={(value) => onChange('background-size', value)} />
+        <SelectField label="Align" compact value={backgroundPositionOption(position)} options={BACKGROUND_POSITIONS} onChange={(value) => onChange('background-position', value)} />
+      </div>}
+      {url && <div className="hi-control-pair">
+        {opacityField}
+        <label className="hi-control hi-control--check"><span>Repeat</span><input type="checkbox" checked={repeat !== 'no-repeat'} onChange={(event) => onChange('background-repeat', event.target.checked ? 'repeat' : 'no-repeat')} /></label>
+      </div>}
+      {!url && <p className="hi-empty-note">Paste an image address or upload one.</p>}
+    </div>;
+  }
+  if (mode === 'gradient') {
+    return <div className="hi-background">
+      <GradientBuilder image={image} fill={fill} tokens={tokens} onChange={(value) => onChange('background-image', value)} />
+      {hasImage && opacityField}
+    </div>;
+  }
+  return <div className="hi-background">
+    <div className="hi-gradient-presets hi-pattern-presets" aria-label="Pattern presets">
+      {PATTERN_PRESETS.map((pattern) => <button key={pattern.label} title={`${pattern.label} pattern`} aria-label={`${pattern.label} pattern`} className={isPattern(image) && image.includes(pattern.image.includes('repeating') ? 'repeating' : pattern.image.split('(')[0]) ? 'is-current' : ''} style={{ backgroundImage: pattern.image, backgroundSize: pattern.size, backgroundPosition: pattern.position }} onClick={() => onBatch(`Apply ${pattern.label.toLowerCase()} pattern`, () => { onChange('background-image', pattern.image); onChange('background-size', pattern.size); onChange('background-position', pattern.position ?? '0 0'); })} />)}
+    </div>
+    {hasImage && opacityField}
+  </div>;
+}
+
+type FillType = 'solid' | 'gradient' | 'image' | 'pattern' | 'none';
+const FILL_TYPES: Array<{ value: FillType; label: string }> = [
+  { value: 'solid', label: 'Solid' },
+  { value: 'gradient', label: 'Gradient' },
+  { value: 'image', label: 'Image' },
+  { value: 'pattern', label: 'Pattern' },
+  { value: 'none', label: 'None' },
+];
+
+/** Repeating gradients and layered hairline gradients are patterns, not fades. */
+function isPattern(image: string) {
+  return image !== 'none' && !backgroundUrl(image) && (image.includes('repeating-') || parseGradient(image, resolveColor) === null);
+}
+
+/** What kind of fill the element has, read from its background. */
+function detectFillType(image: string, color: string): FillType {
+  if (backgroundUrl(image)) return 'image';
+  if (isPattern(image)) return 'pattern';
+  if (image !== 'none' && image !== '') return 'gradient';
+  return colorAlpha(color) === 0 ? 'none' : 'solid';
 }
 
 function TokenColorField({ label, value, tokens, onChange }: { label: string; value: string; tokens: readonly BrandColorToken[]; onChange: (value: string) => void }) {
@@ -2484,6 +2830,11 @@ type ResizeSession = {
   marginTop: number;
   fromCenter: boolean;
   moved: boolean;
+  /** Geometry of the box the designer is looking at, and what its dragged edge can snap to. */
+  startRect: SnapRect;
+  targets: SnapTarget[];
+  threshold: number;
+  guides: SnapGuide[];
 };
 
 function pixels(value: number) {
@@ -2495,9 +2846,14 @@ function beginResize(element: HTMLElement, direction: ResizeDirection, event: Po
   const style = getComputedStyle(element);
   const marginLeft = Number.parseFloat(style.marginLeft) || 0;
   const marginTop = Number.parseFloat(style.marginTop) || 0;
+  const view = mirror ?? element;
   return {
     element,
     direction,
+    startRect: snapRectOf(view),
+    targets: gatherSnapTargets(view),
+    threshold: SNAP_THRESHOLD / Math.max(scale || 1, .01),
+    guides: [],
     scale: scale || 1,
     startX: event.clientX,
     startY: event.clientY,
@@ -2536,6 +2892,24 @@ function resizeFrame(session: ResizeSession, event: PointerEvent) {
   session.width = snap(width);
   session.height = snap(height);
   session.fromCenter = event.altKey;
+  // The dragged edge snaps to the siblings' edges and centres, as a moved box does. Shift and Alt
+  // already mean something on a handle (ratio, from centre), so geometry snapping steps aside for them.
+  session.guides = [];
+  if (!event.shiftKey && !event.altKey) {
+    const rect = session.startRect;
+    if (horizontal) {
+      const left = rect.left + (horizontal < 0 ? session.startWidth - session.width : 0);
+      const edge = horizontal > 0 ? left + session.width : left;
+      const result = computeSnap({ left: edge, top: rect.top, width: 0, height: rect.height }, session.targets, session.threshold, { lockY: true, gaps: false });
+      if (result.dx) { session.width = Math.max(MIN_CANVAS_SIZE, session.width + horizontal * result.dx); session.guides.push(...result.guides); }
+    }
+    if (vertical) {
+      const top = rect.top + (vertical < 0 ? session.startHeight - session.height : 0);
+      const edge = vertical > 0 ? top + session.height : top;
+      const result = computeSnap({ left: rect.left, top: edge, width: rect.width, height: 0 }, session.targets, session.threshold, { lockX: true, gaps: false });
+      if (result.dy) { session.height = Math.max(MIN_CANVAS_SIZE, session.height + vertical * result.dy); session.guides.push(...result.guides); }
+    }
+  }
   // A left or top handle has to move the box as well as size it, or the opposite edge walks away
   // from the pointer and the drag feels like it is fighting back.
   session.marginLeft = event.altKey && horizontal
@@ -2575,6 +2949,373 @@ function rollbackResize(session: ResizeSession) {
       else node.style.removeProperty(property);
     });
   });
+}
+
+/* Drag to move — reorder inside a flex or grid parent, free move with snapping anywhere else. */
+
+/** Pointer travel before a press turns into a drag; below this it is a click. */
+const MOVE_DEAD_ZONE = 4;
+/** Screen pixels within which an edge, centre or equal gap pulls the box in. */
+const SNAP_THRESHOLD = 5;
+/** The most siblings worth measuring for guides; past this a page is a list, not a layout. */
+const MAX_SNAP_TARGETS = 40;
+
+type MoveSession = {
+  /** The element edits are recorded against. */
+  element: HTMLElement;
+  /** The node the designer is looking at — the frame twin when there is one. Geometry comes from here. */
+  view: HTMLElement;
+  mirror: HTMLElement | null;
+  mode: 'reorder' | 'free';
+  startX: number;
+  startY: number;
+  startRect: SnapRect;
+  targets: SnapTarget[];
+  threshold: number;
+  /** Everything moving together: the primary first, then the rest of a multi-selection, each from its own start. */
+  members: MoveMember[];
+  /** The snapped travel since the press, shared by every member. */
+  delta: [number, number];
+  /** Reorder: the visible siblings, their boxes, and where the drag currently says to drop. */
+  siblingPaths: string[];
+  siblingRects: SnapRect[];
+  flow: 'row' | 'column';
+  currentIndex: number;
+  insertion: InsertionPoint | null;
+  guides: SnapGuide[];
+  moved: boolean;
+  onUpdate: (() => void) | null;
+};
+
+type MoveMember = {
+  element: HTMLElement;
+  mirror: HTMLElement | null;
+  /** `margin-*` in flow, `left`/`top` once the element is positioned — whichever actually moves it. */
+  offsetProperties: [string, string];
+  startOffsets: [number, number];
+  inline: Record<string, string>;
+};
+
+/** How an element is moved and where it starts from, read once at the press. */
+function moveMember(element: HTMLElement, mirror: HTMLElement | null): MoveMember {
+  const style = getComputedStyle(element);
+  const positioned = style.position === 'absolute' || style.position === 'fixed';
+  const offsetProperties: [string, string] = positioned ? ['left', 'top'] : ['margin-left', 'margin-top'];
+  return {
+    element,
+    mirror,
+    offsetProperties,
+    startOffsets: [Number.parseFloat(style.getPropertyValue(offsetProperties[0])) || 0, Number.parseFloat(style.getPropertyValue(offsetProperties[1])) || 0],
+    inline: Object.fromEntries(offsetProperties.map((property) => [property, element.style.getPropertyValue(property)])),
+  };
+}
+
+function snapRectOf(node: Element): SnapRect {
+  const rect = node.getBoundingClientRect();
+  return { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
+}
+
+/** The boxes a drag lines up against: the visible siblings and the parent's content box. */
+function gatherSnapTargets(view: HTMLElement): SnapTarget[] {
+  const parent = view.parentElement;
+  if (!parent) return [];
+  const targets: SnapTarget[] = [];
+  const style = getComputedStyle(parent);
+  const rect = parent.getBoundingClientRect();
+  const padding = ['Top', 'Right', 'Bottom', 'Left'].map((side) => Number.parseFloat(style[`padding${side}` as 'paddingTop']) || 0);
+  targets.push({ kind: 'parent', rect: { left: rect.left + padding[3], top: rect.top + padding[0], width: rect.width - padding[1] - padding[3], height: rect.height - padding[0] - padding[2] } });
+  for (const sibling of Array.from(parent.children)) {
+    if (targets.length > MAX_SNAP_TARGETS) break;
+    // `instanceof HTMLElement` is false for a node from the frame's realm; check the node type instead.
+    if (sibling === view || !isElementNode(sibling) || !visible(sibling)) continue;
+    targets.push({ kind: 'sibling', rect: snapRectOf(sibling) });
+  }
+  return targets;
+}
+
+function beginMove(element: HTMLElement, view: HTMLElement, event: PointerEvent, zoom: number, mirror: HTMLElement | null, members: MoveMember[], onUpdate: (() => void) | null): MoveSession {
+  const parent = view.parentElement;
+  const parentStyle = parent ? getComputedStyle(parent) : null;
+  const style = getComputedStyle(view);
+  const positioned = style.position === 'absolute' || style.position === 'fixed';
+  const inFlow = parentStyle ? parentStyle.display.includes('flex') || parentStyle.display.includes('grid') : false;
+  // Alt asks for a free move even inside a flex row — the way Alt-drag ignores auto layout in
+  // Figma — and a multi-selection always moves freely: there is no one row to reorder within.
+  const mode: MoveSession['mode'] = inFlow && !positioned && !event.altKey && members.length === 1 ? 'reorder' : 'free';
+  const siblings = parent ? Array.from(parent.children).filter((node): node is HTMLElement => isElementNode(node) && visible(node)) : [];
+  const flow: MoveSession['flow'] = parentStyle && (parentStyle.flexDirection.startsWith('column') || (parentStyle.display.includes('grid') && parentStyle.gridAutoFlow.startsWith('column')) || (parentStyle.display.includes('grid') && parentStyle.gridTemplateColumns.split(' ').length <= 1)) ? 'column' : 'row';
+  return {
+    element,
+    view,
+    mirror,
+    mode,
+    startX: event.clientX,
+    startY: event.clientY,
+    startRect: snapRectOf(view),
+    targets: gatherSnapTargets(view),
+    threshold: SNAP_THRESHOLD / Math.max(zoom, .01),
+    members,
+    delta: [0, 0],
+    siblingPaths: siblings.map(getUniquePath),
+    siblingRects: siblings.map(snapRectOf),
+    flow,
+    currentIndex: siblings.indexOf(view),
+    insertion: null,
+    guides: [],
+    moved: false,
+    onUpdate,
+  };
+}
+
+/** Applies the pointer to the session. Returns false while still inside the dead zone. */
+function moveFrame(session: MoveSession, event: PointerEvent) {
+  const dx = event.clientX - session.startX;
+  const dy = event.clientY - session.startY;
+  if (!session.moved && Math.hypot(dx, dy) < MOVE_DEAD_ZONE) return false;
+  session.moved = true;
+  if (session.mode === 'reorder') {
+    session.insertion = findInsertion({ x: event.clientX, y: event.clientY }, session.siblingRects, session.flow, session.currentIndex);
+    session.guides = session.insertion ? [session.insertion.guide] : [];
+    return true;
+  }
+  const candidate = { ...session.startRect, left: session.startRect.left + dx, top: session.startRect.top + dy };
+  // Shift switches snapping off for the gesture, Figma's convention.
+  const snap = event.shiftKey ? { dx: 0, dy: 0, guides: [] } : computeSnap(candidate, session.targets, session.threshold);
+  session.delta = [Math.round(dx + snap.dx), Math.round(dy + snap.dy)];
+  session.guides = snap.guides;
+  return true;
+}
+
+/** Where a member lands: its own start plus the shared travel. */
+function memberOffsets(member: MoveMember, delta: [number, number]): [string, string] {
+  return [pixels(member.startOffsets[0] + delta[0]), pixels(member.startOffsets[1] + delta[1])];
+}
+
+function previewMove(session: MoveSession) {
+  if (session.mode !== 'free') return;
+  session.members.forEach((member) => {
+    const [x, y] = memberOffsets(member, session.delta);
+    const nodes = new Set([member.element, member.mirror, member.element === session.element ? session.view : null]);
+    nodes.forEach((node) => {
+      if (!node) return;
+      node.style.setProperty(member.offsetProperties[0], x);
+      node.style.setProperty(member.offsetProperties[1], y);
+    });
+  });
+  session.onUpdate?.();
+}
+
+function rollbackMove(session: MoveSession) {
+  session.members.forEach((member) => {
+    const nodes = new Set([member.element, member.mirror, member.element === session.element ? session.view : null]);
+    nodes.forEach((node) => {
+      if (!node) return;
+      member.offsetProperties.forEach((property) => {
+        const value = member.inline[property];
+        if (value) node.style.setProperty(property, value);
+        else node.style.removeProperty(property);
+      });
+    });
+  });
+}
+
+/* Flip and rotate — composed onto whatever transform the element already carries. */
+
+/** The transform as a list of functions, from the inline style when there is one, else the computed matrix. */
+function transformParts(element: HTMLElement): string[] {
+  const inline = element.style.transform.trim();
+  const source = inline || getComputedStyle(element).transform;
+  if (!source || source === 'none') return [];
+  return source.match(/[a-zA-Z0-9]+\([^)]*\)/g) ?? [];
+}
+
+/** Adds the function when absent, removes it when present — a flip is its own inverse. */
+function toggleTransformPart(element: HTMLElement, part: string) {
+  const parts = transformParts(element);
+  const index = parts.indexOf(part);
+  if (index >= 0) parts.splice(index, 1); else parts.push(part);
+  return parts.join(' ') || 'none';
+}
+
+/** Replaces the rotate() function, or adds one, leaving flips and translations alone. */
+function withRotation(element: HTMLElement, degrees: number) {
+  const parts = transformParts(element).filter((part) => !/^rotate(Z)?\(/.test(part));
+  if (degrees % 360 !== 0) parts.push(`rotate(${degrees}deg)`);
+  return parts.join(' ') || 'none';
+}
+
+/** The current angle: from rotate() when the transform is readable, else recovered from the matrix. */
+function readRotation(element: HTMLElement) {
+  const inline = element.style.transform;
+  const rotate = inline.match(/rotate(?:Z)?\(\s*(-?[\d.]+)deg\s*\)/);
+  if (rotate) return Number.parseFloat(rotate[1]);
+  // An inline transform that says nothing about rotation is not rotated, whatever its matrix looks like.
+  if (inline.trim() && inline.trim() !== 'none') return 0;
+  const matrix = getComputedStyle(element).transform.match(/^matrix\(([^)]+)\)/);
+  if (!matrix) return 0;
+  const [a, b, c, d] = matrix[1].split(',').map((value) => Number.parseFloat(value));
+  // A negative determinant is a mirror; its angle is not a rotation the designer set.
+  if (a * d - b * c < 0) return 0;
+  return Math.round(Math.atan2(b, a) * (180 / Math.PI));
+}
+
+function isFlipped(element: HTMLElement, axis: 'x' | 'y') {
+  return transformParts(element).includes(axis === 'x' ? 'scaleX(-1)' : 'scaleY(-1)');
+}
+
+/* Layers — the page as a tree, the way Figma lists what is on the canvas. */
+
+/** Tags that render nothing and would only be noise in the tree. */
+const LAYER_SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'LINK', 'META', 'TITLE', 'HEAD', 'BR', 'WBR']);
+/** Past this many rows the tree is a list of everything; nothing is gained by drawing more. */
+const MAX_LAYER_ROWS = 2000;
+
+type LayerRow = {
+  path: string;
+  element: HTMLElement;
+  depth: number;
+  hasChildren: boolean;
+  expanded: boolean;
+  hidden: boolean;
+  label: string;
+  detail: string;
+  kind: ElementKind;
+};
+
+function layerChildren(element: Element): HTMLElement[] {
+  return Array.from(element.children).filter((child): child is HTMLElement => isElementNode(child) && !LAYER_SKIP_TAGS.has(child.tagName) && !child.matches(IGNORED_SELECTOR));
+}
+
+/** What to call a row: an id, the first class, or the tag — with a snippet of text where there is some. */
+function layerLabel(element: HTMLElement) {
+  const tag = element.tagName.toLowerCase();
+  const name = element.id ? `#${element.id}` : element.classList[0] ? `.${element.classList[0]}` : '';
+  const own = Array.from(element.childNodes).filter((node) => node.nodeType === 3).map((node) => node.textContent ?? '').join(' ');
+  const text = normalizeText(own || (element.children.length === 0 ? element.textContent ?? '' : ''));
+  const attribute = element instanceof HTMLImageElement ? element.alt : element instanceof HTMLInputElement ? element.placeholder || element.value : '';
+  return { label: `${tag}${name}`, detail: text ? `“${text.slice(0, 40)}${text.length > 40 ? '…' : ''}”` : attribute ? `“${attribute.slice(0, 40)}”` : '' };
+}
+
+/** Flattens the tree from `root` into the rows that are currently unfolded. */
+function flattenLayers(root: Element, expanded: ReadonlySet<string>, hiddenBy: (element: HTMLElement) => boolean): LayerRow[] {
+  const rows: LayerRow[] = [];
+  const walk = (element: HTMLElement, depth: number) => {
+    if (rows.length >= MAX_LAYER_ROWS) return;
+    const children = layerChildren(element);
+    const path = getUniquePath(element);
+    const open = expanded.has(path);
+    const { label, detail } = layerLabel(element);
+    rows.push({ path, element, depth, hasChildren: children.length > 0, expanded: open, hidden: hiddenBy(element), label, detail, kind: classifyElement(element).kind });
+    if (open) children.forEach((child) => walk(child, depth + 1));
+  };
+  layerChildren(root).forEach((child) => walk(child, 0));
+  return rows;
+}
+
+const LAYER_ICONS: Record<ElementKind, typeof Type> = {
+  text: Type,
+  button: MousePointerClick,
+  link: Link2,
+  input: Square,
+  image: ImageIcon,
+  layout: Layers3,
+  form: Component,
+  generic: Square,
+};
+
+/**
+ * The layers panel: a left column with the DOM from body down.
+ *
+ * Hover outlines the element on the canvas, click selects it, the chevron unfolds it, and the eye
+ * hides or shows it as a recorded edit. The tree follows the selection — picking something on the
+ * canvas unfolds its ancestors and scrolls its row into view — so the two are one selection, not two.
+ */
+function LayersPanel({ root, side, selectedPath, editVersion, onHover, onSelect, onToggleHidden, onClose }: {
+  root: Document | null;
+  /** Opposite the properties panel, so the canvas sits between the two. */
+  side: 'left' | 'right';
+  selectedPath: string | null;
+  editVersion: number;
+  onHover: (path: string | null) => void;
+  onSelect: (path: string) => void;
+  onToggleHidden: (path: string, hidden: boolean) => void;
+  onClose: () => void;
+}) {
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const listRef = useRef<HTMLDivElement>(null);
+  const body = root?.body ?? null;
+
+  // A fresh document starts with its first two levels open, which is where the page's regions live.
+  useEffect(() => {
+    if (!body) return;
+    const initial = new Set<string>();
+    layerChildren(body).forEach((child) => {
+      initial.add(getUniquePath(child));
+      layerChildren(child).forEach((grandchild) => initial.add(getUniquePath(grandchild)));
+    });
+    setExpanded(initial);
+  }, [body]);
+
+  // Selecting on the canvas unfolds the way down to the selection.
+  useEffect(() => {
+    if (!selectedPath || !root) return;
+    let node: HTMLElement | null = null;
+    try { node = root.querySelector<HTMLElement>(selectedPath); } catch { node = null; }
+    if (!node) return;
+    setExpanded((current) => {
+      const next = new Set(current);
+      let ancestor = node!.parentElement;
+      while (ancestor && ancestor !== root.body) { next.add(getUniquePath(ancestor)); ancestor = ancestor.parentElement; }
+      return next.size === current.size ? current : next;
+    });
+    window.setTimeout(() => listRef.current?.querySelector<HTMLElement>('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' }), 40);
+  }, [root, selectedPath]);
+
+  const rows = useMemo(() => body ? flattenLayers(body, expanded, (element) => getComputedStyle(element).display === 'none') : [], [body, expanded, editVersion]);
+
+  const toggle = (path: string) => setExpanded((current) => {
+    const next = new Set(current);
+    if (next.has(path)) next.delete(path); else next.add(path);
+    return next;
+  });
+
+  return <aside className={`hi-layers hi-layers--${side}`} aria-label="Layers" onMouseLeave={() => onHover(null)}>
+    <header><Layers size={14} /><strong>Layers</strong><button title="Close layers (Ctrl+Shift+L)" aria-label="Close layers" onClick={onClose}><X size={14} /></button></header>
+    <div className="hi-layers-list" ref={listRef} role="tree">
+      {rows.map((row) => {
+        const Icon = LAYER_ICONS[row.kind];
+        return <div
+          key={row.path}
+          role="treeitem"
+          aria-level={row.depth + 1}
+          aria-expanded={row.hasChildren ? row.expanded : undefined}
+          aria-selected={row.path === selectedPath}
+          className={`hi-layer ${row.path === selectedPath ? 'is-selected' : ''} ${row.hidden ? 'is-hidden' : ''}`}
+          style={{ '--hi-layer-depth': row.depth } as CSSProperties}
+          onMouseEnter={() => onHover(row.path)}
+          onClick={() => onSelect(row.path)}
+        >
+          <button className="hi-layer-fold" tabIndex={-1} aria-label={row.expanded ? 'Collapse' : 'Expand'} disabled={!row.hasChildren} onClick={(event) => { event.stopPropagation(); toggle(row.path); }}>{row.hasChildren && <ChevronDown size={12} style={{ transform: row.expanded ? undefined : 'rotate(-90deg)' }} />}</button>
+          <Icon size={12} />
+          <span className="hi-layer-name">{row.label}{row.detail && <small>{row.detail}</small>}</span>
+          <button className="hi-layer-eye" title={row.hidden ? 'Show' : 'Hide'} aria-label={row.hidden ? `Show ${row.label}` : `Hide ${row.label}`} aria-pressed={row.hidden} onClick={(event) => { event.stopPropagation(); onToggleHidden(row.path, !row.hidden); }}>{row.hidden ? <EyeOff size={12} /> : <Eye size={12} />}</button>
+        </div>;
+      })}
+      {rows.length >= MAX_LAYER_ROWS && <p className="hi-layers-more">Showing the first {MAX_LAYER_ROWS} layers.</p>}
+      {!rows.length && <p className="hi-layers-more">Nothing on the page yet.</p>}
+    </div>
+  </aside>;
+}
+
+/** Alignment and insertion lines drawn over the canvas while a drag is in progress. */
+function GuideLayer({ guides, scale = 1, live = false }: { guides: readonly SnapGuide[]; scale?: number; live?: boolean }) {
+  if (!guides.length) return null;
+  const chromeScale = 1 / Math.max(scale, .01);
+  return <div className={`hi-guides ${live ? 'is-live' : ''}`} style={{ '--hi-chrome-scale': chromeScale } as CSSProperties} aria-hidden>
+    {guides.map((guide, index) => guide.axis === 'x'
+      ? <span key={index} className={`hi-guide hi-guide--${guide.kind} is-x`} style={{ left: guide.at, top: guide.from, height: Math.max(0, guide.to - guide.from) }}>{guide.label && <b>{guide.label}</b>}</span>
+      : <span key={index} className={`hi-guide hi-guide--${guide.kind} is-y`} style={{ top: guide.at, left: guide.from, width: Math.max(0, guide.to - guide.from) }}>{guide.label && <b>{guide.label}</b>}</span>)}
+  </div>;
 }
 
 type TextEditSession = { element: HTMLElement; original: string; field: boolean; stop: () => void };
@@ -2654,8 +3395,17 @@ function revertTextEdit(session: TextEditSession) {
 }
 
 /** The eight grab points, drawn inside whichever selection box is already positioned over the element. */
-function CanvasHandles({ size, onStart }: { size: string | null; onStart: (direction: ResizeDirection, event: ReactPointerEvent) => void }) {
+function CanvasHandles({ size, onStart, onRotateStart }: { size: string | null; onStart: (direction: ResizeDirection, event: ReactPointerEvent) => void; onRotateStart?: (event: ReactPointerEvent) => void }) {
   return <>
+    {/* The rotate grips sit just outside each corner, where Figma's cursor turns into an arc. */}
+    {onRotateStart && (['nw', 'ne', 'se', 'sw'] as const).map((corner) => <button
+      key={`rotate-${corner}`}
+      type="button"
+      className={`hi-rotate-grip hi-rotate-grip--${corner}`}
+      title="Drag to rotate · Shift snaps to 15°"
+      aria-label="Rotate"
+      onPointerDown={onRotateStart}
+    />)}
     {RESIZE_HANDLES.map((handle) => <button
       key={handle.id}
       type="button"
@@ -2692,7 +3442,7 @@ function SelectionChrome({ rect, scale = 1, handles, label, parentRect, classNam
   </>;
 }
 
-function DeviceOverlay({ presetId, orientation, freezeReveals, reloadKey, snapshot, dock, hidden, editVersion, comments, tool, canvasEdit, canvasSize, canvasBusyRef, onCanvasResize, onCanvasText, onFrameDocument, onSelectPath, onReplay, onComment, onUndo, onRedo, onNotice }: {
+function DeviceOverlay({ presetId, orientation, freezeReveals, reloadKey, snapshot, dock, hidden, layers, editVersion, comments, tool, canvasEdit, canvasSize, canvasBusyRef, swallowClickRef, guides, hoverPath, onCanvasResize, onCanvasRotate, onCanvasMove, onCanvasKey, onCanvasText, onFrameDocument, onSelectPath, onReplay, onComment, onUndo, onRedo, onNotice }: {
   presetId: DevicePresetId;
   /** Frame settings live with the toolbar that changes them — see `DeviceControls`. */
   orientation: DeviceOrientation;
@@ -2701,6 +3451,8 @@ function DeviceOverlay({ presetId, orientation, freezeReveals, reloadKey, snapsh
   snapshot: ElementSnapshot | null;
   dock: 'left' | 'right';
   hidden: boolean;
+  /** The layers column is open on the far side, so the stage keeps clear of it. */
+  layers: boolean;
   editVersion: number;
   /** Threads to pin inside the frame — the preview is where most reviewing actually happens. */
   comments: readonly PageComment[];
@@ -2709,7 +3461,18 @@ function DeviceOverlay({ presetId, orientation, freezeReveals, reloadKey, snapsh
   canvasSize: string | null;
   /** Set while a canvas drag owns the pointer, so Escape cancels the drag instead of closing the preview. */
   canvasBusyRef: { current: boolean };
+  /** Set by a drag that moved something, so the click that ends it does not reselect underneath. */
+  swallowClickRef: { current: boolean };
+  /** Alignment and drop lines from the drag in progress, in frame coordinates. */
+  guides: readonly SnapGuide[];
+  /** An element the layers panel is pointing at, to outline it here as if hovered. */
+  hoverPath: string | null;
   onCanvasResize: (direction: ResizeDirection, event: ReactPointerEvent, scale: number, onUpdate: () => void) => void;
+  onCanvasRotate: (event: ReactPointerEvent) => void;
+  /** A press inside the selection: the frame node under the pointer, the event that started it. */
+  onCanvasMove: (view: HTMLElement, event: PointerEvent, scale: number, onUpdate: () => void) => void;
+  /** Keys typed with the frame focused — nudge, flip, duplicate — handled by the same code as the page. */
+  onCanvasKey: (event: KeyboardEvent) => boolean;
   onCanvasText: (path: string, value: string) => void;
   onFrameDocument: (doc: Document | null) => void;
   onSelectPath: (path: string) => boolean;
@@ -2738,6 +3501,10 @@ function DeviceOverlay({ presetId, orientation, freezeReveals, reloadKey, snapsh
   const [hoverBox, setHoverBox] = useState<ChromeRect | null>(null);
   const [selectionBox, setSelectionBox] = useState<{ top: number; left: number; width: number; height: number } | null>(null);
   const [parentBox, setParentBox] = useState<ChromeRect | null>(null);
+  /** Alt-hover: distances from the selection to whatever is under the pointer. */
+  const [measure, setMeasure] = useState<SnapGuide[]>([]);
+  const selectionBoxRef = useRef<ChromeRect | null>(null);
+  selectionBoxRef.current = selectionBox;
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const stageRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLIFrameElement>(null);
@@ -2925,11 +3692,51 @@ function DeviceOverlay({ presetId, orientation, freezeReveals, reloadKey, snapsh
           event.stopPropagation();
           onSelectPath(getUniquePath(parent));
         }
+        return;
+      }
+      // Everything else — arrows, flips, duplicate — is one shortcut map shared with the live page.
+      if (!editing && !canvasBusyRef.current && onCanvasKey(event)) {
+        event.preventDefault();
+        event.stopPropagation();
       }
     };
     frameDoc.addEventListener('keydown', onKey, true);
     return () => frameDoc.removeEventListener('keydown', onKey, true);
-  }, [canvasBusyRef, frameDoc, onRedo, onSelectPath, onUndo, snapshot]);
+  }, [canvasBusyRef, frameDoc, onCanvasKey, onRedo, onSelectPath, onUndo, snapshot]);
+
+  // The layers panel points at things; the frame shows what it is pointing at.
+  useEffect(() => {
+    if (!frameDoc || !hoverPath) return;
+    let node: HTMLElement | null = null;
+    try { node = frameDoc.querySelector<HTMLElement>(hoverPath); } catch { node = null; }
+    if (!node) { setHoverBox(null); return; }
+    setHoverBox(snapRectOf(node));
+    return () => setHoverBox(null);
+  }, [frameDoc, hoverPath, editVersion]);
+
+  /**
+   * A press inside the selected element starts a drag. Nothing happens until the pointer has
+   * actually travelled — a plain click still selects — so the press is handed over and the move
+   * session decides. The frame's own coordinates are used throughout: the iframe reports them in
+   * its layout pixels regardless of the zoom the shell is drawn at.
+   */
+  useEffect(() => {
+    if (!frameDoc || !canvasEdit || !snapshot) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.button !== 0 || spaceHeldRef.current) return;
+      const target = frameDoc.elementFromPoint(event.clientX, event.clientY);
+      if (!isElementNode(target) || target.closest(IGNORED_SELECTOR)) return;
+      const editing = frameEditRef.current?.element;
+      if (editing && (editing === target || editing.contains(target))) return;
+      const selected = resolveInDocument(frameDoc, snapshot);
+      if (!selected || (selected !== target && !selected.contains(target))) return;
+      // Text would otherwise start selecting under the drag.
+      event.preventDefault();
+      onCanvasMove(selected, event, scale, sync);
+    };
+    frameDoc.addEventListener('pointerdown', onPointerDown, true);
+    return () => frameDoc.removeEventListener('pointerdown', onPointerDown, true);
+  }, [canvasEdit, frameDoc, onCanvasMove, scale, snapshot, sync]);
 
   // Mirroring the site's Hebrew direction is a supported review mode, not a cosmetic flip.
   useEffect(() => {
@@ -2950,11 +3757,14 @@ function DeviceOverlay({ presetId, orientation, freezeReveals, reloadKey, snapsh
     if (!frameDoc || tool === 'hand') { setHoverBox(null); return; }
     const onMove = (event: PointerEvent) => {
       const target = frameDoc.elementFromPoint(event.clientX, event.clientY);
-      if (!isElementNode(target) || target.closest(IGNORED_SELECTOR)) return setHoverBox(null);
+      if (!isElementNode(target) || target.closest(IGNORED_SELECTOR)) { setHoverBox(null); setMeasure([]); return; }
       const rect = target.getBoundingClientRect();
       setHoverBox({ top: rect.top, left: rect.left, width: rect.width, height: rect.height });
+      // Alt over another element reads the distance to it, without changing anything.
+      const selection = selectionBoxRef.current;
+      setMeasure(event.altKey && selection && (rect.top !== selection.top || rect.left !== selection.left) ? measureBetween(selection, snapRectOf(target)) : []);
     };
-    const onLeave = () => setHoverBox(null);
+    const onLeave = () => { setHoverBox(null); setMeasure([]); };
     const onClickCapture = (event: MouseEvent) => {
       const target = frameDoc.elementFromPoint(event.clientX, event.clientY);
       // Page chrome inside the frame — the article's own navigation — has to keep working, so the
@@ -2965,6 +3775,12 @@ function DeviceOverlay({ presetId, orientation, freezeReveals, reloadKey, snapsh
       if (editing && (editing === target || editing.contains(target))) return;
       event.preventDefault();
       event.stopPropagation();
+      // The click that ends a drag is the drag's, not a new selection.
+      if (swallowClickRef.current) { swallowClickRef.current = false; return; }
+      // A selected container owns ordinary clicks inside it, so it can be dragged by any part of
+      // itself. Ctrl/Cmd-click or double-click reaches the child — Figma's group convention.
+      const selected = snapshot ? resolveInDocument(frameDoc, snapshot) : null;
+      if (selected && selected !== target && selected.contains(target) && !event.metaKey && !event.ctrlKey) return;
       if (!onSelectPath(getUniquePath(target))) onNotice('That element only exists at this screen size.');
     };
     frameDoc.addEventListener('pointermove', onMove, true);
@@ -2975,7 +3791,7 @@ function DeviceOverlay({ presetId, orientation, freezeReveals, reloadKey, snapsh
       frameDoc.removeEventListener('pointerleave', onLeave, true);
       frameDoc.removeEventListener('click', onClickCapture, true);
     };
-  }, [frameDoc, onNotice, onSelectPath, tool]);
+  }, [frameDoc, onNotice, onSelectPath, snapshot, swallowClickRef, tool]);
 
   /**
    * Double-click retypes text right inside the device. The frame node is edited live so the designer
@@ -3047,15 +3863,16 @@ function DeviceOverlay({ presetId, orientation, freezeReveals, reloadKey, snapsh
     setZoom(Math.max(.25, Math.min(4, Number((current * (event.deltaY > 0 ? .9 : 1.1)).toFixed(2)))));
   };
 
-  return <div className={`hi-device-overlay hi-device-overlay--${dock} ${hidden ? 'is-hidden' : ''}`} role="dialog" aria-modal={!hidden} aria-hidden={hidden} aria-label={`${preset.label} preview`}>
+  return <div className={`hi-device-overlay hi-device-overlay--${dock} ${hidden ? 'is-hidden' : ''} ${layers ? 'has-layers' : ''}`} role="dialog" aria-modal={!hidden} aria-hidden={hidden} aria-label={`${preset.label} preview`}>
     <div className={`hi-device-stage ${panSessionRef.current ? 'is-panning' : ''}`} ref={stageRef} onPointerDown={onStagePointerDown} onPointerMove={onStagePointerMove} onPointerUp={stopPanning} onPointerCancel={stopPanning} onWheel={onStageWheel}>
       <div className="hi-device-sizer" style={{ width: shellWidth * scale, height: shellHeight * scale, transform: `translate(${pan.x}px, ${pan.y}px)` }}>
         <div className={`hi-device-shell hi-device-shell--${preset.chrome}`} style={{ width: shellWidth, height: shellHeight, transform: `scale(${scale})`, padding: bezel, borderRadius: preset.radius + bezel }}>
           {preset.chrome === 'browser' && <div className="hi-device-chrome" style={{ height: chromeBar }}><i /><i /><i /><span>{window.location.host}{window.location.pathname}</span></div>}
           <div className="hi-device-viewport" style={{ width, height, borderRadius: preset.radius }}>
             <iframe key={reloadKey} ref={frameRef} name={DESIGN_PREVIEW_FRAME_NAME} title={`${preset.label} live preview`} src={previewUrl} onLoad={handleLoad} style={{ width, height }} />
-            {selectionBox && <SelectionChrome rect={selectionBox} parentRect={parentBox} scale={scale} className="is-selected" label={canvasSize ?? `${round(selectionBox.width)} × ${round(selectionBox.height)}`} handles={canvasEdit && snapshot ? <CanvasHandles size={null} onStart={(direction, event) => onCanvasResize(direction, event, scale, sync)} /> : null} />}
+            {selectionBox && <SelectionChrome rect={selectionBox} parentRect={parentBox} scale={scale} className="is-selected" label={canvasSize ?? `${round(selectionBox.width)} × ${round(selectionBox.height)}`} handles={canvasEdit && snapshot ? <CanvasHandles size={null} onStart={(direction, event) => onCanvasResize(direction, event, scale, sync)} onRotateStart={onCanvasRotate} /> : null} />}
             {tool !== 'hand' && hoverBox && (!selectionBox || hoverBox.top !== selectionBox.top || hoverBox.left !== selectionBox.left) && <SelectionChrome rect={hoverBox} scale={scale} className="is-hovered" />}
+            <GuideLayer guides={measure.length ? [...guides, ...measure] : guides} scale={scale} />
             {/* Counter-scaled so a pin stays legible at 50% zoom instead of shrinking with the shell. */}
             {pins.map((pin) => <button
               key={pin.path}
@@ -3569,6 +4386,27 @@ function HandoffInspectorPanel() {
   const [canvasSize, setCanvasSize] = useState<string | null>(null);
   const [canvasNote, setCanvasNote] = useState<string | null>(null);
   const resizeRef = useRef<ResizeSession | null>(null);
+  const moveRef = useRef<MoveSession | null>(null);
+  /** What `display` was before Hide, so Show puts back flex rather than guessing block. */
+  const hiddenDisplayRef = useRef(new Map<HTMLElement, string>());
+  // The frame binds its listeners once; these refs let it reach the latest handlers without rebinding.
+  const canvasKeyRef = useRef<(event: KeyboardEvent) => boolean>(() => false);
+  const canvasMoveRef = useRef<(view: HTMLElement, event: PointerEvent, zoom: number, onUpdate: (() => void) | null) => void>(() => undefined);
+  const onCanvasKey = useCallback((event: KeyboardEvent) => canvasKeyRef.current(event), []);
+  const onCanvasMove = useCallback((view: HTMLElement, event: PointerEvent, zoom: number, onUpdate: (() => void) | null) => canvasMoveRef.current(view, event, zoom, onUpdate), []);
+  /** The click that ends a drag arrives after the drag; this tells the pickers to let it pass. */
+  const swallowClickRef = useRef(false);
+  /** Guides from the drag in progress, in the coordinates of whichever document is being dragged in. */
+  const [guides, setGuides] = useState<SnapGuide[]>([]);
+  /** The element the layers panel is hovering, as a structural path so both documents can show it. */
+  const [layerHoverPath, setLayerHoverPath] = useState<string | null>(null);
+  /** Alt-hover distances on the live page; the frame keeps its own. */
+  const [measureGuides, setMeasureGuides] = useState<SnapGuide[]>([]);
+  /** Position & size: W and H move together while this is on. */
+  const [ratioLocked, setRatioLocked] = useState(false);
+  /** A fill type chosen in the panel before it has a value to show for itself (Image with no picture yet). */
+  const [fillTypeChoice, setFillTypeChoice] = useState<FillType | null>(null);
+  const [layersOpen, setLayersOpen] = useState(() => isBrowser && window.localStorage.getItem('meraki-inspector-layers') === 'open');
   const textEditRef = useRef<TextEditSession | null>(null);
   const canvasBusyRef = useRef(false);
   const stateMarkRef = useRef(1);
@@ -3821,6 +4659,8 @@ function HandoffInspectorPanel() {
       if (!target) return;
       event.preventDefault();
       event.stopPropagation();
+      // The click that ends a drag is the drag's, not a new selection.
+      if (swallowClickRef.current) { swallowClickRef.current = false; return; }
       if (event.shiftKey) {
         const current = selectedElementsRef.current;
         const next = current.includes(target)
@@ -3877,13 +4717,26 @@ function HandoffInspectorPanel() {
       else setOpen(false);
     };
     const onViewport = () => refresh();
+    // A press inside the selection may become a drag; the move session waits for the pointer to travel.
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.button !== 0 || mode !== 'design' || !locked || deviceOpen) return;
+      if (event.target instanceof Element && event.target.closest(IGNORED_SELECTOR)) return;
+      const selected = selectedRef.current;
+      if (!selected || !(event.target instanceof Node) || (selected !== event.target && !selected.contains(event.target))) return;
+      const editing = textEditRef.current?.element;
+      if (editing && (editing === event.target || editing.contains(event.target))) return;
+      event.preventDefault();
+      canvasMoveRef.current(selected, event, 1, null);
+    };
     document.addEventListener('pointermove', onMove, true);
+    document.addEventListener('pointerdown', onPointerDown, true);
     document.addEventListener('click', onClick, true);
     window.addEventListener('keydown', onKey);
     window.addEventListener('scroll', onViewport, true);
     window.addEventListener('resize', onViewport);
     return () => {
       document.removeEventListener('pointermove', onMove, true);
+      document.removeEventListener('pointerdown', onPointerDown, true);
       document.removeEventListener('click', onClick, true);
       window.removeEventListener('keydown', onKey);
       window.removeEventListener('scroll', onViewport, true);
@@ -3920,6 +4773,29 @@ function HandoffInspectorPanel() {
   useEffect(() => {
     window.localStorage.setItem('meraki-inspector-dock', dock);
   }, [dock]);
+
+  useEffect(() => {
+    window.localStorage.setItem('meraki-inspector-layers', layersOpen ? 'open' : 'closed');
+  }, [layersOpen]);
+
+  // Alt + hover on the live page: the distance from the selection to the element under the pointer.
+  useEffect(() => {
+    if (!open || deviceOpen || !locked || mode === 'handoff') { setMeasureGuides([]); return; }
+    let shown = false;
+    const clear = () => { if (shown) { shown = false; setMeasureGuides([]); } };
+    const onMove = (event: PointerEvent) => {
+      const selected = selectedRef.current;
+      if (!event.altKey || !selected) return clear();
+      const target = document.elementsFromPoint(event.clientX, event.clientY).find((node): node is HTMLElement => isElementNode(node) && !node.closest(IGNORED_SELECTOR));
+      if (!target || target === selected) return clear();
+      shown = true;
+      setMeasureGuides(measureBetween(snapRectOf(selected), snapRectOf(target)));
+    };
+    const onKeyUp = (event: KeyboardEvent) => { if (event.key === 'Alt') clear(); };
+    document.addEventListener('pointermove', onMove, true);
+    window.addEventListener('keyup', onKeyUp, true);
+    return () => { document.removeEventListener('pointermove', onMove, true); window.removeEventListener('keyup', onKeyUp, true); };
+  }, [deviceOpen, locked, mode, open]);
 
   useEffect(() => { writeStoredComments(comments); }, [comments]);
 
@@ -4202,6 +5078,14 @@ function HandoffInspectorPanel() {
 
   const applyHistoryChange = (change: DesignChange, direction: 'undo' | 'redo') => {
     const element = change.element;
+    if (change.property === 'layout:duplicate' && isElementNode(change.domAfter?.parent)) {
+      // A duplicate's "before" is absence: undo takes the copy off the page, redo re-inserts it.
+      const parent = change.domAfter.parent;
+      if (direction === 'undo') element.remove();
+      else parent.insertBefore(element, change.domAfter.nextSibling?.isConnected ? change.domAfter.nextSibling : null);
+      mirrorToDevice([parent], restoreInDevice);
+      return;
+    }
     if (!element.isConnected && change.kind !== 'token') return;
     if (change.domBefore && change.domAfter) {
       restoreCapturedState(direction === 'undo' ? change.domBefore : change.domAfter);
@@ -4497,6 +5381,7 @@ function HandoffInspectorPanel() {
       moveEvent.preventDefault();
       resizeFrame(active, moveEvent);
       previewResize(active);
+      setGuides(active.guides);
       // Read the box back rather than trusting the requested size: a flex child or a wrapping
       // paragraph settles somewhere else, and the overlay has to sit on what actually rendered.
       const rect = active.element.getBoundingClientRect();
@@ -4513,6 +5398,7 @@ function HandoffInspectorPanel() {
       resizeRef.current = null;
       canvasBusyRef.current = false;
       setCanvasSize(null);
+      setGuides([]);
       if (!active) return;
       rollbackResize(active);
       if (!commit || !active.moved) {
@@ -4541,6 +5427,171 @@ function HandoffInspectorPanel() {
     window.addEventListener('pointerup', onUp, true);
     window.addEventListener('pointercancel', onCancel, true);
     window.addEventListener('keydown', onKey, true);
+  };
+
+  /**
+   * Rotation by hand: the angle from the box's centre to the pointer, relative to where the press
+   * began, added to whatever rotation the element already had. The centre is read from the selection
+   * chrome in this document, so it is right at any zoom and in the frame alike.
+   */
+  const startRotate = (element: HTMLElement, event: ReactPointerEvent) => {
+    if (moveRef.current || resizeRef.current) return;
+    event.preventDefault();
+    event.stopPropagation();
+    finishTextEdit(true);
+    const chrome = (event.currentTarget as HTMLElement).parentElement;
+    if (!chrome) return;
+    const box = chrome.getBoundingClientRect();
+    const centre = { x: box.left + box.width / 2, y: box.top + box.height / 2 };
+    const angleTo = (x: number, y: number) => Math.atan2(y - centre.y, x - centre.x) * (180 / Math.PI);
+    const startAngle = angleTo(event.clientX, event.clientY);
+    const startRotation = readRotation(element);
+    const inline = element.style.transform;
+    const mirror = deviceDocRef.current?.querySelector<HTMLElement>(getUniquePath(element)) ?? null;
+    let rotation = startRotation;
+    let moved = false;
+    canvasBusyRef.current = true;
+    const handle = event.currentTarget as HTMLElement;
+    try { handle.setPointerCapture(event.pointerId); } catch { /* The pointer went away before capture. */ }
+    const onMove = (moveEvent: globalThis.PointerEvent) => {
+      moveEvent.preventDefault();
+      moved = true;
+      let next = startRotation + angleTo(moveEvent.clientX, moveEvent.clientY) - startAngle;
+      if (moveEvent.shiftKey) next = Math.round(next / 15) * 15;
+      next = Math.round(((next % 360) + 540) % 360 - 180);
+      rotation = next;
+      const value = withRotation(element, next);
+      [element, mirror].forEach((node) => node?.style.setProperty('transform', value));
+      setCanvasSize(`${next}°`);
+    };
+    const finish = (commit: boolean) => {
+      window.removeEventListener('pointermove', onMove, true);
+      window.removeEventListener('pointerup', onUp, true);
+      window.removeEventListener('pointercancel', onCancel, true);
+      window.removeEventListener('keydown', onKey, true);
+      canvasBusyRef.current = false;
+      setCanvasSize(null);
+      [element, mirror].forEach((node) => { if (!node) return; if (inline) node.style.setProperty('transform', inline); else node.style.removeProperty('transform'); });
+      if (!commit || !moved || rotation === startRotation) { setEditVersion((current) => current + 1); return; }
+      swallowClickRef.current = true;
+      window.setTimeout(() => { swallowClickRef.current = false; }, 250);
+      applyStyleTo(targetsFor(element), 'transform', withRotation(element, rotation));
+    };
+    const onUp = () => finish(true);
+    const onCancel = () => finish(false);
+    const onKey = (keyEvent: KeyboardEvent) => { if (keyEvent.key === 'Escape') { keyEvent.preventDefault(); keyEvent.stopPropagation(); finish(false); } };
+    window.addEventListener('pointermove', onMove, true);
+    window.addEventListener('pointerup', onUp, true);
+    window.addEventListener('pointercancel', onCancel, true);
+    window.addEventListener('keydown', onKey, true);
+  };
+
+  /**
+   * A press inside the selection. `view` is the node under the pointer's document — the frame twin
+   * when the canvas is the frame — and the edit is recorded against the element in this document
+   * that it stands for. Listeners go on the window the press came from, so the iframe's own
+   * coordinates are used from start to finish.
+   */
+  const startMove = (view: HTMLElement, event: PointerEvent, zoom: number, onUpdate: (() => void) | null) => {
+    if (moveRef.current || resizeRef.current) return;
+    finishTextEdit(true);
+    const path = getUniquePath(view);
+    let element: HTMLElement | null = null;
+    if (view.ownerDocument === document) element = view;
+    else { try { element = document.querySelector<HTMLElement>(path); } catch { element = null; } }
+    if (!element || element.closest(IGNORED_SELECTOR)) element = view;
+    const mirror = view === element ? (deviceDocRef.current?.querySelector<HTMLElement>(path) ?? null) : view;
+    // The rest of a multi-selection travels with the primary, each from its own margins.
+    const twinOf = (node: HTMLElement) => {
+      if (node === element) return mirror === element ? null : mirror;
+      try { return deviceDocRef.current?.querySelector<HTMLElement>(getUniquePath(node)) ?? null; } catch { return null; }
+    };
+    const members = [element, ...targetsFor(element).filter((node) => node !== element)].map((node) => moveMember(node, twinOf(node)));
+    const session = beginMove(element, view, event, zoom, mirror === element ? null : mirror, members, onUpdate);
+    if (session.mode === 'reorder' && session.siblingRects.length < 2) session.mode = 'free';
+    moveRef.current = session;
+    const win = view.ownerDocument.defaultView ?? window;
+    const captureTarget = event.target instanceof Element ? event.target : view;
+    try { captureTarget.setPointerCapture(event.pointerId); } catch { /* Capture is a nicety; the window listeners still run. */ }
+
+    const onMove = (moveEvent: globalThis.PointerEvent) => {
+      const active = moveRef.current;
+      if (!active) return;
+      if (!moveFrame(active, moveEvent)) return;
+      if (!canvasBusyRef.current) { canvasBusyRef.current = true; setCanvasNote(null); }
+      moveEvent.preventDefault();
+      previewMove(active);
+      setGuides(active.guides);
+      if (active.mode === 'free') {
+        const rect = active.element.getBoundingClientRect();
+        setCanvasRect({ top: rect.top, right: rect.right, bottom: rect.bottom, left: rect.left, width: rect.width, height: rect.height });
+      }
+    };
+
+    const finish = (commit: boolean) => {
+      const active = moveRef.current;
+      win.removeEventListener('pointermove', onMove, true);
+      win.removeEventListener('pointerup', onUp, true);
+      win.removeEventListener('pointercancel', onCancel, true);
+      win.removeEventListener('keydown', onKey, true);
+      if (win !== window) window.removeEventListener('pointerup', onUp, true);
+      moveRef.current = null;
+      canvasBusyRef.current = false;
+      setGuides([]);
+      if (!active) return;
+      try { captureTarget.releasePointerCapture(event.pointerId); } catch { /* Already released. */ }
+      rollbackMove(active);
+      if (!active.moved) return;
+      // The click that follows this pointerup is the drag's. If none follows — the pointer was let
+      // go outside the frame — the flag must not lie in wait for the next real click.
+      swallowClickRef.current = true;
+      window.setTimeout(() => { swallowClickRef.current = false; }, 250);
+      setCanvasRect(null);
+      if (!commit) { active.onUpdate?.(); return; }
+      if (active.mode === 'free') {
+        beginHistoryBatch('Move selection');
+        active.members.forEach((member) => {
+          const [x, y] = memberOffsets(member, active.delta);
+          applyStyleTo([member.element], member.offsetProperties[0], x);
+          applyStyleTo([member.element], member.offsetProperties[1], y);
+        });
+        finishHistoryBatch();
+        return;
+      }
+      const insertion = active.insertion;
+      const parent = active.element.parentElement;
+      if (!insertion || !parent || insertion.index === active.currentIndex) { active.onUpdate?.(); return; }
+      // Siblings are addressed by structural path so the drop lands on the same node in this
+      // document as the one the pointer was over in the frame.
+      const doc = active.element.ownerDocument;
+      const remaining = active.siblingPaths.filter((_, index) => index !== active.currentIndex);
+      const referencePath = remaining[insertion.index];
+      let reference: Element | null = null;
+      if (referencePath) { try { reference = doc.querySelector(referencePath); } catch { reference = null; } }
+      if (reference && reference.parentElement !== parent) reference = null;
+      storeOriginal(active.element);
+      const domBefore = captureOriginalState(active.element);
+      parent.insertBefore(active.element, referencePath ? reference : null);
+      recordChange({ element: active.element, selector: getSelector(active.element), property: 'layout:order', before: 'Original order', after: `Moved to position ${insertion.index + 1}`, kind: 'layout', domBefore, domAfter: captureOriginalState(active.element) }, 'Reorder selection');
+      mirrorToDevice([parent], restoreInDevice);
+      refresh(active.element);
+    };
+
+    const onUp = () => finish(true);
+    const onCancel = () => finish(false);
+    const onKey = (keyEvent: KeyboardEvent) => {
+      if (keyEvent.key !== 'Escape') return;
+      keyEvent.preventDefault();
+      keyEvent.stopPropagation();
+      finish(false);
+    };
+
+    win.addEventListener('pointermove', onMove, true);
+    win.addEventListener('pointerup', onUp, true);
+    win.addEventListener('pointercancel', onCancel, true);
+    win.addEventListener('keydown', onKey, true);
+    // Should the frame lose the pointer to the stage around it, the outer window still ends the drag.
+    if (win !== window) window.addEventListener('pointerup', onUp, true);
   };
 
   /** Text retyped inside the device frame, committed against the matching element in this document. */
@@ -4624,24 +5675,190 @@ function HandoffInspectorPanel() {
         setMode('handoff');
         return;
       }
-      if (!canvasEdit || deviceOpen || command || event.altKey || !selectedRef.current || !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
-      event.preventDefault();
-      event.stopPropagation();
-      const step = event.shiftKey ? 10 : 1;
-      const horizontal = event.key === 'ArrowLeft' || event.key === 'ArrowRight';
-      const property = horizontal ? 'margin-left' : 'margin-top';
-      const sign = event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1 : 1;
-      const targets = currentTargets();
-      beginHistoryBatch(`Nudge ${event.key.replace('Arrow', '').toLowerCase()} ${step}px`);
-      targets.forEach((element) => {
-        const current = Number.parseFloat(getComputedStyle(element).getPropertyValue(property)) || 0;
-        applyStyleTo([element], property, `${current + sign * step}px`);
-      });
-      finishHistoryBatch();
+      if (handleCanvasKey(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
     };
     window.addEventListener('keydown', onShortcut, true);
     return () => window.removeEventListener('keydown', onShortcut, true);
   });
+
+  /* Selection commands — the same whether the key was typed over the page or inside the frame. */
+
+  const nudge = (key: string, step: number) => {
+    const horizontal = key === 'ArrowLeft' || key === 'ArrowRight';
+    const sign = key === 'ArrowLeft' || key === 'ArrowUp' ? -1 : 1;
+    const targets = currentTargets();
+    beginHistoryBatch(`Nudge ${key.replace('Arrow', '').toLowerCase()} ${step}px`);
+    targets.forEach((element) => {
+      // A positioned element moves by its offsets; anything in flow moves by its margins.
+      const style = getComputedStyle(element);
+      const positioned = style.position === 'absolute' || style.position === 'fixed';
+      const property = positioned ? (horizontal ? 'left' : 'top') : (horizontal ? 'margin-left' : 'margin-top');
+      const current = Number.parseFloat(style.getPropertyValue(property)) || 0;
+      applyStyleTo([element], property, `${current + sign * step}px`);
+    });
+    finishHistoryBatch();
+  };
+
+  const flip = (axis: 'x' | 'y') => {
+    const element = selectedRef.current;
+    if (!element) return;
+    beginHistoryBatch(axis === 'x' ? 'Flip horizontal' : 'Flip vertical');
+    applyStyleTo(currentTargets(), 'transform', toggleTransformPart(element, axis === 'x' ? 'scaleX(-1)' : 'scaleY(-1)'));
+    finishHistoryBatch();
+  };
+
+  const rotate = (degrees: number) => {
+    const element = selectedRef.current;
+    if (!element) return;
+    applyStyleTo(currentTargets(), 'transform', withRotation(element, Math.round(degrees)));
+  };
+
+  /** `display: none`, recorded like any other edit, so Undo and the layers panel both bring it back. */
+  const hideElements = (targets: HTMLElement[]) => {
+    if (!targets.length) return;
+    beginHistoryBatch('Hide');
+    targets.forEach((element) => {
+      if (getComputedStyle(element).display === 'none') return;
+      hiddenDisplayRef.current.set(element, getComputedStyle(element).display);
+      applyStyleTo([element], 'display', 'none');
+    });
+    finishHistoryBatch();
+  };
+
+  const showElements = (targets: HTMLElement[]) => {
+    if (!targets.length) return;
+    beginHistoryBatch('Show');
+    targets.forEach((element) => {
+      if (getComputedStyle(element).display !== 'none') return;
+      // What it was before it was hidden here; a site-hidden element has no record, so block is the guess.
+      applyStyleTo([element], 'display', hiddenDisplayRef.current.get(element) ?? 'block');
+    });
+    finishHistoryBatch();
+  };
+
+  /** A copy right after the original, selected, as Ctrl+D does in Figma. */
+  const duplicateSelection = () => {
+    const element = selectedRef.current;
+    const parent = element?.parentElement;
+    if (!element || !parent) return;
+    const clone = element.cloneNode(true) as HTMLElement;
+    clone.removeAttribute('data-hi-editing');
+    clone.removeAttribute('contenteditable');
+    parent.insertBefore(clone, element.nextSibling);
+    // A duplicate has no "before" on the page; undo removes it, redo puts it back where it was.
+    recordChange({ element: clone, selector: getSelector(clone), property: 'layout:duplicate', before: 'Not on the page', after: 'Copy inserted after the original', kind: 'layout', domBefore: { ...captureOriginalState(clone), parent: null }, domAfter: captureOriginalState(clone) }, 'Duplicate');
+    mirrorToDevice([parent], restoreInDevice);
+    selectElement(clone);
+  };
+
+  /** The element a structural path names — in this document first, else the framed copy. */
+  const elementForPath = (path: string): HTMLElement | null => {
+    let element: HTMLElement | null = null;
+    try { element = document.querySelector<HTMLElement>(path); } catch { element = null; }
+    if (!element || element.closest(IGNORED_SELECTOR)) {
+      try { element = deviceDocRef.current?.querySelector<HTMLElement>(path) ?? null; } catch { element = null; }
+    }
+    return element && !element.closest(IGNORED_SELECTOR) ? element : null;
+  };
+
+  const toggleLayerHidden = (path: string, hidden: boolean) => {
+    const element = elementForPath(path);
+    if (!element) return;
+    if (hidden) hideElements([element]); else showElements([element]);
+  };
+
+  /* Fill: one type at a time. */
+
+  useEffect(() => { setFillTypeChoice(null); }, [snapshot?.uniquePath]);
+  const fillType: FillType = snapshot
+    ? (fillTypeChoice ?? detectFillType(getComputedStyle(snapshot.element).backgroundImage, getComputedStyle(snapshot.element).backgroundColor))
+    : 'solid';
+
+  /** Switching type clears what the other types put there, so what is shown is what is painted. */
+  const setFillType = (type: FillType) => {
+    if (!snapshot) return;
+    setFillTypeChoice(type);
+    const style = getComputedStyle(snapshot.element);
+    const image = style.backgroundImage;
+    const color = style.backgroundColor;
+    beginHistoryBatch(`Fill: ${type}`);
+    if (type === 'solid') {
+      if (image !== 'none') applyStyle('background-image', 'none');
+      if (colorAlpha(color) === 0) applyStyle('background-color', '#ffffff');
+    } else if (type === 'gradient') {
+      if (!parseGradient(image, resolveColor)) applyStyle('background-image', serializeGradient(defaultGradient(colorAlpha(color) === 0 ? '#7c3cff' : color, resolveColor)));
+    } else if (type === 'image') {
+      if (!backgroundUrl(image) && image !== 'none') applyStyle('background-image', 'none');
+    } else if (type === 'pattern') {
+      if (!isPattern(image)) { const pattern = PATTERN_PRESETS[0]; applyStyle('background-image', pattern.image); applyStyle('background-size', pattern.size); applyStyle('background-position', pattern.position ?? '0 0'); }
+    } else {
+      if (image !== 'none') applyStyle('background-image', 'none');
+      if (colorAlpha(color) !== 0) applyStyle('background-color', 'transparent');
+    }
+    finishHistoryBatch();
+  };
+
+  /* The Position & size and Align sections read and write through these. */
+
+  const parentIsFlexOrGrid = Boolean(snapshot?.element.parentElement && /flex|grid/.test(getComputedStyle(snapshot.element.parentElement).display));
+  const isPositioned = Boolean(snapshot && /^(absolute|fixed)$/.test(getComputedStyle(snapshot.element).position));
+  /** X and Y are the offsets that actually move the element: left/top when positioned, margins otherwise. */
+  const positionProperty = (axis: 'x' | 'y') => (isPositioned ? (axis === 'x' ? 'left' : 'top') : (axis === 'x' ? 'margin-left' : 'margin-top'));
+  const positionValue = (axis: 'x' | 'y') => (snapshot ? Math.round(Number.parseFloat(getComputedStyle(snapshot.element).getPropertyValue(positionProperty(axis))) || 0) : 0);
+
+  /** W and H from the panel; with the ratio locked the other side follows. */
+  const resizeTo = (dimension: 'width' | 'height', value: number) => {
+    if (!snapshot || !Number.isFinite(value) || value <= 0) return;
+    const targets = currentTargets();
+    beginHistoryBatch(`Set ${dimension}`);
+    if (getComputedStyle(snapshot.element).display === 'inline') applyStyleTo(targets, 'display', 'inline-block');
+    applyStyleTo(targets, dimension, `${Math.round(value)}px`);
+    if (ratioLocked && snapshot.rect.width > 0 && snapshot.rect.height > 0) {
+      const ratio = snapshot.rect.width / snapshot.rect.height;
+      applyStyleTo(targets, dimension === 'width' ? 'height' : 'width', `${Math.round(dimension === 'width' ? value / ratio : value * ratio)}px`);
+    }
+    finishHistoryBatch();
+  };
+
+  /**
+   * Align within the parent. Horizontally, auto margins do it in block and flex parents alike;
+   * vertically only a flex or grid parent has a say, through align-self.
+   */
+  const alignSelection = (action: AlignAction) => {
+    if (!snapshot) return;
+    const targets = currentTargets();
+    const style = getComputedStyle(snapshot.element);
+    beginHistoryBatch(`Align ${action}`);
+    if (action === 'left' || action === 'center' || action === 'right') {
+      // An inline box has no margins to push against; give it a block of its own width first.
+      if (/inline/.test(style.display)) { applyStyleTo(targets, 'display', 'block'); applyStyleTo(targets, 'width', 'fit-content'); }
+      applyStyleTo(targets, 'margin-left', action === 'left' ? '0px' : 'auto');
+      applyStyleTo(targets, 'margin-right', action === 'right' ? '0px' : 'auto');
+    } else {
+      const grid = snapshot.element.parentElement ? getComputedStyle(snapshot.element.parentElement).display.includes('grid') : false;
+      const value = action === 'top' ? (grid ? 'start' : 'flex-start') : action === 'middle' ? 'center' : (grid ? 'end' : 'flex-end');
+      applyStyleTo(targets, 'align-self', value);
+    }
+    finishHistoryBatch();
+  };
+
+  /** Returns true when the key was a selection command and has been carried out. */
+  const handleCanvasKey = (event: KeyboardEvent): boolean => {
+    const command = event.metaKey || event.ctrlKey;
+    if (command && event.shiftKey && event.key.toLowerCase() === 'l') { setLayersOpen((current) => !current); return true; }
+    if (!canvasEdit || !selectedRef.current) return false;
+    if (command && !event.shiftKey && !event.altKey && event.key.toLowerCase() === 'd') { duplicateSelection(); return true; }
+    if (!command && !event.altKey && (event.key === 'Delete' || event.key === 'Backspace')) { hideElements(currentTargets()); return true; }
+    if (!command && !event.altKey && event.shiftKey && event.key.toLowerCase() === 'h') { flip('x'); return true; }
+    if (!command && !event.altKey && event.shiftKey && event.key.toLowerCase() === 'v') { flip('y'); return true; }
+    if (!command && !event.altKey && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) { nudge(event.key, event.shiftKey ? 10 : 1); return true; }
+    return false;
+  };
+  canvasKeyRef.current = handleCanvasKey;
+  canvasMoveRef.current = startMove;
 
   const restoreOriginal = (original: OriginalState) => {
     restoreCapturedState(original);
@@ -4658,10 +5875,21 @@ function HandoffInspectorPanel() {
     }
   };
 
+  /** Duplicates have no original to restore; a reset simply takes them off the page. */
+  const removeDuplicates = (entries: readonly DesignChange[]) => {
+    entries.forEach((change) => {
+      if (change.property !== 'layout:duplicate') return;
+      const parent = change.element.parentElement;
+      change.element.remove();
+      if (parent) mirrorToDevice([parent], restoreInDevice);
+    });
+  };
+
   const resetElement = () => {
     if (!snapshot) return;
     const targets = currentTargets();
     const layoutTargets = new Set(changesRef.current.filter((change) => change.kind === 'layout' && targets.includes(change.element)).map((change) => change.element));
+    removeDuplicates(changesRef.current.filter((change) => targets.includes(change.element)));
     targets.forEach((element) => { const original = originalsRef.current.get(element); if (original) { restoreOriginal(original); originalsRef.current.delete(element); } });
     undoStackRef.current = undoStackRef.current
       .map((entry) => ({ ...entry, changes: entry.changes.filter((change) => !targets.includes(change.element)) }))
@@ -4690,6 +5918,7 @@ function HandoffInspectorPanel() {
   const resetAll = () => {
     const touched = Array.from(originalsRef.current.keys());
     const layoutTargets = new Set(changesRef.current.filter((change) => change.kind === 'layout').map((change) => change.element));
+    removeDuplicates(changesRef.current);
     originalsRef.current.forEach(restoreOriginal);
     originalsRef.current.clear();
     tokenVariableOriginalsRef.current.forEach((_, name) => restoreTokenVariable(name));
@@ -4859,6 +6088,13 @@ function HandoffInspectorPanel() {
   );
 
   const liveStyle = snapshot ? getComputedStyle(snapshot.element) : null;
+  // The layers panel's hover, drawn on the live page; the frame draws its own from the same path.
+  const layerHoverRect = (() => {
+    if (deviceOpen || !layerHoverPath) return null;
+    let node: HTMLElement | null = null;
+    try { node = document.querySelector<HTMLElement>(layerHoverPath); } catch { node = null; }
+    return node && !node.closest(IGNORED_SELECTOR) ? snapRectOf(node) : null;
+  })();
   // Only the selected node and its nearest useful ancestors belong in the narrow header.
   const breadcrumbNodes = snapshot
     ? [snapshot.element.parentElement?.parentElement, snapshot.element.parentElement, snapshot.element].filter((node): node is HTMLElement => Boolean(node && node !== document.body && node !== document.documentElement))
@@ -4902,6 +6138,17 @@ function HandoffInspectorPanel() {
       onDelete={removeComment}
     />}
     {open && <>
+      {open && layersOpen && mode !== 'handoff' && <LayersPanel
+        root={deviceOpen ? deviceDocument : document}
+        side={dock === 'left' ? 'right' : 'left'}
+        selectedPath={snapshot?.uniquePath ?? null}
+        editVersion={editVersion}
+        onHover={setLayerHoverPath}
+        onSelect={(path) => { if (!selectFromDevice(path)) setToast({ id: Date.now(), label: 'That element could not be selected.' }); }}
+        onToggleHidden={toggleLayerHidden}
+        onClose={() => setLayersOpen(false)}
+      />}
+      {!deviceOpen && layerHoverRect && <SelectionChrome rect={layerHoverRect} className="hi-selection is-live is-hovered" />}
       {deviceMounted && <DeviceOverlay
         presetId={devicePreset}
         orientation={deviceOrientation}
@@ -4910,13 +6157,20 @@ function HandoffInspectorPanel() {
         snapshot={snapshot}
         dock={dock}
         hidden={!deviceOpen}
+        layers={layersOpen}
         editVersion={editVersion}
         comments={comments}
         tool={canvasTool}
         canvasEdit={canvasEdit}
         canvasSize={canvasSize}
         canvasBusyRef={canvasBusyRef}
+        swallowClickRef={swallowClickRef}
+        guides={guides}
+        hoverPath={layerHoverPath}
         onCanvasResize={(direction, event, scale, onUpdate) => { if (snapshot) startResize(snapshot.element, direction, event, scale, onUpdate); }}
+        onCanvasRotate={(event) => { if (snapshot) startRotate(snapshot.element, event); }}
+        onCanvasMove={onCanvasMove}
+        onCanvasKey={onCanvasKey}
         onCanvasText={applyTextFromDevice}
         onFrameDocument={registerDeviceDocument}
         onSelectPath={selectFromDevice}
@@ -4926,12 +6180,13 @@ function HandoffInspectorPanel() {
         onRedo={redoHistory}
         onNotice={(label) => setToast({ id: Date.now(), label })}
       />}
+      {!deviceOpen && <GuideLayer guides={measureGuides.length ? [...guides, ...measureGuides] : guides} live />}
       {!deviceOpen && mode !== 'handoff' && parentRect && <div className="hi-selection-parent" style={{ top: parentRect.top, left: parentRect.left, width: parentRect.width, height: parentRect.height }} />}
       {!deviceOpen && mode !== 'handoff' && locked && liveSelection.filter((element) => element.ownerDocument === document && element !== overlaySnapshot?.element).map((element) => {
         const rect = element.getBoundingClientRect();
         return <div key={getUniquePath(element)} className="hi-selection hi-selection--peer is-locked" style={{ top: rect.top, left: rect.left, width: rect.width, height: rect.height }} />;
       })}
-      {!deviceOpen && mode !== 'handoff' && overlaySnapshot && overlayRect && <SelectionChrome rect={overlayRect} className={`hi-selection is-live ${locked ? 'is-locked' : ''} ${canvasSize ? 'is-resizing' : ''}`} label={`${liveSelection.length > 1 ? `${liveSelection.length} layers · ` : ''}${round(overlayRect.width)} × ${round(overlayRect.height)}`} handles={canvasHandlesVisible ? <CanvasHandles size={null} onStart={(direction, event) => startResize(overlaySnapshot.element, direction, event, 1, null)} /> : null}>
+      {!deviceOpen && mode !== 'handoff' && overlaySnapshot && overlayRect && <SelectionChrome rect={overlayRect} className={`hi-selection is-live ${locked ? 'is-locked' : ''} ${canvasSize ? 'is-resizing' : ''}`} label={`${liveSelection.length > 1 ? `${liveSelection.length} layers · ` : ''}${round(overlayRect.width)} × ${round(overlayRect.height)}`} handles={canvasHandlesVisible ? <CanvasHandles size={null} onStart={(direction, event) => startResize(overlaySnapshot.element, direction, event, 1, null)} onRotateStart={(event) => startRotate(overlaySnapshot.element, event)} /> : null}>
         {/* Offered right where the selection is, so commenting is one click from picking rather
             than a hunt down the panel — but only in the tab where commenting is the job. */}
         {locked && commentMode && <button
@@ -4941,7 +6196,7 @@ function HandoffInspectorPanel() {
         ><MessageSquare size={11} />{selectedCommentCount || 'Comment'}</button>}
       </SelectionChrome>}
       {!deviceOpen && mode !== 'handoff' && locked && !canvasSize && overlaySnapshot && <div className="hi-measurements">{SIDES.map((side) => overlaySnapshot.siblingDistances[side] !== undefined ? <span key={side} className={`hi-measure hi-measure-${side}`} style={{ top: side === 'top' ? overlaySnapshot.rect.top - 22 : side === 'bottom' ? overlaySnapshot.rect.bottom + 6 : overlaySnapshot.rect.top + overlaySnapshot.rect.height / 2, left: side === 'left' ? overlaySnapshot.rect.left - 42 : side === 'right' ? overlaySnapshot.rect.right + 7 : overlaySnapshot.rect.left + overlaySnapshot.rect.width / 2 }}>{overlaySnapshot.siblingDistances[side]}px</span> : null)}</div>}
-      <nav className={`hi-canvas-toolbar ${deviceOpen ? 'is-device' : ''} hi-canvas-toolbar--${dock}`} aria-label="Canvas tools">
+      <nav className={`hi-canvas-toolbar ${deviceOpen ? 'is-device' : ''} hi-canvas-toolbar--${dock} ${layersOpen ? 'has-layers' : ''}`} aria-label="Canvas tools">
         <button className={canvasTool === 'move' && mode === 'design' ? 'is-active' : ''} aria-pressed={canvasTool === 'move' && mode === 'design'} title="Design — select and edit (V)" onClick={() => { setCanvasTool('move'); setMode('design'); }}><PenTool size={16} /><span>Design</span><kbd>V</kbd></button>
         <button className={canvasTool === 'comment' && mode === 'comment' ? 'is-active' : ''} aria-pressed={canvasTool === 'comment' && mode === 'comment'} title="Comment (C)" onClick={() => { setCanvasTool('comment'); setMode('comment'); }}><MessageSquare size={16} /><span>Comment</span><kbd>C</kbd></button>
         <button className={canvasTool === 'hand' ? 'is-active' : ''} aria-pressed={canvasTool === 'hand'} title="Interact — use the page as a visitor, drag to pan (I / hold Space)" onClick={() => setCanvasTool('hand')}><MousePointerClick size={16} /><span>Interact</span><kbd>I</kbd></button>
@@ -4974,6 +6229,7 @@ function HandoffInspectorPanel() {
               <button onClick={() => setDock(dock === 'left' ? 'right' : 'left')}>{dock === 'left' ? <PanelRight size={14} /> : <PanelLeft size={14} />}Dock {dock === 'left' ? 'right' : 'left'}</button>
               {hasSecondCollection && <button onClick={() => setSecondaryCollectionActive((current) => !current)}><Component size={14} />{secondaryCollectionActive ? designTokens.collections[0]?.name : designTokens.collections[1]?.name}</button>}
               {hubAvailable() && <button onClick={() => (window as HubHost).__merakiInspectorHub?.()}><Settings size={14} />Settings</button>}
+              <button onClick={() => setLayersOpen((current) => !current)}><Layers size={14} />{layersOpen ? 'Hide layers' : 'Show layers'}<kbd>Ctrl+Shift+L</kbd></button>
               {deviceOpen ? <button onClick={() => setDeviceOpen(false)}><ExternalLink size={14} />Live page</button> : <button onClick={() => openDevice('desktop')}><Monitor size={14} />Device canvas</button>}
               {locked && <button onClick={unlock}><Unlock size={14} />Clear selection</button>}
               <button onClick={() => setOpen(false)}><X size={14} />Close</button>
@@ -5077,44 +6333,106 @@ function HandoffInspectorPanel() {
                   ><span>{comment.label}</span><small>{comment.text}</small></button>)}
                 </div>}
               </ToolSection>}
-              {mode === 'design' && <>{['text', 'button', 'link', 'input'].includes(snapshot.kind) && <ToolSection title="Content" icon={Type}><label className="hi-control hi-control-stack"><span>{snapshot.kind === 'input' ? 'Value' : 'Text'}</span><DraftTextArea key={snapshot.uniquePath} ariaLabel={snapshot.kind === 'input' ? 'Value' : 'Text'} value={snapshot.rawText} onChange={applyText} /></label>{snapshot.hasMarkup && <p className="hi-empty-note hi-content-warning"><CircleAlert size={13} />This element wraps markup (line breaks, nested spans). Editing the text here replaces all of it with plain text.</p>}{snapshot.kind === 'link' && <label className="hi-control"><span>Link</span><input defaultValue={snapshot.attributes.href || ''} onBlur={(event) => applyAttribute('href', event.target.value)} /></label>}{snapshot.kind === 'input' && <><label className="hi-control"><span>Placeholder</span><input defaultValue={snapshot.attributes.placeholder || ''} onBlur={(event) => applyAttribute('placeholder', event.target.value)} /></label><label className="hi-control"><span>ARIA label</span><input defaultValue={snapshot.attributes['aria-label'] || ''} onBlur={(event) => applyAttribute('aria-label', event.target.value)} /></label></>}</ToolSection>}
-              {/* The properties you edit while designing stay open; checks and audits below are opened on demand. */}
-              {['text', 'button', 'link', 'input'].includes(snapshot.kind) && <ToolSection title="Typography" icon={Type}>
+              {mode === 'design' && <>
+              {/* The panel in Figma's shape: what applies to the selection is shown, what does not is not. */}
+              <div className="hi-align-row" role="toolbar" aria-label="Align">
+                {ALIGN_ROW_ACTIONS.map(({ id, label, Icon }) => {
+                  const vertical = id === 'top' || id === 'middle' || id === 'bottom';
+                  const disabled = vertical && !parentIsFlexOrGrid;
+                  return <button key={id} title={disabled ? `${label} — needs a flex or grid parent` : label} aria-label={label} disabled={disabled} onClick={() => alignSelection(id)}><Icon size={14} /></button>;
+                })}
+              </div>
+              <ToolSection title="Position & size" icon={Move}>
+                <div className="hi-control-pair">
+                  <NumberField label="X" value={positionValue('x')} onChange={(value) => applyStyle(positionProperty('x'), value)} />
+                  <NumberField label="Y" value={positionValue('y')} onChange={(value) => applyStyle(positionProperty('y'), value)} />
+                </div>
+                <div className="hi-control-pair hi-control-pair--lock">
+                  <NumberField label="W" value={round(snapshot.rect.width)} min={1} onChange={(value) => resizeTo('width', Number(value))} />
+                  <button className={`hi-ratio-lock ${ratioLocked ? 'is-active' : ''}`} title={ratioLocked ? 'Unlock proportions' : 'Lock proportions'} aria-pressed={ratioLocked} onClick={() => setRatioLocked((locked) => !locked)}>{ratioLocked ? <Link2 size={12} /> : <Unlink size={12} />}</button>
+                  <NumberField label="H" value={round(snapshot.rect.height)} min={1} onChange={(value) => resizeTo('height', Number(value))} />
+                </div>
+                <div className="hi-control-pair">
+                  <NumberField label="Rotate" value={readRotation(snapshot.element)} step={1} suffix="°" onChange={(value) => rotate(Number.parseFloat(value) || 0)} />
+                  <div className="hi-segmented hi-segmented--flip" aria-label="Flip">
+                    <button title="Flip horizontal (Shift+H)" aria-label="Flip horizontal" aria-pressed={isFlipped(snapshot.element, 'x')} className={isFlipped(snapshot.element, 'x') ? 'is-active' : ''} onClick={() => flip('x')}><FlipHorizontal2 size={14} /></button>
+                    <button title="Flip vertical (Shift+V)" aria-label="Flip vertical" aria-pressed={isFlipped(snapshot.element, 'y')} className={isFlipped(snapshot.element, 'y') ? 'is-active' : ''} onClick={() => flip('y')}><FlipVertical2 size={14} /></button>
+                  </div>
+                </div>
+                <div className="hi-segmented hi-segmented--display" aria-label="Display">
+                  {DISPLAY_MODES.map(({ value, label }) => <button key={value} title={value === 'none' ? 'Hidden' : label} aria-pressed={snapshot.styles.display === value} className={snapshot.styles.display === value ? 'is-active' : ''} onClick={() => applyStyle('display', value)}>{value === 'none' ? 'hidden' : label}</button>)}
+                </div>
+                <BoxSidesField label="Margin" property="margin" element={snapshot.element} onChange={applyStyle} />
+                <div className="hi-reorder"><button onClick={() => reorder(-1)}><ArrowLeft size={13} /><ArrowUp size={13} />Earlier</button><button onClick={() => reorder(1)}>Later<ArrowDown size={13} /><ArrowRight size={13} /></button></div>
+                <div className="hi-reorder"><button title="Duplicate (Ctrl+D)" onClick={duplicateSelection}><Copy size={13} />Duplicate</button><button title="Hide (Delete) · the layers panel or Undo brings it back" onClick={() => hideElements(currentTargets())}><EyeOff size={13} />Hide</button></div>
+              </ToolSection>
+              {(snapshot.styles.display.includes('flex') || snapshot.styles.display.includes('grid')) && <ToolSection title="Auto layout" icon={Layers3}>
+                {snapshot.styles.display.includes('flex') && <div className="hi-control"><span>Direction</span><div className="hi-segmented" aria-label="Direction">{FLEX_DIRECTION_ICONS.map(({ value, label, Icon }) => <button key={value} title={label} aria-label={label} aria-pressed={snapshot.styles['flex-direction'] === value} className={snapshot.styles['flex-direction'] === value ? 'is-active' : ''} onClick={() => applyStyle('flex-direction', value)}><Icon size={14} /></button>)}</div></div>}
+                {snapshot.styles.display.includes('grid') && <label className="hi-control"><span>Columns</span><input defaultValue={snapshot.styles['grid-template-columns']} onBlur={(event) => applyStyle('grid-template-columns', event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') applyStyle('grid-template-columns', event.currentTarget.value); }} /></label>}
+                <div className="hi-control-pair">
+                  <NumberField label="Gap" value={liveStyle?.gap ?? 0} min={0} onChange={(value) => applyStyle('gap', value)} />
+                  {snapshot.styles.display.includes('flex') && <label className="hi-control hi-control--check"><span>Wrap</span><input type="checkbox" checked={liveStyle?.flexWrap === 'wrap'} onChange={(event) => applyStyle('flex-wrap', event.target.checked ? 'wrap' : 'nowrap')} /></label>}
+                </div>
+                <div className="hi-control">
+                  <span>Align</span>
+                  <div className="hi-align-grid" role="grid" aria-label="Alignment">
+                    {AUTO_LAYOUT_GRID.map((row) => AUTO_LAYOUT_GRID.map((column) => {
+                      const on = normalizeAlign(liveStyle?.alignItems ?? '') === row && normalizeAlign(liveStyle?.justifyContent ?? '') === column;
+                      return <button key={`${row}-${column}`} role="gridcell" aria-label={`${column} ${row}`} aria-pressed={on} className={on ? 'is-active' : ''} onClick={() => { beginHistoryBatch('Align items'); applyStyle('align-items', row); applyStyle('justify-content', column); finishHistoryBatch(); }}><i /></button>;
+                    }))}
+                  </div>
+                </div>
+                <div className="hi-control"><span>Distribute</span><SelectField label="Distribute" compact value={liveStyle?.justifyContent ?? 'flex-start'} options={JUSTIFY_CONTENT} onChange={(value) => applyStyle('justify-content', value)} /></div>
+                <BoxSidesField label="Padding" property="padding" element={snapshot.element} onChange={applyStyle} />
+              </ToolSection>}
+              {!(snapshot.styles.display.includes('flex') || snapshot.styles.display.includes('grid')) && <ToolSection title="Padding" icon={Square} defaultOpen={false}>
+                <BoxSidesField label="Padding" property="padding" element={snapshot.element} onChange={applyStyle} />
+              </ToolSection>}
+              <ToolSection title="Fill" icon={PaintBucket}>
+                {/* One kind of fill at a time, as a Figma fill has a type — a colour under a gradient under a picture is not a choice anyone makes on purpose. */}
+                <div className="hi-segmented hi-fill-types" role="tablist" aria-label="Fill type">
+                  {FILL_TYPES.map((type) => <button key={type.value} role="tab" aria-selected={fillType === type.value} className={fillType === type.value ? 'is-active' : ''} onClick={() => setFillType(type.value)}>{type.label}</button>)}
+                </div>
+                {fillType === 'solid' && <ColorField label="Colour" value={liveStyle?.backgroundColor ?? snapshot.styles.background} tokens={colorTokens} onChange={(value) => applyStyle('background-color', value)} />}
+                {fillType === 'none' && <p className="hi-empty-note">No fill — the element shows what is behind it.</p>}
+                {(fillType === 'gradient' || fillType === 'image' || fillType === 'pattern') && <BackgroundField mode={fillType} image={liveStyle?.backgroundImage ?? 'none'} size={liveStyle?.backgroundSize ?? 'auto'} position={liveStyle?.backgroundPosition ?? 'center'} repeat={liveStyle?.backgroundRepeat ?? 'repeat'} fill={liveStyle?.backgroundColor ?? snapshot.styles.background} tokens={colorTokens} onChange={applyStyle} onBatch={(label, apply) => { beginHistoryBatch(label); apply(); finishHistoryBatch(); }} />}
+                {(fillType === 'gradient' || fillType === 'image' || fillType === 'pattern') && <ColorField label="Behind it" value={liveStyle?.backgroundColor ?? snapshot.styles.background} tokens={colorTokens} onChange={(value) => applyStyle('background-color', value)} />}
+                {snapshot.kind === 'image' && <NumberField label="Image opacity" value={cssNumber(snapshot.styles.opacity, 1) * 100} min={0} max={100} suffix="%" onChange={(value) => applyStyle('opacity', String(Number(value) / 100))} />}
+              </ToolSection>
+              <ToolSection title="Stroke" icon={Square} defaultOpen={Boolean(liveStyle && Number.parseFloat(liveStyle.borderWidth) > 0 && liveStyle.borderStyle !== 'none')}>
+                <ColorField label="Colour" value={liveStyle?.borderColor ?? snapshot.styles.border} tokens={colorTokens} onChange={(value) => applyStyle('border-color', value)} />
+                <div className="hi-control-pair"><NumberField label="Width" value={liveStyle?.borderWidth ?? 0} min={0} onChange={(value) => { beginHistoryBatch('Set stroke'); applyStyle('border-width', value); if ((liveStyle?.borderStyle ?? 'none') === 'none' && Number(value) > 0) applyStyle('border-style', 'solid'); finishHistoryBatch(); }} /><SelectField label="Style" compact value={liveStyle?.borderStyle ?? 'solid'} options={BORDER_STYLES} onChange={(value) => applyStyle('border-style', value)} /></div>
+              </ToolSection>
+              <ToolSection title="Effects" icon={Sparkles}>
+                <SelectField label="Shadow" value={snapshot.styles['box-shadow']} options={shadowOptions(snapshot.styles['box-shadow'])} onChange={(value) => applyStyle('box-shadow', value)} />
+                <div className="hi-control-pair">
+                  <NumberField label="Radius" value={snapshot.styles['border-radius']} min={0} onChange={(value) => applyStyle('border-radius', value)} />
+                  <NumberField label="Opacity" value={cssNumber(snapshot.styles.opacity, 1) * 100} min={0} max={100} suffix="%" onChange={(value) => applyStyle('opacity', String(Number(value) / 100))} />
+                </div>
+                <div className="hi-control-pair">
+                  <NumberField label="Layer blur" value={readFilterPart(snapshot.element, 'filter', 'blur')} min={0} onChange={(value) => applyStyle('filter', withFilterPart(snapshot.element, 'filter', 'blur', Number(value) > 0 ? `${Number(value)}px` : null))} />
+                  <NumberField label="Backdrop blur" value={readFilterPart(snapshot.element, 'backdrop-filter', 'blur')} min={0} onChange={(value) => applyStyle('backdrop-filter', withFilterPart(snapshot.element, 'backdrop-filter', 'blur', Number(value) > 0 ? `${Number(value)}px` : null))} />
+                </div>
+                <div className="hi-control-pair">
+                  <NumberField label="Brightness" value={Math.round((readFilterPart(snapshot.element, 'filter', 'brightness') || 1) * 100)} min={0} max={300} suffix="%" onChange={(value) => applyStyle('filter', withFilterPart(snapshot.element, 'filter', 'brightness', Number(value) === 100 ? null : `${Number(value) / 100}`))} />
+                  <NumberField label="Saturate" value={Math.round((readFilterPart(snapshot.element, 'filter', 'saturate') || 1) * 100)} min={0} max={300} suffix="%" onChange={(value) => applyStyle('filter', withFilterPart(snapshot.element, 'filter', 'saturate', Number(value) === 100 ? null : `${Number(value) / 100}`))} />
+                </div>
+                <label className="hi-control"><span>Filter</span><input value={snapshot.styles.filter} onChange={(event) => applyStyle('filter', event.target.value)} /></label>
+                <label className="hi-control"><span>Transform</span><input value={snapshot.styles.transform} onChange={(event) => applyStyle('transform', event.target.value)} /></label>
+              </ToolSection>
+              {['text', 'button', 'link', 'input'].includes(snapshot.kind) && <ToolSection title="Text" icon={Type}>
                 <FontField label="Font" value={snapshot.styles['font-family']} projectFonts={pageFonts} onChange={(value) => applyStyle('font-family', value)} />
                 <div className="hi-control-pair"><SizeField label="Size" compact value={snapshot.styles['font-size']} presets={FONT_SIZES} onChange={(value) => applyStyle('font-size', value)} /><SelectField label="Weight" compact value={String(cssNumber(snapshot.styles['font-weight'], 400))} options={FONT_WEIGHTS} onChange={(value) => applyStyle('font-weight', value)} /></div>
                 <div className="hi-control-pair"><NumberField label="Line" value={snapshot.styles['line-height']} onChange={(value) => applyStyle('line-height', value)} /><NumberField label="Track" value={snapshot.styles['letter-spacing']} step={0.1} onChange={(value) => applyStyle('letter-spacing', value)} /></div>
                 <div className="hi-segmented" aria-label="Text alignment">{TEXT_ALIGNMENTS.map(({ value, label, Icon }) => <button key={value} title={label} aria-label={label} className={snapshot.styles['text-align'] === value ? 'is-active' : ''} onClick={() => applyStyle('text-align', value)}><Icon size={14} /></button>)}</div>
+                <ColorField label="Colour" value={liveStyle?.color ?? snapshot.styles.color} tokens={colorTokens} onChange={(value) => applyStyle('color', value)} />
                 <div className="hi-type-presets">{typePresets.map((recipe) => <button key={recipe.label} onClick={() => recipe.css.split(';').filter(Boolean).forEach((part) => { const [property, ...value] = part.split(':'); applyStyle(property.trim(), value.join(':').trim()); })}>{recipe.label}</button>)}</div>
+                <label className="hi-control hi-control-stack"><span>{snapshot.kind === 'input' ? 'Value' : 'Content'}</span><DraftTextArea key={snapshot.uniquePath} ariaLabel={snapshot.kind === 'input' ? 'Value' : 'Text'} value={snapshot.rawText} onChange={applyText} /></label>
+                {snapshot.hasMarkup && <p className="hi-empty-note hi-content-warning"><CircleAlert size={13} />This element wraps markup (line breaks, nested spans). Editing the text here replaces all of it with plain text.</p>}
+                {snapshot.kind === 'link' && <label className="hi-control"><span>Link</span><input defaultValue={snapshot.attributes.href || ''} onBlur={(event) => applyAttribute('href', event.target.value)} /></label>}
+                {snapshot.kind === 'input' && <><label className="hi-control"><span>Placeholder</span><input defaultValue={snapshot.attributes.placeholder || ''} onBlur={(event) => applyAttribute('placeholder', event.target.value)} /></label><label className="hi-control"><span>ARIA label</span><input defaultValue={snapshot.attributes['aria-label'] || ''} onBlur={(event) => applyAttribute('aria-label', event.target.value)} /></label></>}
               </ToolSection>}
-              <ToolSection title="Fill & stroke" icon={Palette}>
-                <ColorTabsField
-                  tokens={colorTokens}
-                  channels={[
-                    { id: 'fill', label: 'Fill', icon: PaintBucket, value: snapshot.styles.background, onChange: (value) => applyStyle('background-color', value) },
-                    ...(['text', 'button', 'link', 'input'].includes(snapshot.kind)
-                      ? [{ id: 'text', label: 'Text', icon: Type, value: snapshot.styles.color, onChange: (value: string) => applyStyle('color', value) }]
-                      : []),
-                    { id: 'stroke', label: 'Stroke', icon: Square, value: liveStyle?.borderColor ?? snapshot.styles.border, onChange: (value) => applyStyle('border-color', value) },
-                  ]}
-                />
-                <div className="hi-control-pair"><NumberField label="Stroke" value={liveStyle?.borderWidth ?? 0} min={0} onChange={(value) => applyStyle('border-width', value)} /><SelectField label="Style" compact value={liveStyle?.borderStyle ?? 'solid'} options={BORDER_STYLES} onChange={(value) => applyStyle('border-style', value)} /></div>
-                <NumberField label="Corner radius" value={snapshot.styles['border-radius']} min={0} onChange={(value) => applyStyle('border-radius', value)} />
-                <NumberField label="Opacity" value={cssNumber(snapshot.styles.opacity, 1) * 100} min={0} max={100} suffix="%" onChange={(value) => applyStyle('opacity', String(Number(value) / 100))} />
-              </ToolSection>
-              <ToolSection title="Layout" icon={Layers3}>
-                <SelectField label="Display" value={snapshot.styles.display} options={DISPLAY_MODES} onChange={(value) => applyStyle('display', value)} />
-                <div className="hi-control-pair"><NumberField label="W" value={snapshot.rect.width} onChange={(value) => applyStyle('width', value)} /><NumberField label="H" value={snapshot.rect.height} onChange={(value) => applyStyle('height', value)} /></div>
-                {snapshot.styles.display.includes('flex') && <><SelectField label="Direction" value={snapshot.styles['flex-direction']} options={FLEX_DIRECTIONS} onChange={(value) => applyStyle('flex-direction', value)} /><SelectField label="Align items" value={snapshot.styles['align-items']} options={ALIGN_ITEMS} onChange={(value) => applyStyle('align-items', value)} /><SelectField label="Justify" value={snapshot.styles['justify-content']} options={JUSTIFY_CONTENT} onChange={(value) => applyStyle('justify-content', value)} /></>}
-                <NumberField label="Gap" value={liveStyle?.gap ?? 0} onChange={(value) => applyStyle('gap', value)} />
-                <BoxSidesField label="Padding" property="padding" element={snapshot.element} onChange={applyStyle} />
-                <BoxSidesField label="Margin" property="margin" element={snapshot.element} onChange={applyStyle} />
-                <div className="hi-reorder"><button onClick={() => reorder(-1)}><ArrowLeft size={13} /><ArrowUp size={13} />Earlier</button><button onClick={() => reorder(1)}>Later<ArrowDown size={13} /><ArrowRight size={13} /></button></div>
-              </ToolSection>
-              <ToolSection title="Effects" icon={Sparkles}>
-                <SelectField label="Shadow" value={snapshot.styles['box-shadow']} options={shadowOptions(snapshot.styles['box-shadow'])} onChange={(value) => applyStyle('box-shadow', value)} />
-                <label className="hi-control"><span>Filter</span><input value={snapshot.styles.filter} onChange={(event) => applyStyle('filter', event.target.value)} /></label>
-                <label className="hi-control"><span>Transform</span><input value={snapshot.styles.transform} onChange={(event) => applyStyle('transform', event.target.value)} /></label>
-              </ToolSection></>}
+              </>}
               {mode === 'design' && deviceOpen && <ToolSection title="Responsive" icon={Monitor} defaultOpen={false} badge={responsiveIssueCount ? { text: String(responsiveIssueCount), tone: 'alert' } : undefined}><ResponsivePanel presetId={devicePreset} snapshot={snapshot} frameDocument={deviceDocument} editVersion={editVersion} onPresetChange={setDevicePreset} onReplay={replayIntoDevice} /></ToolSection>}
               {mode === 'design' && <>{snapshot.assets.length > 0 && <ToolSection title={`Assets · ${snapshot.assets.length}`} icon={ImageIcon} defaultOpen={false}><div className="hi-design-assets">{snapshot.assets.map((asset) => <article key={asset.id}><div className="hi-asset-head"><img src={asset.src} alt="" /><span><strong>{asset.label}</strong><small>{asset.type} · {asset.id}</small></span><div className="hi-asset-actions"><a href={asset.src} download={`${asset.id}.${asset.type === 'svg' ? 'svg' : 'png'}`} title="Download asset" aria-label={`Download ${asset.label}`}><Download size={14} /></a><button className="is-danger" title="Remove from canvas · Undo restores it" aria-label={`Remove ${asset.label}`} onClick={() => removeAsset(asset)}><Trash2 size={14} /></button></div></div><label><span>Replace by URL</span><input placeholder="https://…" onKeyDown={(event) => { if (event.key === 'Enter') applyAsset(asset, event.currentTarget.value, 'URL replacement'); }} /></label><label className="hi-upload"><input type="file" accept="image/*,.svg" onChange={(event) => onAssetFile(asset, event.target.files?.[0])} />Upload image or SVG</label>{asset.type === 'svg' && <div className="hi-icon-library">{ICON_LIBRARY.map((icon) => <button key={icon.label} title={icon.label} onClick={() => applyAsset(asset, icon.svg, `${icon.label} icon`)} dangerouslySetInnerHTML={{ __html: icon.svg }} />)}</div>}</article>)}</div></ToolSection>}
               <ToolSection title="Component states · 6" icon={MousePointer2} defaultOpen={false}>
