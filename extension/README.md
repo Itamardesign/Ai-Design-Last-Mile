@@ -43,6 +43,28 @@ Everything the package does, the extension does: click any element to select it,
 typography, fill and layout, preview the page at real device sizes, run the accessibility checks,
 leave notes, and copy your changes out as CSS or as written handoff instructions.
 
+### On the canvas
+
+The selection is edited by hand, with Figma's gestures and keys where the DOM has the same meaning.
+
+| | |
+|---|---|
+| **Drag** | Moves the selection. Inside a flex or grid parent it *reorders* — a blue line shows where it will land. Anywhere else it moves freely by its margins; a positioned element moves by `left`/`top` |
+| **`Alt` + drag** | Free move even inside a flex row |
+| **`Shift` + drag** | Snapping off |
+| **Red guides** | The box is snapping to a sibling's edge or centre, or the parent's centre. Pink ticks with a number: the gaps either side have come out equal |
+| **Handles** | Resize. `Shift` keeps the ratio, `Alt` resizes from the centre |
+| **Arrows / `Shift` + arrows** | Nudge 1px / 10px |
+| **`Shift` `H` / `Shift` `V`** | Flip horizontal / vertical |
+| **`Ctrl` `D`** | Duplicate — a copy after the original, selected |
+| **`Delete`** | Hide. The layers panel, or Undo, brings it back |
+| **`Ctrl` `Z` / `Ctrl` `Shift` `Z`** | Undo / redo, including moves, flips and duplicates |
+| **`Ctrl` `Shift` `L`** | The **Layers** column: the page as a tree. Hover outlines, click selects, the chevron unfolds, the eye hides or shows |
+| **Click inside a selected group** | Keeps the group selected, so any part of it can be dragged. `Ctrl` + click or double-click reaches the child |
+
+The Layout section has the same actions as buttons — rotate, flip, duplicate, hide — and Fill &
+stroke takes a background image by URL or upload, with fit and alignment, or a gradient.
+
 ### The Handoff tab
 
 The third tab is the document the session produces, arranged the way the person receiving it reads:

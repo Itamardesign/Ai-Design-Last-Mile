@@ -2848,6 +2848,150 @@ function isFlipped(element: HTMLElement, axis: 'x' | 'y') {
   return transformParts(element).includes(axis === 'x' ? 'scaleX(-1)' : 'scaleY(-1)');
 }
 
+/* Layers — the page as a tree, the way Figma lists what is on the canvas. */
+
+/** Tags that render nothing and would only be noise in the tree. */
+const LAYER_SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'LINK', 'META', 'TITLE', 'HEAD', 'BR', 'WBR']);
+/** Past this many rows the tree is a list of everything; nothing is gained by drawing more. */
+const MAX_LAYER_ROWS = 2000;
+
+type LayerRow = {
+  path: string;
+  element: HTMLElement;
+  depth: number;
+  hasChildren: boolean;
+  expanded: boolean;
+  hidden: boolean;
+  label: string;
+  detail: string;
+  kind: ElementKind;
+};
+
+function layerChildren(element: Element): HTMLElement[] {
+  return Array.from(element.children).filter((child): child is HTMLElement => isElementNode(child) && !LAYER_SKIP_TAGS.has(child.tagName) && !child.matches(IGNORED_SELECTOR));
+}
+
+/** What to call a row: an id, the first class, or the tag — with a snippet of text where there is some. */
+function layerLabel(element: HTMLElement) {
+  const tag = element.tagName.toLowerCase();
+  const name = element.id ? `#${element.id}` : element.classList[0] ? `.${element.classList[0]}` : '';
+  const own = Array.from(element.childNodes).filter((node) => node.nodeType === 3).map((node) => node.textContent ?? '').join(' ');
+  const text = normalizeText(own || (element.children.length === 0 ? element.textContent ?? '' : ''));
+  const attribute = element instanceof HTMLImageElement ? element.alt : element instanceof HTMLInputElement ? element.placeholder || element.value : '';
+  return { label: `${tag}${name}`, detail: text ? `“${text.slice(0, 40)}${text.length > 40 ? '…' : ''}”` : attribute ? `“${attribute.slice(0, 40)}”` : '' };
+}
+
+/** Flattens the tree from `root` into the rows that are currently unfolded. */
+function flattenLayers(root: Element, expanded: ReadonlySet<string>, hiddenBy: (element: HTMLElement) => boolean): LayerRow[] {
+  const rows: LayerRow[] = [];
+  const walk = (element: HTMLElement, depth: number) => {
+    if (rows.length >= MAX_LAYER_ROWS) return;
+    const children = layerChildren(element);
+    const path = getUniquePath(element);
+    const open = expanded.has(path);
+    const { label, detail } = layerLabel(element);
+    rows.push({ path, element, depth, hasChildren: children.length > 0, expanded: open, hidden: hiddenBy(element), label, detail, kind: classifyElement(element).kind });
+    if (open) children.forEach((child) => walk(child, depth + 1));
+  };
+  layerChildren(root).forEach((child) => walk(child, 0));
+  return rows;
+}
+
+const LAYER_ICONS: Record<ElementKind, typeof Type> = {
+  text: Type,
+  button: MousePointerClick,
+  link: Link2,
+  input: Square,
+  image: ImageIcon,
+  layout: Layers3,
+  form: Component,
+  generic: Square,
+};
+
+/**
+ * The layers panel: a left column with the DOM from body down.
+ *
+ * Hover outlines the element on the canvas, click selects it, the chevron unfolds it, and the eye
+ * hides or shows it as a recorded edit. The tree follows the selection — picking something on the
+ * canvas unfolds its ancestors and scrolls its row into view — so the two are one selection, not two.
+ */
+function LayersPanel({ root, side, selectedPath, editVersion, onHover, onSelect, onToggleHidden, onClose }: {
+  root: Document | null;
+  /** Opposite the properties panel, so the canvas sits between the two. */
+  side: 'left' | 'right';
+  selectedPath: string | null;
+  editVersion: number;
+  onHover: (path: string | null) => void;
+  onSelect: (path: string) => void;
+  onToggleHidden: (path: string, hidden: boolean) => void;
+  onClose: () => void;
+}) {
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const listRef = useRef<HTMLDivElement>(null);
+  const body = root?.body ?? null;
+
+  // A fresh document starts with its first two levels open, which is where the page's regions live.
+  useEffect(() => {
+    if (!body) return;
+    const initial = new Set<string>();
+    layerChildren(body).forEach((child) => {
+      initial.add(getUniquePath(child));
+      layerChildren(child).forEach((grandchild) => initial.add(getUniquePath(grandchild)));
+    });
+    setExpanded(initial);
+  }, [body]);
+
+  // Selecting on the canvas unfolds the way down to the selection.
+  useEffect(() => {
+    if (!selectedPath || !root) return;
+    let node: HTMLElement | null = null;
+    try { node = root.querySelector<HTMLElement>(selectedPath); } catch { node = null; }
+    if (!node) return;
+    setExpanded((current) => {
+      const next = new Set(current);
+      let ancestor = node!.parentElement;
+      while (ancestor && ancestor !== root.body) { next.add(getUniquePath(ancestor)); ancestor = ancestor.parentElement; }
+      return next.size === current.size ? current : next;
+    });
+    window.setTimeout(() => listRef.current?.querySelector<HTMLElement>('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' }), 40);
+  }, [root, selectedPath]);
+
+  const rows = useMemo(() => body ? flattenLayers(body, expanded, (element) => getComputedStyle(element).display === 'none') : [], [body, expanded, editVersion]);
+
+  const toggle = (path: string) => setExpanded((current) => {
+    const next = new Set(current);
+    if (next.has(path)) next.delete(path); else next.add(path);
+    return next;
+  });
+
+  return <aside className={`hi-layers hi-layers--${side}`} aria-label="Layers" onMouseLeave={() => onHover(null)}>
+    <header><Layers size={14} /><strong>Layers</strong><button title="Close layers (Ctrl+Shift+L)" aria-label="Close layers" onClick={onClose}><X size={14} /></button></header>
+    <div className="hi-layers-list" ref={listRef} role="tree">
+      {rows.map((row) => {
+        const Icon = LAYER_ICONS[row.kind];
+        return <div
+          key={row.path}
+          role="treeitem"
+          aria-level={row.depth + 1}
+          aria-expanded={row.hasChildren ? row.expanded : undefined}
+          aria-selected={row.path === selectedPath}
+          className={`hi-layer ${row.path === selectedPath ? 'is-selected' : ''} ${row.hidden ? 'is-hidden' : ''}`}
+          style={{ '--hi-layer-depth': row.depth } as CSSProperties}
+          onMouseEnter={() => onHover(row.path)}
+          onClick={() => onSelect(row.path)}
+        >
+          <button className="hi-layer-fold" tabIndex={-1} aria-label={row.expanded ? 'Collapse' : 'Expand'} disabled={!row.hasChildren} onClick={(event) => { event.stopPropagation(); toggle(row.path); }}>{row.hasChildren && <ChevronDown size={12} style={{ transform: row.expanded ? undefined : 'rotate(-90deg)' }} />}</button>
+          <Icon size={12} />
+          <span className="hi-layer-name">{row.label}{row.detail && <small>{row.detail}</small>}</span>
+          <button className="hi-layer-eye" title={row.hidden ? 'Show' : 'Hide'} aria-label={row.hidden ? `Show ${row.label}` : `Hide ${row.label}`} aria-pressed={row.hidden} onClick={(event) => { event.stopPropagation(); onToggleHidden(row.path, !row.hidden); }}>{row.hidden ? <EyeOff size={12} /> : <Eye size={12} />}</button>
+        </div>;
+      })}
+      {rows.length >= MAX_LAYER_ROWS && <p className="hi-layers-more">Showing the first {MAX_LAYER_ROWS} layers.</p>}
+      {!rows.length && <p className="hi-layers-more">Nothing on the page yet.</p>}
+    </div>
+  </aside>;
+}
+
 /** Alignment and insertion lines drawn over the canvas while a drag is in progress. */
 function GuideLayer({ guides, scale = 1, live = false }: { guides: readonly SnapGuide[]; scale?: number; live?: boolean }) {
   if (!guides.length) return null;
@@ -2974,7 +3118,7 @@ function SelectionChrome({ rect, scale = 1, handles, label, parentRect, classNam
   </>;
 }
 
-function DeviceOverlay({ presetId, orientation, freezeReveals, reloadKey, snapshot, dock, hidden, editVersion, comments, tool, canvasEdit, canvasSize, canvasBusyRef, swallowClickRef, guides, hoverPath, onCanvasResize, onCanvasMove, onCanvasKey, onCanvasText, onFrameDocument, onSelectPath, onReplay, onComment, onUndo, onRedo, onNotice }: {
+function DeviceOverlay({ presetId, orientation, freezeReveals, reloadKey, snapshot, dock, hidden, layers, editVersion, comments, tool, canvasEdit, canvasSize, canvasBusyRef, swallowClickRef, guides, hoverPath, onCanvasResize, onCanvasMove, onCanvasKey, onCanvasText, onFrameDocument, onSelectPath, onReplay, onComment, onUndo, onRedo, onNotice }: {
   presetId: DevicePresetId;
   /** Frame settings live with the toolbar that changes them — see `DeviceControls`. */
   orientation: DeviceOrientation;
@@ -2983,6 +3127,8 @@ function DeviceOverlay({ presetId, orientation, freezeReveals, reloadKey, snapsh
   snapshot: ElementSnapshot | null;
   dock: 'left' | 'right';
   hidden: boolean;
+  /** The layers column is open on the far side, so the stage keeps clear of it. */
+  layers: boolean;
   editVersion: number;
   /** Threads to pin inside the frame — the preview is where most reviewing actually happens. */
   comments: readonly PageComment[];
@@ -3385,7 +3531,7 @@ function DeviceOverlay({ presetId, orientation, freezeReveals, reloadKey, snapsh
     setZoom(Math.max(.25, Math.min(4, Number((current * (event.deltaY > 0 ? .9 : 1.1)).toFixed(2)))));
   };
 
-  return <div className={`hi-device-overlay hi-device-overlay--${dock} ${hidden ? 'is-hidden' : ''}`} role="dialog" aria-modal={!hidden} aria-hidden={hidden} aria-label={`${preset.label} preview`}>
+  return <div className={`hi-device-overlay hi-device-overlay--${dock} ${hidden ? 'is-hidden' : ''} ${layers ? 'has-layers' : ''}`} role="dialog" aria-modal={!hidden} aria-hidden={hidden} aria-label={`${preset.label} preview`}>
     <div className={`hi-device-stage ${panSessionRef.current ? 'is-panning' : ''}`} ref={stageRef} onPointerDown={onStagePointerDown} onPointerMove={onStagePointerMove} onPointerUp={stopPanning} onPointerCancel={stopPanning} onWheel={onStageWheel}>
       <div className="hi-device-sizer" style={{ width: shellWidth * scale, height: shellHeight * scale, transform: `translate(${pan.x}px, ${pan.y}px)` }}>
         <div className={`hi-device-shell hi-device-shell--${preset.chrome}`} style={{ width: shellWidth, height: shellHeight, transform: `scale(${scale})`, padding: bezel, borderRadius: preset.radius + bezel }}>
@@ -4290,6 +4436,10 @@ function HandoffInspectorPanel() {
     window.localStorage.setItem('meraki-inspector-dock', dock);
   }, [dock]);
 
+  useEffect(() => {
+    window.localStorage.setItem('meraki-inspector-layers', layersOpen ? 'open' : 'closed');
+  }, [layersOpen]);
+
   useEffect(() => { writeStoredComments(comments); }, [comments]);
 
 
@@ -5180,6 +5330,22 @@ function HandoffInspectorPanel() {
     selectElement(clone);
   };
 
+  /** The element a structural path names — in this document first, else the framed copy. */
+  const elementForPath = (path: string): HTMLElement | null => {
+    let element: HTMLElement | null = null;
+    try { element = document.querySelector<HTMLElement>(path); } catch { element = null; }
+    if (!element || element.closest(IGNORED_SELECTOR)) {
+      try { element = deviceDocRef.current?.querySelector<HTMLElement>(path) ?? null; } catch { element = null; }
+    }
+    return element && !element.closest(IGNORED_SELECTOR) ? element : null;
+  };
+
+  const toggleLayerHidden = (path: string, hidden: boolean) => {
+    const element = elementForPath(path);
+    if (!element) return;
+    if (hidden) hideElements([element]); else showElements([element]);
+  };
+
   /** Returns true when the key was a selection command and has been carried out. */
   const handleCanvasKey = (event: KeyboardEvent): boolean => {
     const command = event.metaKey || event.ctrlKey;
@@ -5423,6 +5589,13 @@ function HandoffInspectorPanel() {
   );
 
   const liveStyle = snapshot ? getComputedStyle(snapshot.element) : null;
+  // The layers panel's hover, drawn on the live page; the frame draws its own from the same path.
+  const layerHoverRect = (() => {
+    if (deviceOpen || !layerHoverPath) return null;
+    let node: HTMLElement | null = null;
+    try { node = document.querySelector<HTMLElement>(layerHoverPath); } catch { node = null; }
+    return node && !node.closest(IGNORED_SELECTOR) ? snapRectOf(node) : null;
+  })();
   // Only the selected node and its nearest useful ancestors belong in the narrow header.
   const breadcrumbNodes = snapshot
     ? [snapshot.element.parentElement?.parentElement, snapshot.element.parentElement, snapshot.element].filter((node): node is HTMLElement => Boolean(node && node !== document.body && node !== document.documentElement))
@@ -5466,6 +5639,17 @@ function HandoffInspectorPanel() {
       onDelete={removeComment}
     />}
     {open && <>
+      {open && layersOpen && mode !== 'handoff' && <LayersPanel
+        root={deviceOpen ? deviceDocument : document}
+        side={dock === 'left' ? 'right' : 'left'}
+        selectedPath={snapshot?.uniquePath ?? null}
+        editVersion={editVersion}
+        onHover={setLayerHoverPath}
+        onSelect={(path) => { if (!selectFromDevice(path)) setToast({ id: Date.now(), label: 'That element could not be selected.' }); }}
+        onToggleHidden={toggleLayerHidden}
+        onClose={() => setLayersOpen(false)}
+      />}
+      {!deviceOpen && layerHoverRect && <SelectionChrome rect={layerHoverRect} className="hi-selection is-live is-hovered" />}
       {deviceMounted && <DeviceOverlay
         presetId={devicePreset}
         orientation={deviceOrientation}
@@ -5474,6 +5658,7 @@ function HandoffInspectorPanel() {
         snapshot={snapshot}
         dock={dock}
         hidden={!deviceOpen}
+        layers={layersOpen}
         editVersion={editVersion}
         comments={comments}
         tool={canvasTool}
@@ -5511,7 +5696,7 @@ function HandoffInspectorPanel() {
         ><MessageSquare size={11} />{selectedCommentCount || 'Comment'}</button>}
       </SelectionChrome>}
       {!deviceOpen && mode !== 'handoff' && locked && !canvasSize && overlaySnapshot && <div className="hi-measurements">{SIDES.map((side) => overlaySnapshot.siblingDistances[side] !== undefined ? <span key={side} className={`hi-measure hi-measure-${side}`} style={{ top: side === 'top' ? overlaySnapshot.rect.top - 22 : side === 'bottom' ? overlaySnapshot.rect.bottom + 6 : overlaySnapshot.rect.top + overlaySnapshot.rect.height / 2, left: side === 'left' ? overlaySnapshot.rect.left - 42 : side === 'right' ? overlaySnapshot.rect.right + 7 : overlaySnapshot.rect.left + overlaySnapshot.rect.width / 2 }}>{overlaySnapshot.siblingDistances[side]}px</span> : null)}</div>}
-      <nav className={`hi-canvas-toolbar ${deviceOpen ? 'is-device' : ''} hi-canvas-toolbar--${dock}`} aria-label="Canvas tools">
+      <nav className={`hi-canvas-toolbar ${deviceOpen ? 'is-device' : ''} hi-canvas-toolbar--${dock} ${layersOpen ? 'has-layers' : ''}`} aria-label="Canvas tools">
         <button className={canvasTool === 'move' && mode === 'design' ? 'is-active' : ''} aria-pressed={canvasTool === 'move' && mode === 'design'} title="Design — select and edit (V)" onClick={() => { setCanvasTool('move'); setMode('design'); }}><PenTool size={16} /><span>Design</span><kbd>V</kbd></button>
         <button className={canvasTool === 'comment' && mode === 'comment' ? 'is-active' : ''} aria-pressed={canvasTool === 'comment' && mode === 'comment'} title="Comment (C)" onClick={() => { setCanvasTool('comment'); setMode('comment'); }}><MessageSquare size={16} /><span>Comment</span><kbd>C</kbd></button>
         <button className={canvasTool === 'hand' ? 'is-active' : ''} aria-pressed={canvasTool === 'hand'} title="Interact — use the page as a visitor, drag to pan (I / hold Space)" onClick={() => setCanvasTool('hand')}><MousePointerClick size={16} /><span>Interact</span><kbd>I</kbd></button>
@@ -5544,6 +5729,7 @@ function HandoffInspectorPanel() {
               <button onClick={() => setDock(dock === 'left' ? 'right' : 'left')}>{dock === 'left' ? <PanelRight size={14} /> : <PanelLeft size={14} />}Dock {dock === 'left' ? 'right' : 'left'}</button>
               {hasSecondCollection && <button onClick={() => setSecondaryCollectionActive((current) => !current)}><Component size={14} />{secondaryCollectionActive ? designTokens.collections[0]?.name : designTokens.collections[1]?.name}</button>}
               {hubAvailable() && <button onClick={() => (window as HubHost).__merakiInspectorHub?.()}><Settings size={14} />Settings</button>}
+              <button onClick={() => setLayersOpen((current) => !current)}><Layers size={14} />{layersOpen ? 'Hide layers' : 'Show layers'}<kbd>Ctrl+Shift+L</kbd></button>
               {deviceOpen ? <button onClick={() => setDeviceOpen(false)}><ExternalLink size={14} />Live page</button> : <button onClick={() => openDevice('desktop')}><Monitor size={14} />Device canvas</button>}
               {locked && <button onClick={unlock}><Unlock size={14} />Clear selection</button>}
               <button onClick={() => setOpen(false)}><X size={14} />Close</button>
