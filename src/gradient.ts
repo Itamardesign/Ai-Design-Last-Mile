@@ -168,9 +168,17 @@ export function sampleGradient(gradient: Gradient, position: number): { color: s
   return { color: `#${channel(1)}${channel(3)}${channel(5)}`, alpha: Math.round(before.alpha + (next.alpha - before.alpha) * t) };
 }
 
+/**
+ * Stops in bar order. CSS reads a stop placed before an earlier one as sitting on top of it — a
+ * hard edge — so a drag that crosses another stop is settled by sorting once the drag ends.
+ */
+export function sortStops(gradient: Gradient): Gradient {
+  return { ...gradient, stops: [...gradient.stops].sort((a, b) => a.position - b.position) };
+}
+
 /** Flips the bar end for end, keeping the same look from the other side. */
 export function reverseGradient(gradient: Gradient): Gradient {
-  return { ...gradient, stops: gradient.stops.map((stop) => ({ ...stop, position: round(100 - stop.position) })).reverse() };
+  return { ...gradient, stops: sortStops(gradient).stops.map((stop) => ({ ...stop, position: round(100 - stop.position) })).reverse() };
 }
 
 /** A two-stop starting gradient: the fill colour into its own transparent, or into a partner. */

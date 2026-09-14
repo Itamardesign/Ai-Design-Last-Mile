@@ -88,6 +88,7 @@ import { ensureDesignToolsStyles } from './injectStyles.js';
 import { detectFontStacksFromPage, primaryFontFamily } from './detect/detectFromPage.js';
 import { buildFontGroups, ensureGoogleFontsLoaded, type FontOption } from './fontCatalog.js';
 import { computeSnap, findInsertion, measureBetween, type InsertionPoint, type SnapGuide, type SnapRect, type SnapTarget } from './snap.js';
+import { defaultGradient, gradientBar, parseGradient, reverseGradient, sampleGradient, serializeGradient, sortStops, splitHexAlpha, stopColor, type Gradient, type GradientStop, type GradientType } from './gradient.js';
 
 /**
  * Module-level (not React state): a handful of top-level helper functions below the component
@@ -2364,7 +2365,7 @@ const BACKGROUND_POSITIONS = [
   { value: 'left', label: 'Left' },
   { value: 'right', label: 'Right' },
 ];
-/** A handful of starting gradients; the colours are meant to be swapped for the system's own. */
+/** A handful of starting points for the builder; the colours are meant to be swapped for the system's own. */
 const GRADIENT_PRESETS = [
   'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
   'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)',
@@ -2386,11 +2387,137 @@ function backgroundPositionOption(position: string) {
   return match?.value ?? 'center';
 }
 
+const GRADIENT_TYPES: Array<{ value: GradientType; label: string }> = [
+  { value: 'linear', label: 'Linear' },
+  { value: 'radial', label: 'Radial' },
+  { value: 'conic', label: 'Angular' },
+];
+
+/**
+ * The gradient builder — Figma's, on CSS.
+ *
+ * The presets were a menu of six looks; a gradient is a thing to make. So: a bar showing the
+ * stops as handles that drag, a click on the bar to add one where the pointer is, the selected
+ * stop's colour, opacity and position as fields, the type and the angle above. Everything is
+ * written straight to `background-image`, so the handoff reads the same CSS the page paints.
+ */
+function GradientBuilder({ image, fill, tokens, onChange }: { image: string; fill: string; tokens: readonly BrandColorToken[]; onChange: (value: string) => void }) {
+  const gradient = useMemo(() => parseGradient(image, resolveColor), [image]);
+  const [selected, setSelected] = useState(0);
+  const barRef = useRef<HTMLDivElement | null>(null);
+  const drag = useRef<{ index: number; moved: boolean } | null>(null);
+
+  const stops = gradient?.stops ?? [];
+  const current = Math.min(selected, Math.max(0, stops.length - 1));
+  const stop = stops[current];
+
+  const commit = (next: Gradient) => onChange(serializeGradient(next));
+  // The computed value comes back as rgb(), so a preset is matched by what it means, not how it is spelt.
+  const presetOn = (preset: string) => { const parsed = parseGradient(preset); return Boolean(gradient && parsed && serializeGradient(parsed) === serializeGradient(gradient)); };
+  const updateStop = (index: number, patch: Partial<GradientStop>) => {
+    if (!gradient) return;
+    commit({ ...gradient, stops: gradient.stops.map((item, at) => (at === index ? { ...item, ...patch } : item)) });
+  };
+  const positionAt = (clientX: number) => {
+    const rect = barRef.current?.getBoundingClientRect();
+    if (!rect || rect.width === 0) return 0;
+    return Math.round(Math.min(100, Math.max(0, ((clientX - rect.left) / rect.width) * 100)));
+  };
+  const addStop = (clientX: number) => {
+    if (!gradient) return;
+    const position = positionAt(clientX);
+    const sample = sampleGradient(gradient, position);
+    commit({ ...gradient, stops: [...gradient.stops, { ...sample, position }] });
+    setSelected(gradient.stops.length);
+  };
+  const removeStop = (index: number) => {
+    if (!gradient || gradient.stops.length <= 2) return;
+    commit({ ...gradient, stops: gradient.stops.filter((_, at) => at !== index) });
+    setSelected(Math.max(0, index - 1));
+  };
+  const setType = (type: GradientType) => {
+    if (type === gradient?.type) return;
+    commit(gradient ? { ...gradient, type } : { ...defaultGradient(fill, resolveColor), type });
+    setSelected(0);
+  };
+
+  return <div className="hi-gradient">
+    <div className="hi-segmented hi-gradient-types" aria-label="Gradient type">
+      {GRADIENT_TYPES.map((type) => <button key={type.value} type="button" className={gradient?.type === type.value ? 'is-active' : ''} aria-pressed={gradient?.type === type.value} onClick={() => setType(type.value)}>{type.label}</button>)}
+    </div>
+    {gradient && stop && <>
+      <div
+        ref={barRef}
+        className="hi-gradient-bar"
+        role="group"
+        aria-label="Gradient stops · click to add a stop"
+        onPointerDown={(event) => { if (event.target === event.currentTarget) { event.preventDefault(); addStop(event.clientX); } }}
+      >
+        <i style={{ backgroundImage: gradientBar(gradient) }} />
+        {gradient.stops.map((item, index) => <button
+          key={index}
+          type="button"
+          className={`hi-gradient-stop ${index === current ? 'is-active' : ''}`}
+          style={{ left: `${item.position}%` }}
+          title={`${stopColor(item)} · ${item.position}%`}
+          aria-label={`Stop ${index + 1}: ${stopColor(item)} at ${item.position}%`}
+          aria-pressed={index === current}
+          onPointerDown={(event) => {
+            event.preventDefault();
+            event.currentTarget.setPointerCapture(event.pointerId);
+            drag.current = { index, moved: false };
+            setSelected(index);
+          }}
+          onPointerMove={(event) => {
+            if (!drag.current || drag.current.index !== index) return;
+            drag.current.moved = true;
+            const position = positionAt(event.clientX);
+            if (position !== item.position) updateStop(index, { position });
+          }}
+          onPointerUp={(event) => {
+            event.currentTarget.releasePointerCapture(event.pointerId);
+            const moved = drag.current?.moved;
+            drag.current = null;
+            // Settle a drag that crossed another stop: sorted order, same stop still selected.
+            if (moved) { const sorted = sortStops(gradient); commit(sorted); setSelected(sorted.stops.indexOf(item)); }
+          }}
+          onPointerCancel={() => { drag.current = null; }}
+          onKeyDown={(event) => {
+            if (event.key === 'Backspace' || event.key === 'Delete') { event.preventDefault(); removeStop(index); }
+            if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+              event.preventDefault();
+              const step = (event.shiftKey ? 10 : 1) * (event.key === 'ArrowLeft' ? -1 : 1);
+              updateStop(index, { position: Math.min(100, Math.max(0, item.position + step)) });
+            }
+          }}
+        ><i style={{ background: stopColor(item) }} /></button>)}
+      </div>
+      <div className="hi-gradient-stop-fields">
+        <ColorField label="Stop" value={stopColor(stop)} tokens={tokens} onChange={(value) => { const hex = resolveColor(value); if (hex) updateStop(current, splitHexAlpha(hex)); }} />
+        <div className="hi-gradient-stop-row">
+          <NumberField label="Position" value={stop.position} min={0} max={100} suffix="%" onChange={(value) => updateStop(current, { position: Number(value) || 0 })} />
+          <button type="button" className="hi-gradient-action" title="Remove stop" aria-label="Remove stop" disabled={gradient.stops.length <= 2} onClick={() => removeStop(current)}><Trash2 size={13} /></button>
+        </div>
+      </div>
+      <div className="hi-gradient-stop-row">
+        {gradient.type !== 'radial'
+          ? <NumberField label="Angle" value={gradient.angle} min={0} max={360} suffix="°" onChange={(value) => commit({ ...gradient, angle: ((Number(value) || 0) % 360 + 360) % 360 })} />
+          : <span className="hi-gradient-note">Radial, from the centre</span>}
+        {gradient.type !== 'radial' && <button type="button" className="hi-gradient-action" title="Rotate 45°" aria-label="Rotate gradient 45 degrees" onClick={() => commit({ ...gradient, angle: (gradient.angle + 45) % 360 })}><RotateCw size={13} /></button>}
+        <button type="button" className="hi-gradient-action" title="Reverse stops" aria-label="Reverse gradient" onClick={() => commit(reverseGradient(gradient))}><FlipHorizontal2 size={13} /></button>
+      </div>
+    </>}
+    <div className="hi-gradient-presets" aria-label="Gradient presets">
+      {GRADIENT_PRESETS.map((preset) => <button key={preset} type="button" title="Start from this gradient" aria-label="Start from this gradient" className={presetOn(preset) ? 'is-active' : ''} style={{ backgroundImage: preset }} onClick={() => { onChange(preset); setSelected(0); }} />)}
+    </div>
+  </div>;
+}
+
 /**
  * Background image, on top of the fill colour: a picture by URL or upload, a gradient, or none —
  * with how it sits in the box. Written as ordinary CSS so it lands in the handoff like everything else.
  */
-function BackgroundField({ image, size, position, repeat, fill, onChange, onBatch }: { image: string; size: string; position: string; repeat: string; fill: string; onChange: (property: string, value: string) => void; onBatch: (label: string, apply: () => void) => void }) {
+function BackgroundField({ image, size, position, repeat, fill, tokens, onChange, onBatch }: { image: string; size: string; position: string; repeat: string; fill: string; tokens: readonly BrandColorToken[]; onChange: (property: string, value: string) => void; onBatch: (label: string, apply: () => void) => void }) {
   const url = backgroundUrl(image);
   const hasImage = image !== 'none' && image !== '';
   const isGradient = hasImage && !url;
@@ -2428,9 +2555,7 @@ function BackgroundField({ image, size, position, repeat, fill, onChange, onBatc
       <NumberField label={url ? 'Image opacity' : 'Opacity'} value={opacity} min={0} max={100} suffix="%" onChange={(value) => setOpacity(Number(value) || 0)} />
       {url && <label className="hi-control hi-control--check"><span>Repeat</span><input type="checkbox" checked={repeat !== 'no-repeat'} onChange={(event) => onChange('background-repeat', event.target.checked ? 'repeat' : 'no-repeat')} /></label>}
     </div>}
-    <div className="hi-gradient-presets" aria-label="Gradient presets">
-      {GRADIENT_PRESETS.map((gradient) => <button key={gradient} title="Apply gradient" aria-label="Apply gradient" className={image === gradient ? 'is-active' : ''} style={{ backgroundImage: gradient }} onClick={() => onChange('background-image', gradient)} />)}
-    </div>
+    {!url && <GradientBuilder image={image} fill={fill} tokens={tokens} onChange={(value) => onChange('background-image', value)} />}
     <div className="hi-gradient-presets hi-pattern-presets" aria-label="Pattern presets">
       {PATTERN_PRESETS.map((pattern) => <button key={pattern.label} title={`${pattern.label} pattern`} aria-label={`${pattern.label} pattern`} style={{ backgroundImage: pattern.image, backgroundSize: pattern.size, backgroundPosition: pattern.position }} onClick={() => onBatch(`Apply ${pattern.label.toLowerCase()} pattern`, () => { onChange('background-image', pattern.image); onChange('background-size', pattern.size); onChange('background-position', pattern.position ?? '0 0'); })} />)}
     </div>
@@ -6131,7 +6256,7 @@ function HandoffInspectorPanel() {
               </ToolSection>}
               <ToolSection title="Fill" icon={PaintBucket}>
                 <ColorField label="Colour" value={liveStyle?.backgroundColor ?? snapshot.styles.background} tokens={colorTokens} onChange={(value) => applyStyle('background-color', value)} />
-                <BackgroundField image={liveStyle?.backgroundImage ?? 'none'} size={liveStyle?.backgroundSize ?? 'auto'} position={liveStyle?.backgroundPosition ?? 'center'} repeat={liveStyle?.backgroundRepeat ?? 'repeat'} fill={liveStyle?.backgroundColor ?? snapshot.styles.background} onChange={applyStyle} onBatch={(label, apply) => { beginHistoryBatch(label); apply(); finishHistoryBatch(); }} />
+                <BackgroundField image={liveStyle?.backgroundImage ?? 'none'} size={liveStyle?.backgroundSize ?? 'auto'} position={liveStyle?.backgroundPosition ?? 'center'} repeat={liveStyle?.backgroundRepeat ?? 'repeat'} fill={liveStyle?.backgroundColor ?? snapshot.styles.background} tokens={colorTokens} onChange={applyStyle} onBatch={(label, apply) => { beginHistoryBatch(label); apply(); finishHistoryBatch(); }} />
                 {snapshot.kind === 'image' && <NumberField label="Image opacity" value={cssNumber(snapshot.styles.opacity, 1) * 100} min={0} max={100} suffix="%" onChange={(value) => applyStyle('opacity', String(Number(value) / 100))} />}
               </ToolSection>
               <ToolSection title="Stroke" icon={Square} defaultOpen={Boolean(liveStyle && Number.parseFloat(liveStyle.borderWidth) > 0 && liveStyle.borderStyle !== 'none')}>
