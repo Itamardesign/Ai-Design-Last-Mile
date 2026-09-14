@@ -390,6 +390,24 @@
 .hi-design-assets article > label input { width: 100%; height: 26px; padding: 0 7px; border: 1px solid var(--tool-border); border-radius: 4px; outline: 0; font: inherit; font-size: 8px; }
 .hi-upload { display: flex; min-height: 27px; margin-top: 5px; align-items: center; justify-content: center; border: 1px dashed #bcbcc4; border-radius: 4px; color: var(--tool-muted); font-size: 8px; cursor: pointer; }
 .hi-upload input { display: none; }
+/* Background image: thumbnail, URL, upload, clear — one row; fit and alignment below when there is a picture. */
+.hi-background { display: grid; margin-top: 4px; gap: 6px; }
+.hi-background-row { display: grid; grid-template-columns: 28px minmax(0, 1fr) 28px auto; align-items: center; gap: 4px; }
+.hi-background-thumb { display: grid; width: 28px; height: 28px; place-items: center; border: 1px solid var(--tool-border); border-radius: 4px; color: var(--tool-muted); background-color: #fff; background-position: center; background-size: cover; background-repeat: no-repeat; }
+.hi-background-row input[type="text"],
+.hi-background-row input:not([type]) { min-width: 0; height: 28px; padding: 0 8px; border: 1px solid var(--tool-border); border-radius: 4px; font: inherit; font-size: 10px; }
+.hi-background-upload,
+.hi-background-clear { display: grid; width: 28px; height: 28px; padding: 0; place-items: center; border: 1px solid var(--tool-border); border-radius: 4px; color: var(--tool-muted); background: #fff; cursor: pointer; }
+.hi-background-upload input { display: none; }
+.hi-background-upload:hover,
+.hi-background-clear:hover { color: #3e3e45; background: #f3f3f6; }
+.hi-control--check { grid-template-columns: 1fr auto; }
+.hi-control--check input { width: 16px; height: 16px; margin: 0; accent-color: #0d99ff; }
+.hi-gradient-presets { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; }
+.hi-gradient-presets button { height: 22px; padding: 0; border: 1px solid var(--tool-border); border-radius: 4px; background-color: #fff; cursor: pointer; }
+.hi-gradient-presets button.is-active { outline: 2px solid #0d99ff; outline-offset: 1px; }
+.hi-segmented--flip { margin-top: 0; grid-template-columns: 1fr 1fr; align-self: center; }
+.hi-segmented--flip button { display: grid; place-items: center; }
 .hi-icon-library { display: flex; margin-top: 6px; gap: 4px; }
 .hi-icon-library button { display: grid; width: 29px; height: 29px; padding: 5px; place-items: center; border: 1px solid var(--tool-border); border-radius: 4px; color: #4d4d55; background: #fff; cursor: pointer; }
 .hi-icon-library svg { width: 16px; height: 16px; }
@@ -2417,3 +2435,17 @@
   .hi-canvas-toolbar.is-device.hi-canvas-toolbar--right { left: calc((100vw - min(360px, 44vw)) / 2); }
   .hi-canvas-toolbar.is-device.hi-canvas-toolbar--left { left: calc(min(360px, 44vw) + (100vw - min(360px, 44vw)) / 2); }
 }
+
+.hi-panel--workspace .hi-background-thumb,
+.hi-panel--workspace .hi-background-upload,
+.hi-panel--workspace .hi-background-clear,
+.hi-panel--workspace .hi-gradient-presets button { border-color: #dfe1e5; color: #737782; background-color: #f7f8f9; }
+.hi-panel--workspace .hi-background-upload:hover,
+.hi-panel--workspace .hi-background-clear:hover { color: #24272e; background-color: #eeece6; }
+.hi-panel--workspace .hi-background-row input { height: 36px; font-size: 12px; }
+.hi-panel--workspace .hi-background-thumb,
+.hi-panel--workspace .hi-background-upload,
+.hi-panel--workspace .hi-background-clear { width: 36px; height: 36px; }
+.hi-panel--workspace .hi-background-row { grid-template-columns: 36px minmax(0, 1fr) 36px auto; }
+.hi-panel--workspace .hi-gradient-presets button { height: 26px; }
+.hi-panel--workspace .hi-segmented--flip button { min-height: 36px; }

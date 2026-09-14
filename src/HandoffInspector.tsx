@@ -16,11 +16,17 @@ import {
   Cloud,
   Code2,
   Component,
+  Copy,
   Download,
   ExternalLink,
+  Eye,
+  EyeOff,
+  FlipHorizontal2,
+  FlipVertical2,
   FileCode2,
   Gauge,
   History,
+  Layers,
   Image as ImageIcon,
   Layers3,
   Link2,
@@ -52,6 +58,7 @@ import {
   Type,
   Unlink,
   Unlock,
+  Upload,
   Wand2,
   X,
 } from 'lucide-react';
@@ -2185,6 +2192,83 @@ function FontField({ label, value, projectFonts, onChange }: { label: string; va
   </div>;
 }
 
+const BACKGROUND_FITS = [
+  { value: 'cover', label: 'Fill' },
+  { value: 'contain', label: 'Fit' },
+  { value: 'auto', label: 'Actual size' },
+];
+const BACKGROUND_POSITIONS = [
+  { value: 'center', label: 'Centre' },
+  { value: 'top', label: 'Top' },
+  { value: 'bottom', label: 'Bottom' },
+  { value: 'left', label: 'Left' },
+  { value: 'right', label: 'Right' },
+];
+/** A handful of starting gradients; the colours are meant to be swapped for the system's own. */
+const GRADIENT_PRESETS = [
+  'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+  'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)',
+  'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)',
+  'linear-gradient(135deg, #43e97b 0%, #38f9d7 100%)',
+  'linear-gradient(135deg, #fa709a 0%, #fee140 100%)',
+  'linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,.6) 100%)',
+];
+
+/** The first url() in a background-image, or nothing. */
+function backgroundUrl(image: string) {
+  const match = image.match(/url\((['"]?)(.*?)\1\)/);
+  return match ? match[2] : '';
+}
+
+/** The computed position, folded onto the one-word option that means the same thing. */
+function backgroundPositionOption(position: string) {
+  const match = BACKGROUND_POSITIONS.find((item) => position === item.value || position === `${item.value} center` || position === `center ${item.value}`);
+  return match?.value ?? 'center';
+}
+
+/**
+ * Background image, on top of the fill colour: a picture by URL or upload, a gradient, or none —
+ * with how it sits in the box. Written as ordinary CSS so it lands in the handoff like everything else.
+ */
+function BackgroundField({ image, size, position, repeat, onChange }: { image: string; size: string; position: string; repeat: string; onChange: (property: string, value: string) => void }) {
+  const url = backgroundUrl(image);
+  const hasImage = image !== 'none' && image !== '';
+  const isGradient = hasImage && !url;
+  const setUrl = (value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed) return;
+    onChange('background-image', `url("${trimmed.replace(/"/g, '%22')}")`);
+  };
+  const onFile = (file?: File) => {
+    if (!file) return;
+    if (file.type === 'image/svg+xml') file.text().then((text) => setUrl(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(text)}`));
+    else setUrl(URL.createObjectURL(file));
+  };
+  return <div className="hi-background">
+    <div className="hi-background-row">
+      <span className="hi-background-thumb" style={{ backgroundImage: hasImage ? image : undefined }} aria-hidden>{!hasImage && <ImageIcon size={14} />}</span>
+      <input
+        key={url}
+        defaultValue={url}
+        placeholder={isGradient ? 'Gradient' : 'Image URL…'}
+        aria-label="Background image URL"
+        onKeyDown={(event) => { if (event.key === 'Enter') setUrl(event.currentTarget.value); }}
+        onBlur={(event) => { if (event.target.value.trim() && event.target.value.trim() !== url) setUrl(event.target.value); }}
+      />
+      <label className="hi-background-upload" title="Upload an image or SVG"><input type="file" accept="image/*,.svg" onChange={(event) => onFile(event.target.files?.[0])} /><Upload size={13} /></label>
+      {hasImage && <button className="hi-background-clear" title="Remove background image" aria-label="Remove background image" onClick={() => onChange('background-image', 'none')}><X size={13} /></button>}
+    </div>
+    {url && <div className="hi-control-pair">
+      <SelectField label="Fit" compact value={BACKGROUND_FITS.some((fit) => fit.value === size) ? size : 'auto'} options={BACKGROUND_FITS} onChange={(value) => onChange('background-size', value)} />
+      <SelectField label="Align" compact value={backgroundPositionOption(position)} options={BACKGROUND_POSITIONS} onChange={(value) => onChange('background-position', value)} />
+    </div>}
+    {url && <label className="hi-control hi-control--check"><span>Repeat</span><input type="checkbox" checked={repeat !== 'no-repeat'} onChange={(event) => onChange('background-repeat', event.target.checked ? 'repeat' : 'no-repeat')} /></label>}
+    <div className="hi-gradient-presets" aria-label="Gradient presets">
+      {GRADIENT_PRESETS.map((gradient) => <button key={gradient} title="Apply gradient" aria-label="Apply gradient" className={image === gradient ? 'is-active' : ''} style={{ backgroundImage: gradient }} onClick={() => onChange('background-image', gradient)} />)}
+    </div>
+  </div>;
+}
+
 /**
  * One palette, with tabs choosing which property it paints.
  *
@@ -2750,9 +2834,13 @@ function readRotation(element: HTMLElement) {
   const inline = element.style.transform;
   const rotate = inline.match(/rotate(?:Z)?\(\s*(-?[\d.]+)deg\s*\)/);
   if (rotate) return Number.parseFloat(rotate[1]);
+  // An inline transform that says nothing about rotation is not rotated, whatever its matrix looks like.
+  if (inline.trim() && inline.trim() !== 'none') return 0;
   const matrix = getComputedStyle(element).transform.match(/^matrix\(([^)]+)\)/);
   if (!matrix) return 0;
-  const [a, b] = matrix[1].split(',').map((value) => Number.parseFloat(value));
+  const [a, b, c, d] = matrix[1].split(',').map((value) => Number.parseFloat(value));
+  // A negative determinant is a mirror; its angle is not a rotation the designer set.
+  if (a * d - b * c < 0) return 0;
   return Math.round(Math.atan2(b, a) * (180 / Math.PI));
 }
 
@@ -5579,6 +5667,7 @@ function HandoffInspectorPanel() {
                     { id: 'stroke', label: 'Stroke', icon: Square, value: liveStyle?.borderColor ?? snapshot.styles.border, onChange: (value) => applyStyle('border-color', value) },
                   ]}
                 />
+                <BackgroundField image={liveStyle?.backgroundImage ?? 'none'} size={liveStyle?.backgroundSize ?? 'auto'} position={liveStyle?.backgroundPosition ?? 'center'} repeat={liveStyle?.backgroundRepeat ?? 'repeat'} onChange={applyStyle} />
                 <div className="hi-control-pair"><NumberField label="Stroke" value={liveStyle?.borderWidth ?? 0} min={0} onChange={(value) => applyStyle('border-width', value)} /><SelectField label="Style" compact value={liveStyle?.borderStyle ?? 'solid'} options={BORDER_STYLES} onChange={(value) => applyStyle('border-style', value)} /></div>
                 <NumberField label="Corner radius" value={snapshot.styles['border-radius']} min={0} onChange={(value) => applyStyle('border-radius', value)} />
                 <NumberField label="Opacity" value={cssNumber(snapshot.styles.opacity, 1) * 100} min={0} max={100} suffix="%" onChange={(value) => applyStyle('opacity', String(Number(value) / 100))} />
@@ -5590,7 +5679,15 @@ function HandoffInspectorPanel() {
                 <NumberField label="Gap" value={liveStyle?.gap ?? 0} onChange={(value) => applyStyle('gap', value)} />
                 <BoxSidesField label="Padding" property="padding" element={snapshot.element} onChange={applyStyle} />
                 <BoxSidesField label="Margin" property="margin" element={snapshot.element} onChange={applyStyle} />
+                <div className="hi-control-pair">
+                  <NumberField label="Rotate" value={readRotation(snapshot.element)} step={1} suffix="°" onChange={(value) => rotate(Number.parseFloat(value) || 0)} />
+                  <div className="hi-segmented hi-segmented--flip" aria-label="Flip">
+                    <button title="Flip horizontal (Shift+H)" aria-label="Flip horizontal" aria-pressed={isFlipped(snapshot.element, 'x')} className={isFlipped(snapshot.element, 'x') ? 'is-active' : ''} onClick={() => flip('x')}><FlipHorizontal2 size={14} /></button>
+                    <button title="Flip vertical (Shift+V)" aria-label="Flip vertical" aria-pressed={isFlipped(snapshot.element, 'y')} className={isFlipped(snapshot.element, 'y') ? 'is-active' : ''} onClick={() => flip('y')}><FlipVertical2 size={14} /></button>
+                  </div>
+                </div>
                 <div className="hi-reorder"><button onClick={() => reorder(-1)}><ArrowLeft size={13} /><ArrowUp size={13} />Earlier</button><button onClick={() => reorder(1)}>Later<ArrowDown size={13} /><ArrowRight size={13} /></button></div>
+                <div className="hi-reorder"><button title="Duplicate (Ctrl+D)" onClick={duplicateSelection}><Copy size={13} />Duplicate</button><button title="Hide (Delete) · the layers panel or Undo brings it back" onClick={() => hideElements(currentTargets())}><EyeOff size={13} />Hide</button></div>
               </ToolSection>
               <ToolSection title="Effects" icon={Sparkles}>
                 <SelectField label="Shadow" value={snapshot.styles['box-shadow']} options={shadowOptions(snapshot.styles['box-shadow'])} onChange={(value) => applyStyle('box-shadow', value)} />
