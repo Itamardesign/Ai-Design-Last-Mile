@@ -20,7 +20,7 @@ await build({
   bundle: true,
   logLevel: 'silent',
 });
-const { computeSnap, findInsertion } = await import(pathToFileURL(join(outdir, 'snap.mjs')).href);
+const { computeSnap, findInsertion, measureBetween } = await import(pathToFileURL(join(outdir, 'snap.mjs')).href);
 
 const box = (left, top, width = 100, height = 40) => ({ left, top, width, height });
 const sibling = (rect) => ({ rect, kind: 'sibling' });
@@ -127,5 +127,31 @@ const parent = (rect) => ({ rect, kind: 'parent' });
 
 // No siblings, nothing to say.
 assert.equal(findInsertion({ x: 0, y: 0 }, [box(0, 0)], 'row', 0), null);
+
+// A single edge (zero-width candidate) snaps to edges without inventing gaps.
+{
+  const edge = computeSnap({ left: 203, top: 0, width: 0, height: 40 }, [sibling(box(0, 100, 200, 40)), sibling(box(300, 0, 100, 40))], 4, { lockY: true, gaps: false });
+  assert.equal(edge.dx, -3);
+  assert.equal(edge.guides.filter((guide) => guide.kind === 'gap').length, 0);
+}
+
+// Measuring: side by side gives one labelled line per axis of separation.
+{
+  const guides = measureBetween(box(0, 0), box(140, 0));
+  assert.equal(guides.length, 1);
+  assert.equal(guides[0].kind, 'measure');
+  assert.equal(guides[0].axis, 'y');
+  assert.equal(guides[0].label, '40');
+  assert.equal(guides[0].from, 100);
+  assert.equal(guides[0].to, 140);
+  const diagonal = measureBetween(box(0, 0), box(140, 100));
+  assert.deepEqual(diagonal.map((guide) => guide.label).sort(), ['40', '60']);
+}
+
+// Measuring a box inside another gives the four inner distances.
+{
+  const guides = measureBetween(box(20, 10, 60, 20), box(0, 0, 100, 40));
+  assert.deepEqual(guides.map((guide) => guide.label), ['20', '20', '10', '10']);
+}
 
 console.log('snap: ok');

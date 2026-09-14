@@ -2517,10 +2517,9 @@ function GradientBuilder({ image, fill, tokens, onChange }: { image: string; fil
  * Background image, on top of the fill colour: a picture by URL or upload, a gradient, or none —
  * with how it sits in the box. Written as ordinary CSS so it lands in the handoff like everything else.
  */
-function BackgroundField({ image, size, position, repeat, fill, tokens, onChange, onBatch }: { image: string; size: string; position: string; repeat: string; fill: string; tokens: readonly BrandColorToken[]; onChange: (property: string, value: string) => void; onBatch: (label: string, apply: () => void) => void }) {
+function BackgroundField({ mode, image, size, position, repeat, fill, tokens, onChange, onBatch }: { mode: 'gradient' | 'image' | 'pattern'; image: string; size: string; position: string; repeat: string; fill: string; tokens: readonly BrandColorToken[]; onChange: (property: string, value: string) => void; onBatch: (label: string, apply: () => void) => void }) {
   const url = backgroundUrl(image);
   const hasImage = image !== 'none' && image !== '';
-  const isGradient = hasImage && !url;
   const opacity = !hasImage ? 100 : url ? readImageOpacity(image) : gradientAlpha(image);
   const setOpacity = (value: number) => onChange('background-image', url ? withImageOpacity(image, fill, value) : scaleGradientAlpha(image, value));
   const setUrl = (value: string) => {
@@ -2533,33 +2532,67 @@ function BackgroundField({ image, size, position, repeat, fill, tokens, onChange
     if (file.type === 'image/svg+xml') file.text().then((text) => setUrl(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(text)}`));
     else setUrl(URL.createObjectURL(file));
   };
+  const opacityField = <NumberField label="Opacity" value={opacity} min={0} max={100} suffix="%" onChange={(value) => setOpacity(Number(value) || 0)} />;
+  if (mode === 'image') {
+    return <div className="hi-background">
+      <div className="hi-background-row">
+        <span className="hi-background-thumb" style={{ backgroundImage: url ? image : undefined }} aria-hidden>{!url && <ImageIcon size={14} />}</span>
+        <input
+          key={url}
+          defaultValue={url}
+          placeholder="Image URL…"
+          aria-label="Background image URL"
+          onKeyDown={(event) => { if (event.key === 'Enter') setUrl(event.currentTarget.value); }}
+          onBlur={(event) => { if (event.target.value.trim() && event.target.value.trim() !== url) setUrl(event.target.value); }}
+        />
+        <label className="hi-background-upload" title="Upload an image or SVG"><input type="file" accept="image/*,.svg" onChange={(event) => onFile(event.target.files?.[0])} /><Upload size={13} /></label>
+        {url && <button className="hi-background-clear" title="Remove image" aria-label="Remove image" onClick={() => onChange('background-image', 'none')}><X size={13} /></button>}
+      </div>
+      {url && <div className="hi-control-pair">
+        <SelectField label="Fit" compact value={BACKGROUND_FITS.some((fit) => fit.value === size) ? size : 'auto'} options={BACKGROUND_FITS} onChange={(value) => onChange('background-size', value)} />
+        <SelectField label="Align" compact value={backgroundPositionOption(position)} options={BACKGROUND_POSITIONS} onChange={(value) => onChange('background-position', value)} />
+      </div>}
+      {url && <div className="hi-control-pair">
+        {opacityField}
+        <label className="hi-control hi-control--check"><span>Repeat</span><input type="checkbox" checked={repeat !== 'no-repeat'} onChange={(event) => onChange('background-repeat', event.target.checked ? 'repeat' : 'no-repeat')} /></label>
+      </div>}
+      {!url && <p className="hi-empty-note">Paste an image address or upload one.</p>}
+    </div>;
+  }
+  if (mode === 'gradient') {
+    return <div className="hi-background">
+      <GradientBuilder image={image} fill={fill} tokens={tokens} onChange={(value) => onChange('background-image', value)} />
+      {hasImage && opacityField}
+    </div>;
+  }
   return <div className="hi-background">
-    <div className="hi-background-row">
-      <span className="hi-background-thumb" style={{ backgroundImage: hasImage ? image : undefined }} aria-hidden>{!hasImage && <ImageIcon size={14} />}</span>
-      <input
-        key={url}
-        defaultValue={url}
-        placeholder={isGradient ? 'Gradient' : 'Image URL…'}
-        aria-label="Background image URL"
-        onKeyDown={(event) => { if (event.key === 'Enter') setUrl(event.currentTarget.value); }}
-        onBlur={(event) => { if (event.target.value.trim() && event.target.value.trim() !== url) setUrl(event.target.value); }}
-      />
-      <label className="hi-background-upload" title="Upload an image or SVG"><input type="file" accept="image/*,.svg" onChange={(event) => onFile(event.target.files?.[0])} /><Upload size={13} /></label>
-      {hasImage && <button className="hi-background-clear" title="Remove background image" aria-label="Remove background image" onClick={() => onChange('background-image', 'none')}><X size={13} /></button>}
-    </div>
-    {url && <div className="hi-control-pair">
-      <SelectField label="Fit" compact value={BACKGROUND_FITS.some((fit) => fit.value === size) ? size : 'auto'} options={BACKGROUND_FITS} onChange={(value) => onChange('background-size', value)} />
-      <SelectField label="Align" compact value={backgroundPositionOption(position)} options={BACKGROUND_POSITIONS} onChange={(value) => onChange('background-position', value)} />
-    </div>}
-    {hasImage && <div className="hi-control-pair">
-      <NumberField label={url ? 'Image opacity' : 'Opacity'} value={opacity} min={0} max={100} suffix="%" onChange={(value) => setOpacity(Number(value) || 0)} />
-      {url && <label className="hi-control hi-control--check"><span>Repeat</span><input type="checkbox" checked={repeat !== 'no-repeat'} onChange={(event) => onChange('background-repeat', event.target.checked ? 'repeat' : 'no-repeat')} /></label>}
-    </div>}
-    {!url && <GradientBuilder image={image} fill={fill} tokens={tokens} onChange={(value) => onChange('background-image', value)} />}
     <div className="hi-gradient-presets hi-pattern-presets" aria-label="Pattern presets">
-      {PATTERN_PRESETS.map((pattern) => <button key={pattern.label} title={`${pattern.label} pattern`} aria-label={`${pattern.label} pattern`} style={{ backgroundImage: pattern.image, backgroundSize: pattern.size, backgroundPosition: pattern.position }} onClick={() => onBatch(`Apply ${pattern.label.toLowerCase()} pattern`, () => { onChange('background-image', pattern.image); onChange('background-size', pattern.size); onChange('background-position', pattern.position ?? '0 0'); })} />)}
+      {PATTERN_PRESETS.map((pattern) => <button key={pattern.label} title={`${pattern.label} pattern`} aria-label={`${pattern.label} pattern`} className={isPattern(image) && image.includes(pattern.image.includes('repeating') ? 'repeating' : pattern.image.split('(')[0]) ? 'is-current' : ''} style={{ backgroundImage: pattern.image, backgroundSize: pattern.size, backgroundPosition: pattern.position }} onClick={() => onBatch(`Apply ${pattern.label.toLowerCase()} pattern`, () => { onChange('background-image', pattern.image); onChange('background-size', pattern.size); onChange('background-position', pattern.position ?? '0 0'); })} />)}
     </div>
+    {hasImage && opacityField}
   </div>;
+}
+
+type FillType = 'solid' | 'gradient' | 'image' | 'pattern' | 'none';
+const FILL_TYPES: Array<{ value: FillType; label: string }> = [
+  { value: 'solid', label: 'Solid' },
+  { value: 'gradient', label: 'Gradient' },
+  { value: 'image', label: 'Image' },
+  { value: 'pattern', label: 'Pattern' },
+  { value: 'none', label: 'None' },
+];
+
+/** Repeating gradients and layered hairline gradients are patterns, not fades. */
+function isPattern(image: string) {
+  return image !== 'none' && !backgroundUrl(image) && (image.includes('repeating-') || parseGradient(image, resolveColor) === null);
+}
+
+/** What kind of fill the element has, read from its background. */
+function detectFillType(image: string, color: string): FillType {
+  if (backgroundUrl(image)) return 'image';
+  if (isPattern(image)) return 'pattern';
+  if (image !== 'none' && image !== '') return 'gradient';
+  return colorAlpha(color) === 0 ? 'none' : 'solid';
 }
 
 function TokenColorField({ label, value, tokens, onChange }: { label: string; value: string; tokens: readonly BrandColorToken[]; onChange: (value: string) => void }) {
@@ -3362,8 +3395,17 @@ function revertTextEdit(session: TextEditSession) {
 }
 
 /** The eight grab points, drawn inside whichever selection box is already positioned over the element. */
-function CanvasHandles({ size, onStart }: { size: string | null; onStart: (direction: ResizeDirection, event: ReactPointerEvent) => void }) {
+function CanvasHandles({ size, onStart, onRotateStart }: { size: string | null; onStart: (direction: ResizeDirection, event: ReactPointerEvent) => void; onRotateStart?: (event: ReactPointerEvent) => void }) {
   return <>
+    {/* The rotate grips sit just outside each corner, where Figma's cursor turns into an arc. */}
+    {onRotateStart && (['nw', 'ne', 'se', 'sw'] as const).map((corner) => <button
+      key={`rotate-${corner}`}
+      type="button"
+      className={`hi-rotate-grip hi-rotate-grip--${corner}`}
+      title="Drag to rotate · Shift snaps to 15°"
+      aria-label="Rotate"
+      onPointerDown={onRotateStart}
+    />)}
     {RESIZE_HANDLES.map((handle) => <button
       key={handle.id}
       type="button"
@@ -3400,7 +3442,7 @@ function SelectionChrome({ rect, scale = 1, handles, label, parentRect, classNam
   </>;
 }
 
-function DeviceOverlay({ presetId, orientation, freezeReveals, reloadKey, snapshot, dock, hidden, layers, editVersion, comments, tool, canvasEdit, canvasSize, canvasBusyRef, swallowClickRef, guides, hoverPath, onCanvasResize, onCanvasMove, onCanvasKey, onCanvasText, onFrameDocument, onSelectPath, onReplay, onComment, onUndo, onRedo, onNotice }: {
+function DeviceOverlay({ presetId, orientation, freezeReveals, reloadKey, snapshot, dock, hidden, layers, editVersion, comments, tool, canvasEdit, canvasSize, canvasBusyRef, swallowClickRef, guides, hoverPath, onCanvasResize, onCanvasRotate, onCanvasMove, onCanvasKey, onCanvasText, onFrameDocument, onSelectPath, onReplay, onComment, onUndo, onRedo, onNotice }: {
   presetId: DevicePresetId;
   /** Frame settings live with the toolbar that changes them — see `DeviceControls`. */
   orientation: DeviceOrientation;
@@ -3426,6 +3468,7 @@ function DeviceOverlay({ presetId, orientation, freezeReveals, reloadKey, snapsh
   /** An element the layers panel is pointing at, to outline it here as if hovered. */
   hoverPath: string | null;
   onCanvasResize: (direction: ResizeDirection, event: ReactPointerEvent, scale: number, onUpdate: () => void) => void;
+  onCanvasRotate: (event: ReactPointerEvent) => void;
   /** A press inside the selection: the frame node under the pointer, the event that started it. */
   onCanvasMove: (view: HTMLElement, event: PointerEvent, scale: number, onUpdate: () => void) => void;
   /** Keys typed with the frame focused — nudge, flip, duplicate — handled by the same code as the page. */
@@ -3827,7 +3870,7 @@ function DeviceOverlay({ presetId, orientation, freezeReveals, reloadKey, snapsh
           {preset.chrome === 'browser' && <div className="hi-device-chrome" style={{ height: chromeBar }}><i /><i /><i /><span>{window.location.host}{window.location.pathname}</span></div>}
           <div className="hi-device-viewport" style={{ width, height, borderRadius: preset.radius }}>
             <iframe key={reloadKey} ref={frameRef} name={DESIGN_PREVIEW_FRAME_NAME} title={`${preset.label} live preview`} src={previewUrl} onLoad={handleLoad} style={{ width, height }} />
-            {selectionBox && <SelectionChrome rect={selectionBox} parentRect={parentBox} scale={scale} className="is-selected" label={canvasSize ?? `${round(selectionBox.width)} × ${round(selectionBox.height)}`} handles={canvasEdit && snapshot ? <CanvasHandles size={null} onStart={(direction, event) => onCanvasResize(direction, event, scale, sync)} /> : null} />}
+            {selectionBox && <SelectionChrome rect={selectionBox} parentRect={parentBox} scale={scale} className="is-selected" label={canvasSize ?? `${round(selectionBox.width)} × ${round(selectionBox.height)}`} handles={canvasEdit && snapshot ? <CanvasHandles size={null} onStart={(direction, event) => onCanvasResize(direction, event, scale, sync)} onRotateStart={onCanvasRotate} /> : null} />}
             {tool !== 'hand' && hoverBox && (!selectionBox || hoverBox.top !== selectionBox.top || hoverBox.left !== selectionBox.left) && <SelectionChrome rect={hoverBox} scale={scale} className="is-hovered" />}
             <GuideLayer guides={measure.length ? [...guides, ...measure] : guides} scale={scale} />
             {/* Counter-scaled so a pin stays legible at 50% zoom instead of shrinking with the shell. */}
@@ -4361,6 +4404,8 @@ function HandoffInspectorPanel() {
   const [measureGuides, setMeasureGuides] = useState<SnapGuide[]>([]);
   /** Position & size: W and H move together while this is on. */
   const [ratioLocked, setRatioLocked] = useState(false);
+  /** A fill type chosen in the panel before it has a value to show for itself (Image with no picture yet). */
+  const [fillTypeChoice, setFillTypeChoice] = useState<FillType | null>(null);
   const [layersOpen, setLayersOpen] = useState(() => isBrowser && window.localStorage.getItem('meraki-inspector-layers') === 'open');
   const textEditRef = useRef<TextEditSession | null>(null);
   const canvasBusyRef = useRef(false);
@@ -5385,6 +5430,63 @@ function HandoffInspectorPanel() {
   };
 
   /**
+   * Rotation by hand: the angle from the box's centre to the pointer, relative to where the press
+   * began, added to whatever rotation the element already had. The centre is read from the selection
+   * chrome in this document, so it is right at any zoom and in the frame alike.
+   */
+  const startRotate = (element: HTMLElement, event: ReactPointerEvent) => {
+    if (moveRef.current || resizeRef.current) return;
+    event.preventDefault();
+    event.stopPropagation();
+    finishTextEdit(true);
+    const chrome = (event.currentTarget as HTMLElement).parentElement;
+    if (!chrome) return;
+    const box = chrome.getBoundingClientRect();
+    const centre = { x: box.left + box.width / 2, y: box.top + box.height / 2 };
+    const angleTo = (x: number, y: number) => Math.atan2(y - centre.y, x - centre.x) * (180 / Math.PI);
+    const startAngle = angleTo(event.clientX, event.clientY);
+    const startRotation = readRotation(element);
+    const inline = element.style.transform;
+    const mirror = deviceDocRef.current?.querySelector<HTMLElement>(getUniquePath(element)) ?? null;
+    let rotation = startRotation;
+    let moved = false;
+    canvasBusyRef.current = true;
+    const handle = event.currentTarget as HTMLElement;
+    try { handle.setPointerCapture(event.pointerId); } catch { /* The pointer went away before capture. */ }
+    const onMove = (moveEvent: globalThis.PointerEvent) => {
+      moveEvent.preventDefault();
+      moved = true;
+      let next = startRotation + angleTo(moveEvent.clientX, moveEvent.clientY) - startAngle;
+      if (moveEvent.shiftKey) next = Math.round(next / 15) * 15;
+      next = Math.round(((next % 360) + 540) % 360 - 180);
+      rotation = next;
+      const value = withRotation(element, next);
+      [element, mirror].forEach((node) => node?.style.setProperty('transform', value));
+      setCanvasSize(`${next}°`);
+    };
+    const finish = (commit: boolean) => {
+      window.removeEventListener('pointermove', onMove, true);
+      window.removeEventListener('pointerup', onUp, true);
+      window.removeEventListener('pointercancel', onCancel, true);
+      window.removeEventListener('keydown', onKey, true);
+      canvasBusyRef.current = false;
+      setCanvasSize(null);
+      [element, mirror].forEach((node) => { if (!node) return; if (inline) node.style.setProperty('transform', inline); else node.style.removeProperty('transform'); });
+      if (!commit || !moved || rotation === startRotation) { setEditVersion((current) => current + 1); return; }
+      swallowClickRef.current = true;
+      window.setTimeout(() => { swallowClickRef.current = false; }, 250);
+      applyStyleTo(targetsFor(element), 'transform', withRotation(element, rotation));
+    };
+    const onUp = () => finish(true);
+    const onCancel = () => finish(false);
+    const onKey = (keyEvent: KeyboardEvent) => { if (keyEvent.key === 'Escape') { keyEvent.preventDefault(); keyEvent.stopPropagation(); finish(false); } };
+    window.addEventListener('pointermove', onMove, true);
+    window.addEventListener('pointerup', onUp, true);
+    window.addEventListener('pointercancel', onCancel, true);
+    window.addEventListener('keydown', onKey, true);
+  };
+
+  /**
    * A press inside the selection. `view` is the node under the pointer's document — the frame twin
    * when the canvas is the frame — and the edit is recorded against the element in this document
    * that it stands for. Listeners go on the window the press came from, so the iframe's own
@@ -5666,6 +5768,37 @@ function HandoffInspectorPanel() {
     const element = elementForPath(path);
     if (!element) return;
     if (hidden) hideElements([element]); else showElements([element]);
+  };
+
+  /* Fill: one type at a time. */
+
+  useEffect(() => { setFillTypeChoice(null); }, [snapshot?.uniquePath]);
+  const fillType: FillType = snapshot
+    ? (fillTypeChoice ?? detectFillType(getComputedStyle(snapshot.element).backgroundImage, getComputedStyle(snapshot.element).backgroundColor))
+    : 'solid';
+
+  /** Switching type clears what the other types put there, so what is shown is what is painted. */
+  const setFillType = (type: FillType) => {
+    if (!snapshot) return;
+    setFillTypeChoice(type);
+    const style = getComputedStyle(snapshot.element);
+    const image = style.backgroundImage;
+    const color = style.backgroundColor;
+    beginHistoryBatch(`Fill: ${type}`);
+    if (type === 'solid') {
+      if (image !== 'none') applyStyle('background-image', 'none');
+      if (colorAlpha(color) === 0) applyStyle('background-color', '#ffffff');
+    } else if (type === 'gradient') {
+      if (!parseGradient(image, resolveColor)) applyStyle('background-image', serializeGradient(defaultGradient(colorAlpha(color) === 0 ? '#7c3cff' : color, resolveColor)));
+    } else if (type === 'image') {
+      if (!backgroundUrl(image) && image !== 'none') applyStyle('background-image', 'none');
+    } else if (type === 'pattern') {
+      if (!isPattern(image)) { const pattern = PATTERN_PRESETS[0]; applyStyle('background-image', pattern.image); applyStyle('background-size', pattern.size); applyStyle('background-position', pattern.position ?? '0 0'); }
+    } else {
+      if (image !== 'none') applyStyle('background-image', 'none');
+      if (colorAlpha(color) !== 0) applyStyle('background-color', 'transparent');
+    }
+    finishHistoryBatch();
   };
 
   /* The Position & size and Align sections read and write through these. */
@@ -6035,6 +6168,7 @@ function HandoffInspectorPanel() {
         guides={guides}
         hoverPath={layerHoverPath}
         onCanvasResize={(direction, event, scale, onUpdate) => { if (snapshot) startResize(snapshot.element, direction, event, scale, onUpdate); }}
+        onCanvasRotate={(event) => { if (snapshot) startRotate(snapshot.element, event); }}
         onCanvasMove={onCanvasMove}
         onCanvasKey={onCanvasKey}
         onCanvasText={applyTextFromDevice}
@@ -6052,7 +6186,7 @@ function HandoffInspectorPanel() {
         const rect = element.getBoundingClientRect();
         return <div key={getUniquePath(element)} className="hi-selection hi-selection--peer is-locked" style={{ top: rect.top, left: rect.left, width: rect.width, height: rect.height }} />;
       })}
-      {!deviceOpen && mode !== 'handoff' && overlaySnapshot && overlayRect && <SelectionChrome rect={overlayRect} className={`hi-selection is-live ${locked ? 'is-locked' : ''} ${canvasSize ? 'is-resizing' : ''}`} label={`${liveSelection.length > 1 ? `${liveSelection.length} layers · ` : ''}${round(overlayRect.width)} × ${round(overlayRect.height)}`} handles={canvasHandlesVisible ? <CanvasHandles size={null} onStart={(direction, event) => startResize(overlaySnapshot.element, direction, event, 1, null)} /> : null}>
+      {!deviceOpen && mode !== 'handoff' && overlaySnapshot && overlayRect && <SelectionChrome rect={overlayRect} className={`hi-selection is-live ${locked ? 'is-locked' : ''} ${canvasSize ? 'is-resizing' : ''}`} label={`${liveSelection.length > 1 ? `${liveSelection.length} layers · ` : ''}${round(overlayRect.width)} × ${round(overlayRect.height)}`} handles={canvasHandlesVisible ? <CanvasHandles size={null} onStart={(direction, event) => startResize(overlaySnapshot.element, direction, event, 1, null)} onRotateStart={(event) => startRotate(overlaySnapshot.element, event)} /> : null}>
         {/* Offered right where the selection is, so commenting is one click from picking rather
             than a hunt down the panel — but only in the tab where commenting is the job. */}
         {locked && commentMode && <button
@@ -6255,8 +6389,14 @@ function HandoffInspectorPanel() {
                 <BoxSidesField label="Padding" property="padding" element={snapshot.element} onChange={applyStyle} />
               </ToolSection>}
               <ToolSection title="Fill" icon={PaintBucket}>
-                <ColorField label="Colour" value={liveStyle?.backgroundColor ?? snapshot.styles.background} tokens={colorTokens} onChange={(value) => applyStyle('background-color', value)} />
-                <BackgroundField image={liveStyle?.backgroundImage ?? 'none'} size={liveStyle?.backgroundSize ?? 'auto'} position={liveStyle?.backgroundPosition ?? 'center'} repeat={liveStyle?.backgroundRepeat ?? 'repeat'} fill={liveStyle?.backgroundColor ?? snapshot.styles.background} tokens={colorTokens} onChange={applyStyle} onBatch={(label, apply) => { beginHistoryBatch(label); apply(); finishHistoryBatch(); }} />
+                {/* One kind of fill at a time, as a Figma fill has a type — a colour under a gradient under a picture is not a choice anyone makes on purpose. */}
+                <div className="hi-segmented hi-fill-types" role="tablist" aria-label="Fill type">
+                  {FILL_TYPES.map((type) => <button key={type.value} role="tab" aria-selected={fillType === type.value} className={fillType === type.value ? 'is-active' : ''} onClick={() => setFillType(type.value)}>{type.label}</button>)}
+                </div>
+                {fillType === 'solid' && <ColorField label="Colour" value={liveStyle?.backgroundColor ?? snapshot.styles.background} tokens={colorTokens} onChange={(value) => applyStyle('background-color', value)} />}
+                {fillType === 'none' && <p className="hi-empty-note">No fill — the element shows what is behind it.</p>}
+                {(fillType === 'gradient' || fillType === 'image' || fillType === 'pattern') && <BackgroundField mode={fillType} image={liveStyle?.backgroundImage ?? 'none'} size={liveStyle?.backgroundSize ?? 'auto'} position={liveStyle?.backgroundPosition ?? 'center'} repeat={liveStyle?.backgroundRepeat ?? 'repeat'} fill={liveStyle?.backgroundColor ?? snapshot.styles.background} tokens={colorTokens} onChange={applyStyle} onBatch={(label, apply) => { beginHistoryBatch(label); apply(); finishHistoryBatch(); }} />}
+                {(fillType === 'gradient' || fillType === 'image' || fillType === 'pattern') && <ColorField label="Behind it" value={liveStyle?.backgroundColor ?? snapshot.styles.background} tokens={colorTokens} onChange={(value) => applyStyle('background-color', value)} />}
                 {snapshot.kind === 'image' && <NumberField label="Image opacity" value={cssNumber(snapshot.styles.opacity, 1) * 100} min={0} max={100} suffix="%" onChange={(value) => applyStyle('opacity', String(Number(value) / 100))} />}
               </ToolSection>
               <ToolSection title="Stroke" icon={Square} defaultOpen={Boolean(liveStyle && Number.parseFloat(liveStyle.borderWidth) > 0 && liveStyle.borderStyle !== 'none')}>

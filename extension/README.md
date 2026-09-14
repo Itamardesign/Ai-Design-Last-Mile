@@ -54,6 +54,7 @@ The selection is edited by hand, with Figma's gestures and keys where the DOM ha
 | **`Shift` + drag** | Snapping off |
 | **Red guides** | The box is snapping to a sibling's edge or centre, or the parent's centre. Pink ticks with a number: the gaps either side have come out equal |
 | **Handles** | Resize. The dragged edge snaps to siblings' edges and centres; `Shift` keeps the ratio, `Alt` resizes from the centre |
+| **Just outside a corner** | Rotate — the cursor turns into an arc. `Shift` snaps to 15°. The exact angle is also in Position & size |
 | **`Alt` + hover** | Measures: red lines with the distance from the selection to whatever is under the pointer |
 | **Arrows / `Shift` + arrows** | Nudge 1px / 10px |
 | **`Shift` `H` / `Shift` `V`** | Flip horizontal / vertical |
@@ -71,7 +72,7 @@ The Design tab is laid out the way Figma's is, and only shows what applies to th
 - **Align** — six buttons: left, centre, right within the parent; top, middle, bottom when the parent is flex or grid.
 - **Position & size** — X, Y, W, H (with a ratio lock), rotate, flip, display, margin, order, duplicate, hide.
 - **Auto layout** — only for a flex or grid element: direction, gap, wrap, the nine-dot alignment grid, distribution, padding.
-- **Fill** — colour with opacity, a background image by URL or upload with fit, alignment, repeat and its own opacity, gradient and pattern presets whose opacity can be set too.
+- **Fill** — one type at a time, like a Figma fill: **Solid** (colour with opacity), **Gradient** (linear / radial / angular, with draggable stops, each a colour with opacity), **Image** (URL or upload, fit, alignment, repeat, opacity), **Pattern** (dots, grid, stripes, checks, with opacity) or **None**. Gradients, images and patterns also show the colour behind them.
 - **Stroke** — colour with opacity, width, style.
 - **Effects** — shadow, radius, opacity, layer blur, backdrop blur, brightness, saturation.
 - **Text** — only for text-like elements: font, size, weight, line, tracking, alignment, colour with opacity, presets, and the content itself.
