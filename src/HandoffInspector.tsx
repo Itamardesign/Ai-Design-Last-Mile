@@ -73,6 +73,7 @@ import type { ColorToken as BrandColorToken, RadiusToken, SpacingToken } from '.
 import { ensureDesignToolsStyles } from './injectStyles.js';
 import { detectFontStacksFromPage, primaryFontFamily } from './detect/detectFromPage.js';
 import { buildFontGroups, ensureGoogleFontsLoaded, type FontOption } from './fontCatalog.js';
+import { computeSnap, findInsertion, type InsertionPoint, type SnapGuide, type SnapRect, type SnapTarget } from './snap.js';
 
 /**
  * Module-level (not React state): a handful of top-level helper functions below the component
@@ -2577,6 +2578,199 @@ function rollbackResize(session: ResizeSession) {
   });
 }
 
+/* Drag to move — reorder inside a flex or grid parent, free move with snapping anywhere else. */
+
+/** Pointer travel before a press turns into a drag; below this it is a click. */
+const MOVE_DEAD_ZONE = 4;
+/** Screen pixels within which an edge, centre or equal gap pulls the box in. */
+const SNAP_THRESHOLD = 5;
+/** The most siblings worth measuring for guides; past this a page is a list, not a layout. */
+const MAX_SNAP_TARGETS = 40;
+
+type MoveSession = {
+  /** The element edits are recorded against. */
+  element: HTMLElement;
+  /** The node the designer is looking at — the frame twin when there is one. Geometry comes from here. */
+  view: HTMLElement;
+  mirror: HTMLElement | null;
+  mode: 'reorder' | 'free';
+  startX: number;
+  startY: number;
+  startRect: SnapRect;
+  targets: SnapTarget[];
+  threshold: number;
+  /** `margin-*` in flow, `left`/`top` once the element is positioned — whichever actually moves it. */
+  offsetProperties: [string, string];
+  startOffsets: [number, number];
+  offsets: [number, number];
+  inline: Record<string, string>;
+  /** Reorder: the visible siblings, their boxes, and where the drag currently says to drop. */
+  siblingPaths: string[];
+  siblingRects: SnapRect[];
+  flow: 'row' | 'column';
+  currentIndex: number;
+  insertion: InsertionPoint | null;
+  guides: SnapGuide[];
+  moved: boolean;
+  onUpdate: (() => void) | null;
+};
+
+function snapRectOf(node: Element): SnapRect {
+  const rect = node.getBoundingClientRect();
+  return { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
+}
+
+/** The boxes a drag lines up against: the visible siblings and the parent's content box. */
+function gatherSnapTargets(view: HTMLElement): SnapTarget[] {
+  const parent = view.parentElement;
+  if (!parent) return [];
+  const targets: SnapTarget[] = [];
+  const style = getComputedStyle(parent);
+  const rect = parent.getBoundingClientRect();
+  const padding = ['Top', 'Right', 'Bottom', 'Left'].map((side) => Number.parseFloat(style[`padding${side}` as 'paddingTop']) || 0);
+  targets.push({ kind: 'parent', rect: { left: rect.left + padding[3], top: rect.top + padding[0], width: rect.width - padding[1] - padding[3], height: rect.height - padding[0] - padding[2] } });
+  for (const sibling of Array.from(parent.children)) {
+    if (targets.length > MAX_SNAP_TARGETS) break;
+    // `instanceof HTMLElement` is false for a node from the frame's realm; check the node type instead.
+    if (sibling === view || !isElementNode(sibling) || !visible(sibling)) continue;
+    targets.push({ kind: 'sibling', rect: snapRectOf(sibling) });
+  }
+  return targets;
+}
+
+function beginMove(element: HTMLElement, view: HTMLElement, event: PointerEvent, zoom: number, mirror: HTMLElement | null, onUpdate: (() => void) | null): MoveSession {
+  const parent = view.parentElement;
+  const parentStyle = parent ? getComputedStyle(parent) : null;
+  const style = getComputedStyle(view);
+  const positioned = style.position === 'absolute' || style.position === 'fixed';
+  const inFlow = parentStyle ? parentStyle.display.includes('flex') || parentStyle.display.includes('grid') : false;
+  // Alt asks for a free move even inside a flex row — the way Alt-drag ignores auto layout in Figma.
+  const mode: MoveSession['mode'] = inFlow && !positioned && !event.altKey ? 'reorder' : 'free';
+  const offsetProperties: [string, string] = positioned ? ['left', 'top'] : ['margin-left', 'margin-top'];
+  const startOffsets: [number, number] = [
+    Number.parseFloat(style.getPropertyValue(offsetProperties[0])) || 0,
+    Number.parseFloat(style.getPropertyValue(offsetProperties[1])) || 0,
+  ];
+  const siblings = parent ? Array.from(parent.children).filter((node): node is HTMLElement => isElementNode(node) && visible(node)) : [];
+  const flow: MoveSession['flow'] = parentStyle && (parentStyle.flexDirection.startsWith('column') || (parentStyle.display.includes('grid') && parentStyle.gridAutoFlow.startsWith('column')) || (parentStyle.display.includes('grid') && parentStyle.gridTemplateColumns.split(' ').length <= 1)) ? 'column' : 'row';
+  return {
+    element,
+    view,
+    mirror,
+    mode,
+    startX: event.clientX,
+    startY: event.clientY,
+    startRect: snapRectOf(view),
+    targets: gatherSnapTargets(view),
+    threshold: SNAP_THRESHOLD / Math.max(zoom, .01),
+    offsetProperties,
+    startOffsets,
+    offsets: startOffsets,
+    inline: Object.fromEntries(offsetProperties.map((property) => [property, element.style.getPropertyValue(property)])),
+    siblingPaths: siblings.map(getUniquePath),
+    siblingRects: siblings.map(snapRectOf),
+    flow,
+    currentIndex: siblings.indexOf(view),
+    insertion: null,
+    guides: [],
+    moved: false,
+    onUpdate,
+  };
+}
+
+/** Applies the pointer to the session. Returns false while still inside the dead zone. */
+function moveFrame(session: MoveSession, event: PointerEvent) {
+  const dx = event.clientX - session.startX;
+  const dy = event.clientY - session.startY;
+  if (!session.moved && Math.hypot(dx, dy) < MOVE_DEAD_ZONE) return false;
+  session.moved = true;
+  if (session.mode === 'reorder') {
+    session.insertion = findInsertion({ x: event.clientX, y: event.clientY }, session.siblingRects, session.flow, session.currentIndex);
+    session.guides = session.insertion ? [session.insertion.guide] : [];
+    return true;
+  }
+  const candidate = { ...session.startRect, left: session.startRect.left + dx, top: session.startRect.top + dy };
+  // Shift switches snapping off for the gesture, Figma's convention.
+  const snap = event.shiftKey ? { dx: 0, dy: 0, guides: [] } : computeSnap(candidate, session.targets, session.threshold);
+  session.offsets = [Math.round(session.startOffsets[0] + dx + snap.dx), Math.round(session.startOffsets[1] + dy + snap.dy)];
+  session.guides = snap.guides;
+  return true;
+}
+
+function previewMove(session: MoveSession) {
+  if (session.mode !== 'free') return;
+  const nodes = new Set([session.element, session.view, session.mirror]);
+  nodes.forEach((node) => {
+    if (!node) return;
+    node.style.setProperty(session.offsetProperties[0], pixels(session.offsets[0]));
+    node.style.setProperty(session.offsetProperties[1], pixels(session.offsets[1]));
+  });
+  session.onUpdate?.();
+}
+
+function rollbackMove(session: MoveSession) {
+  const nodes = new Set([session.element, session.view, session.mirror]);
+  nodes.forEach((node) => {
+    if (!node) return;
+    session.offsetProperties.forEach((property) => {
+      const value = session.inline[property];
+      if (value) node.style.setProperty(property, value);
+      else node.style.removeProperty(property);
+    });
+  });
+}
+
+/* Flip and rotate — composed onto whatever transform the element already carries. */
+
+/** The transform as a list of functions, from the inline style when there is one, else the computed matrix. */
+function transformParts(element: HTMLElement): string[] {
+  const inline = element.style.transform.trim();
+  const source = inline || getComputedStyle(element).transform;
+  if (!source || source === 'none') return [];
+  return source.match(/[a-zA-Z0-9]+\([^)]*\)/g) ?? [];
+}
+
+/** Adds the function when absent, removes it when present — a flip is its own inverse. */
+function toggleTransformPart(element: HTMLElement, part: string) {
+  const parts = transformParts(element);
+  const index = parts.indexOf(part);
+  if (index >= 0) parts.splice(index, 1); else parts.push(part);
+  return parts.join(' ') || 'none';
+}
+
+/** Replaces the rotate() function, or adds one, leaving flips and translations alone. */
+function withRotation(element: HTMLElement, degrees: number) {
+  const parts = transformParts(element).filter((part) => !/^rotate(Z)?\(/.test(part));
+  if (degrees % 360 !== 0) parts.push(`rotate(${degrees}deg)`);
+  return parts.join(' ') || 'none';
+}
+
+/** The current angle: from rotate() when the transform is readable, else recovered from the matrix. */
+function readRotation(element: HTMLElement) {
+  const inline = element.style.transform;
+  const rotate = inline.match(/rotate(?:Z)?\(\s*(-?[\d.]+)deg\s*\)/);
+  if (rotate) return Number.parseFloat(rotate[1]);
+  const matrix = getComputedStyle(element).transform.match(/^matrix\(([^)]+)\)/);
+  if (!matrix) return 0;
+  const [a, b] = matrix[1].split(',').map((value) => Number.parseFloat(value));
+  return Math.round(Math.atan2(b, a) * (180 / Math.PI));
+}
+
+function isFlipped(element: HTMLElement, axis: 'x' | 'y') {
+  return transformParts(element).includes(axis === 'x' ? 'scaleX(-1)' : 'scaleY(-1)');
+}
+
+/** Alignment and insertion lines drawn over the canvas while a drag is in progress. */
+function GuideLayer({ guides, scale = 1, live = false }: { guides: readonly SnapGuide[]; scale?: number; live?: boolean }) {
+  if (!guides.length) return null;
+  const chromeScale = 1 / Math.max(scale, .01);
+  return <div className={`hi-guides ${live ? 'is-live' : ''}`} style={{ '--hi-chrome-scale': chromeScale } as CSSProperties} aria-hidden>
+    {guides.map((guide, index) => guide.axis === 'x'
+      ? <span key={index} className={`hi-guide hi-guide--${guide.kind} is-x`} style={{ left: guide.at, top: guide.from, height: Math.max(0, guide.to - guide.from) }}>{guide.label && <b>{guide.label}</b>}</span>
+      : <span key={index} className={`hi-guide hi-guide--${guide.kind} is-y`} style={{ top: guide.at, left: guide.from, width: Math.max(0, guide.to - guide.from) }}>{guide.label && <b>{guide.label}</b>}</span>)}
+  </div>;
+}
+
 type TextEditSession = { element: HTMLElement; original: string; field: boolean; stop: () => void };
 
 /**
@@ -2692,7 +2886,7 @@ function SelectionChrome({ rect, scale = 1, handles, label, parentRect, classNam
   </>;
 }
 
-function DeviceOverlay({ presetId, orientation, freezeReveals, reloadKey, snapshot, dock, hidden, editVersion, comments, tool, canvasEdit, canvasSize, canvasBusyRef, onCanvasResize, onCanvasText, onFrameDocument, onSelectPath, onReplay, onComment, onUndo, onRedo, onNotice }: {
+function DeviceOverlay({ presetId, orientation, freezeReveals, reloadKey, snapshot, dock, hidden, editVersion, comments, tool, canvasEdit, canvasSize, canvasBusyRef, swallowClickRef, guides, hoverPath, onCanvasResize, onCanvasMove, onCanvasKey, onCanvasText, onFrameDocument, onSelectPath, onReplay, onComment, onUndo, onRedo, onNotice }: {
   presetId: DevicePresetId;
   /** Frame settings live with the toolbar that changes them — see `DeviceControls`. */
   orientation: DeviceOrientation;
@@ -2709,7 +2903,17 @@ function DeviceOverlay({ presetId, orientation, freezeReveals, reloadKey, snapsh
   canvasSize: string | null;
   /** Set while a canvas drag owns the pointer, so Escape cancels the drag instead of closing the preview. */
   canvasBusyRef: { current: boolean };
+  /** Set by a drag that moved something, so the click that ends it does not reselect underneath. */
+  swallowClickRef: { current: boolean };
+  /** Alignment and drop lines from the drag in progress, in frame coordinates. */
+  guides: readonly SnapGuide[];
+  /** An element the layers panel is pointing at, to outline it here as if hovered. */
+  hoverPath: string | null;
   onCanvasResize: (direction: ResizeDirection, event: ReactPointerEvent, scale: number, onUpdate: () => void) => void;
+  /** A press inside the selection: the frame node under the pointer, the event that started it. */
+  onCanvasMove: (view: HTMLElement, event: PointerEvent, scale: number, onUpdate: () => void) => void;
+  /** Keys typed with the frame focused — nudge, flip, duplicate — handled by the same code as the page. */
+  onCanvasKey: (event: KeyboardEvent) => boolean;
   onCanvasText: (path: string, value: string) => void;
   onFrameDocument: (doc: Document | null) => void;
   onSelectPath: (path: string) => boolean;
@@ -2925,11 +3129,51 @@ function DeviceOverlay({ presetId, orientation, freezeReveals, reloadKey, snapsh
           event.stopPropagation();
           onSelectPath(getUniquePath(parent));
         }
+        return;
+      }
+      // Everything else — arrows, flips, duplicate — is one shortcut map shared with the live page.
+      if (!editing && !canvasBusyRef.current && onCanvasKey(event)) {
+        event.preventDefault();
+        event.stopPropagation();
       }
     };
     frameDoc.addEventListener('keydown', onKey, true);
     return () => frameDoc.removeEventListener('keydown', onKey, true);
-  }, [canvasBusyRef, frameDoc, onRedo, onSelectPath, onUndo, snapshot]);
+  }, [canvasBusyRef, frameDoc, onCanvasKey, onRedo, onSelectPath, onUndo, snapshot]);
+
+  // The layers panel points at things; the frame shows what it is pointing at.
+  useEffect(() => {
+    if (!frameDoc || !hoverPath) return;
+    let node: HTMLElement | null = null;
+    try { node = frameDoc.querySelector<HTMLElement>(hoverPath); } catch { node = null; }
+    if (!node) { setHoverBox(null); return; }
+    setHoverBox(snapRectOf(node));
+    return () => setHoverBox(null);
+  }, [frameDoc, hoverPath, editVersion]);
+
+  /**
+   * A press inside the selected element starts a drag. Nothing happens until the pointer has
+   * actually travelled — a plain click still selects — so the press is handed over and the move
+   * session decides. The frame's own coordinates are used throughout: the iframe reports them in
+   * its layout pixels regardless of the zoom the shell is drawn at.
+   */
+  useEffect(() => {
+    if (!frameDoc || !canvasEdit || !snapshot) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.button !== 0 || spaceHeldRef.current) return;
+      const target = frameDoc.elementFromPoint(event.clientX, event.clientY);
+      if (!isElementNode(target) || target.closest(IGNORED_SELECTOR)) return;
+      const editing = frameEditRef.current?.element;
+      if (editing && (editing === target || editing.contains(target))) return;
+      const selected = resolveInDocument(frameDoc, snapshot);
+      if (!selected || (selected !== target && !selected.contains(target))) return;
+      // Text would otherwise start selecting under the drag.
+      event.preventDefault();
+      onCanvasMove(selected, event, scale, sync);
+    };
+    frameDoc.addEventListener('pointerdown', onPointerDown, true);
+    return () => frameDoc.removeEventListener('pointerdown', onPointerDown, true);
+  }, [canvasEdit, frameDoc, onCanvasMove, scale, snapshot, sync]);
 
   // Mirroring the site's Hebrew direction is a supported review mode, not a cosmetic flip.
   useEffect(() => {
@@ -2965,6 +3209,12 @@ function DeviceOverlay({ presetId, orientation, freezeReveals, reloadKey, snapsh
       if (editing && (editing === target || editing.contains(target))) return;
       event.preventDefault();
       event.stopPropagation();
+      // The click that ends a drag is the drag's, not a new selection.
+      if (swallowClickRef.current) { swallowClickRef.current = false; return; }
+      // A selected container owns ordinary clicks inside it, so it can be dragged by any part of
+      // itself. Ctrl/Cmd-click or double-click reaches the child — Figma's group convention.
+      const selected = snapshot ? resolveInDocument(frameDoc, snapshot) : null;
+      if (selected && selected !== target && selected.contains(target) && !event.metaKey && !event.ctrlKey) return;
       if (!onSelectPath(getUniquePath(target))) onNotice('That element only exists at this screen size.');
     };
     frameDoc.addEventListener('pointermove', onMove, true);
@@ -2975,7 +3225,7 @@ function DeviceOverlay({ presetId, orientation, freezeReveals, reloadKey, snapsh
       frameDoc.removeEventListener('pointerleave', onLeave, true);
       frameDoc.removeEventListener('click', onClickCapture, true);
     };
-  }, [frameDoc, onNotice, onSelectPath, tool]);
+  }, [frameDoc, onNotice, onSelectPath, snapshot, swallowClickRef, tool]);
 
   /**
    * Double-click retypes text right inside the device. The frame node is edited live so the designer
@@ -3056,6 +3306,7 @@ function DeviceOverlay({ presetId, orientation, freezeReveals, reloadKey, snapsh
             <iframe key={reloadKey} ref={frameRef} name={DESIGN_PREVIEW_FRAME_NAME} title={`${preset.label} live preview`} src={previewUrl} onLoad={handleLoad} style={{ width, height }} />
             {selectionBox && <SelectionChrome rect={selectionBox} parentRect={parentBox} scale={scale} className="is-selected" label={canvasSize ?? `${round(selectionBox.width)} × ${round(selectionBox.height)}`} handles={canvasEdit && snapshot ? <CanvasHandles size={null} onStart={(direction, event) => onCanvasResize(direction, event, scale, sync)} /> : null} />}
             {tool !== 'hand' && hoverBox && (!selectionBox || hoverBox.top !== selectionBox.top || hoverBox.left !== selectionBox.left) && <SelectionChrome rect={hoverBox} scale={scale} className="is-hovered" />}
+            <GuideLayer guides={guides} scale={scale} />
             {/* Counter-scaled so a pin stays legible at 50% zoom instead of shrinking with the shell. */}
             {pins.map((pin) => <button
               key={pin.path}
@@ -3569,6 +3820,21 @@ function HandoffInspectorPanel() {
   const [canvasSize, setCanvasSize] = useState<string | null>(null);
   const [canvasNote, setCanvasNote] = useState<string | null>(null);
   const resizeRef = useRef<ResizeSession | null>(null);
+  const moveRef = useRef<MoveSession | null>(null);
+  /** What `display` was before Hide, so Show puts back flex rather than guessing block. */
+  const hiddenDisplayRef = useRef(new Map<HTMLElement, string>());
+  // The frame binds its listeners once; these refs let it reach the latest handlers without rebinding.
+  const canvasKeyRef = useRef<(event: KeyboardEvent) => boolean>(() => false);
+  const canvasMoveRef = useRef<(view: HTMLElement, event: PointerEvent, zoom: number, onUpdate: (() => void) | null) => void>(() => undefined);
+  const onCanvasKey = useCallback((event: KeyboardEvent) => canvasKeyRef.current(event), []);
+  const onCanvasMove = useCallback((view: HTMLElement, event: PointerEvent, zoom: number, onUpdate: (() => void) | null) => canvasMoveRef.current(view, event, zoom, onUpdate), []);
+  /** The click that ends a drag arrives after the drag; this tells the pickers to let it pass. */
+  const swallowClickRef = useRef(false);
+  /** Guides from the drag in progress, in the coordinates of whichever document is being dragged in. */
+  const [guides, setGuides] = useState<SnapGuide[]>([]);
+  /** The element the layers panel is hovering, as a structural path so both documents can show it. */
+  const [layerHoverPath, setLayerHoverPath] = useState<string | null>(null);
+  const [layersOpen, setLayersOpen] = useState(() => isBrowser && window.localStorage.getItem('meraki-inspector-layers') === 'open');
   const textEditRef = useRef<TextEditSession | null>(null);
   const canvasBusyRef = useRef(false);
   const stateMarkRef = useRef(1);
@@ -3821,6 +4087,8 @@ function HandoffInspectorPanel() {
       if (!target) return;
       event.preventDefault();
       event.stopPropagation();
+      // The click that ends a drag is the drag's, not a new selection.
+      if (swallowClickRef.current) { swallowClickRef.current = false; return; }
       if (event.shiftKey) {
         const current = selectedElementsRef.current;
         const next = current.includes(target)
@@ -3877,13 +4145,26 @@ function HandoffInspectorPanel() {
       else setOpen(false);
     };
     const onViewport = () => refresh();
+    // A press inside the selection may become a drag; the move session waits for the pointer to travel.
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.button !== 0 || mode !== 'design' || !locked || deviceOpen) return;
+      if (event.target instanceof Element && event.target.closest(IGNORED_SELECTOR)) return;
+      const selected = selectedRef.current;
+      if (!selected || !(event.target instanceof Node) || (selected !== event.target && !selected.contains(event.target))) return;
+      const editing = textEditRef.current?.element;
+      if (editing && (editing === event.target || editing.contains(event.target))) return;
+      event.preventDefault();
+      canvasMoveRef.current(selected, event, 1, null);
+    };
     document.addEventListener('pointermove', onMove, true);
+    document.addEventListener('pointerdown', onPointerDown, true);
     document.addEventListener('click', onClick, true);
     window.addEventListener('keydown', onKey);
     window.addEventListener('scroll', onViewport, true);
     window.addEventListener('resize', onViewport);
     return () => {
       document.removeEventListener('pointermove', onMove, true);
+      document.removeEventListener('pointerdown', onPointerDown, true);
       document.removeEventListener('click', onClick, true);
       window.removeEventListener('keydown', onKey);
       window.removeEventListener('scroll', onViewport, true);
@@ -4202,6 +4483,14 @@ function HandoffInspectorPanel() {
 
   const applyHistoryChange = (change: DesignChange, direction: 'undo' | 'redo') => {
     const element = change.element;
+    if (change.property === 'layout:duplicate' && isElementNode(change.domAfter?.parent)) {
+      // A duplicate's "before" is absence: undo takes the copy off the page, redo re-inserts it.
+      const parent = change.domAfter.parent;
+      if (direction === 'undo') element.remove();
+      else parent.insertBefore(element, change.domAfter.nextSibling?.isConnected ? change.domAfter.nextSibling : null);
+      mirrorToDevice([parent], restoreInDevice);
+      return;
+    }
     if (!element.isConnected && change.kind !== 'token') return;
     if (change.domBefore && change.domAfter) {
       restoreCapturedState(direction === 'undo' ? change.domBefore : change.domAfter);
@@ -4543,6 +4832,106 @@ function HandoffInspectorPanel() {
     window.addEventListener('keydown', onKey, true);
   };
 
+  /**
+   * A press inside the selection. `view` is the node under the pointer's document — the frame twin
+   * when the canvas is the frame — and the edit is recorded against the element in this document
+   * that it stands for. Listeners go on the window the press came from, so the iframe's own
+   * coordinates are used from start to finish.
+   */
+  const startMove = (view: HTMLElement, event: PointerEvent, zoom: number, onUpdate: (() => void) | null) => {
+    if (moveRef.current || resizeRef.current) return;
+    finishTextEdit(true);
+    const path = getUniquePath(view);
+    let element: HTMLElement | null = null;
+    if (view.ownerDocument === document) element = view;
+    else { try { element = document.querySelector<HTMLElement>(path); } catch { element = null; } }
+    if (!element || element.closest(IGNORED_SELECTOR)) element = view;
+    const mirror = view === element ? (deviceDocRef.current?.querySelector<HTMLElement>(path) ?? null) : view;
+    const session = beginMove(element, view, event, zoom, mirror === element ? null : mirror, onUpdate);
+    if (session.mode === 'reorder' && session.siblingRects.length < 2) session.mode = 'free';
+    moveRef.current = session;
+    const win = view.ownerDocument.defaultView ?? window;
+    const captureTarget = event.target instanceof Element ? event.target : view;
+    try { captureTarget.setPointerCapture(event.pointerId); } catch { /* Capture is a nicety; the window listeners still run. */ }
+
+    const onMove = (moveEvent: globalThis.PointerEvent) => {
+      const active = moveRef.current;
+      if (!active) return;
+      if (!moveFrame(active, moveEvent)) return;
+      if (!canvasBusyRef.current) { canvasBusyRef.current = true; setCanvasNote(null); }
+      moveEvent.preventDefault();
+      previewMove(active);
+      setGuides(active.guides);
+      if (active.mode === 'free') {
+        const rect = active.element.getBoundingClientRect();
+        setCanvasRect({ top: rect.top, right: rect.right, bottom: rect.bottom, left: rect.left, width: rect.width, height: rect.height });
+      }
+    };
+
+    const finish = (commit: boolean) => {
+      const active = moveRef.current;
+      win.removeEventListener('pointermove', onMove, true);
+      win.removeEventListener('pointerup', onUp, true);
+      win.removeEventListener('pointercancel', onCancel, true);
+      win.removeEventListener('keydown', onKey, true);
+      if (win !== window) window.removeEventListener('pointerup', onUp, true);
+      moveRef.current = null;
+      canvasBusyRef.current = false;
+      setGuides([]);
+      if (!active) return;
+      try { captureTarget.releasePointerCapture(event.pointerId); } catch { /* Already released. */ }
+      rollbackMove(active);
+      if (!active.moved) return;
+      // The click that follows this pointerup is the drag's. If none follows — the pointer was let
+      // go outside the frame — the flag must not lie in wait for the next real click.
+      swallowClickRef.current = true;
+      window.setTimeout(() => { swallowClickRef.current = false; }, 250);
+      setCanvasRect(null);
+      if (!commit) { active.onUpdate?.(); return; }
+      if (active.mode === 'free') {
+        const targets = targetsFor(active.element);
+        beginHistoryBatch('Move selection');
+        applyStyleTo(targets, active.offsetProperties[0], pixels(active.offsets[0]));
+        applyStyleTo(targets, active.offsetProperties[1], pixels(active.offsets[1]));
+        finishHistoryBatch();
+        return;
+      }
+      const insertion = active.insertion;
+      const parent = active.element.parentElement;
+      if (!insertion || !parent || insertion.index === active.currentIndex) { active.onUpdate?.(); return; }
+      // Siblings are addressed by structural path so the drop lands on the same node in this
+      // document as the one the pointer was over in the frame.
+      const doc = active.element.ownerDocument;
+      const remaining = active.siblingPaths.filter((_, index) => index !== active.currentIndex);
+      const referencePath = remaining[insertion.index];
+      let reference: Element | null = null;
+      if (referencePath) { try { reference = doc.querySelector(referencePath); } catch { reference = null; } }
+      if (reference && reference.parentElement !== parent) reference = null;
+      storeOriginal(active.element);
+      const domBefore = captureOriginalState(active.element);
+      parent.insertBefore(active.element, referencePath ? reference : null);
+      recordChange({ element: active.element, selector: getSelector(active.element), property: 'layout:order', before: 'Original order', after: `Moved to position ${insertion.index + 1}`, kind: 'layout', domBefore, domAfter: captureOriginalState(active.element) }, 'Reorder selection');
+      mirrorToDevice([parent], restoreInDevice);
+      refresh(active.element);
+    };
+
+    const onUp = () => finish(true);
+    const onCancel = () => finish(false);
+    const onKey = (keyEvent: KeyboardEvent) => {
+      if (keyEvent.key !== 'Escape') return;
+      keyEvent.preventDefault();
+      keyEvent.stopPropagation();
+      finish(false);
+    };
+
+    win.addEventListener('pointermove', onMove, true);
+    win.addEventListener('pointerup', onUp, true);
+    win.addEventListener('pointercancel', onCancel, true);
+    win.addEventListener('keydown', onKey, true);
+    // Should the frame lose the pointer to the stage around it, the outer window still ends the drag.
+    if (win !== window) window.addEventListener('pointerup', onUp, true);
+  };
+
   /** Text retyped inside the device frame, committed against the matching element in this document. */
   const applyTextFromDevice = (path: string, value: string) => {
     let element: HTMLElement | null = null;
@@ -4624,24 +5013,99 @@ function HandoffInspectorPanel() {
         setMode('handoff');
         return;
       }
-      if (!canvasEdit || deviceOpen || command || event.altKey || !selectedRef.current || !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
-      event.preventDefault();
-      event.stopPropagation();
-      const step = event.shiftKey ? 10 : 1;
-      const horizontal = event.key === 'ArrowLeft' || event.key === 'ArrowRight';
-      const property = horizontal ? 'margin-left' : 'margin-top';
-      const sign = event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1 : 1;
-      const targets = currentTargets();
-      beginHistoryBatch(`Nudge ${event.key.replace('Arrow', '').toLowerCase()} ${step}px`);
-      targets.forEach((element) => {
-        const current = Number.parseFloat(getComputedStyle(element).getPropertyValue(property)) || 0;
-        applyStyleTo([element], property, `${current + sign * step}px`);
-      });
-      finishHistoryBatch();
+      if (handleCanvasKey(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
     };
     window.addEventListener('keydown', onShortcut, true);
     return () => window.removeEventListener('keydown', onShortcut, true);
   });
+
+  /* Selection commands — the same whether the key was typed over the page or inside the frame. */
+
+  const nudge = (key: string, step: number) => {
+    const horizontal = key === 'ArrowLeft' || key === 'ArrowRight';
+    const sign = key === 'ArrowLeft' || key === 'ArrowUp' ? -1 : 1;
+    const targets = currentTargets();
+    beginHistoryBatch(`Nudge ${key.replace('Arrow', '').toLowerCase()} ${step}px`);
+    targets.forEach((element) => {
+      // A positioned element moves by its offsets; anything in flow moves by its margins.
+      const style = getComputedStyle(element);
+      const positioned = style.position === 'absolute' || style.position === 'fixed';
+      const property = positioned ? (horizontal ? 'left' : 'top') : (horizontal ? 'margin-left' : 'margin-top');
+      const current = Number.parseFloat(style.getPropertyValue(property)) || 0;
+      applyStyleTo([element], property, `${current + sign * step}px`);
+    });
+    finishHistoryBatch();
+  };
+
+  const flip = (axis: 'x' | 'y') => {
+    const element = selectedRef.current;
+    if (!element) return;
+    beginHistoryBatch(axis === 'x' ? 'Flip horizontal' : 'Flip vertical');
+    applyStyleTo(currentTargets(), 'transform', toggleTransformPart(element, axis === 'x' ? 'scaleX(-1)' : 'scaleY(-1)'));
+    finishHistoryBatch();
+  };
+
+  const rotate = (degrees: number) => {
+    const element = selectedRef.current;
+    if (!element) return;
+    applyStyleTo(currentTargets(), 'transform', withRotation(element, Math.round(degrees)));
+  };
+
+  /** `display: none`, recorded like any other edit, so Undo and the layers panel both bring it back. */
+  const hideElements = (targets: HTMLElement[]) => {
+    if (!targets.length) return;
+    beginHistoryBatch('Hide');
+    targets.forEach((element) => {
+      if (getComputedStyle(element).display === 'none') return;
+      hiddenDisplayRef.current.set(element, getComputedStyle(element).display);
+      applyStyleTo([element], 'display', 'none');
+    });
+    finishHistoryBatch();
+  };
+
+  const showElements = (targets: HTMLElement[]) => {
+    if (!targets.length) return;
+    beginHistoryBatch('Show');
+    targets.forEach((element) => {
+      if (getComputedStyle(element).display !== 'none') return;
+      // What it was before it was hidden here; a site-hidden element has no record, so block is the guess.
+      applyStyleTo([element], 'display', hiddenDisplayRef.current.get(element) ?? 'block');
+    });
+    finishHistoryBatch();
+  };
+
+  /** A copy right after the original, selected, as Ctrl+D does in Figma. */
+  const duplicateSelection = () => {
+    const element = selectedRef.current;
+    const parent = element?.parentElement;
+    if (!element || !parent) return;
+    const clone = element.cloneNode(true) as HTMLElement;
+    clone.removeAttribute('data-hi-editing');
+    clone.removeAttribute('contenteditable');
+    parent.insertBefore(clone, element.nextSibling);
+    // A duplicate has no "before" on the page; undo removes it, redo puts it back where it was.
+    recordChange({ element: clone, selector: getSelector(clone), property: 'layout:duplicate', before: 'Not on the page', after: 'Copy inserted after the original', kind: 'layout', domBefore: { ...captureOriginalState(clone), parent: null }, domAfter: captureOriginalState(clone) }, 'Duplicate');
+    mirrorToDevice([parent], restoreInDevice);
+    selectElement(clone);
+  };
+
+  /** Returns true when the key was a selection command and has been carried out. */
+  const handleCanvasKey = (event: KeyboardEvent): boolean => {
+    const command = event.metaKey || event.ctrlKey;
+    if (command && event.shiftKey && event.key.toLowerCase() === 'l') { setLayersOpen((current) => !current); return true; }
+    if (!canvasEdit || !selectedRef.current) return false;
+    if (command && !event.shiftKey && !event.altKey && event.key.toLowerCase() === 'd') { duplicateSelection(); return true; }
+    if (!command && !event.altKey && (event.key === 'Delete' || event.key === 'Backspace')) { hideElements(currentTargets()); return true; }
+    if (!command && !event.altKey && event.shiftKey && event.key.toLowerCase() === 'h') { flip('x'); return true; }
+    if (!command && !event.altKey && event.shiftKey && event.key.toLowerCase() === 'v') { flip('y'); return true; }
+    if (!command && !event.altKey && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) { nudge(event.key, event.shiftKey ? 10 : 1); return true; }
+    return false;
+  };
+  canvasKeyRef.current = handleCanvasKey;
+  canvasMoveRef.current = startMove;
 
   const restoreOriginal = (original: OriginalState) => {
     restoreCapturedState(original);
@@ -4658,10 +5122,21 @@ function HandoffInspectorPanel() {
     }
   };
 
+  /** Duplicates have no original to restore; a reset simply takes them off the page. */
+  const removeDuplicates = (entries: readonly DesignChange[]) => {
+    entries.forEach((change) => {
+      if (change.property !== 'layout:duplicate') return;
+      const parent = change.element.parentElement;
+      change.element.remove();
+      if (parent) mirrorToDevice([parent], restoreInDevice);
+    });
+  };
+
   const resetElement = () => {
     if (!snapshot) return;
     const targets = currentTargets();
     const layoutTargets = new Set(changesRef.current.filter((change) => change.kind === 'layout' && targets.includes(change.element)).map((change) => change.element));
+    removeDuplicates(changesRef.current.filter((change) => targets.includes(change.element)));
     targets.forEach((element) => { const original = originalsRef.current.get(element); if (original) { restoreOriginal(original); originalsRef.current.delete(element); } });
     undoStackRef.current = undoStackRef.current
       .map((entry) => ({ ...entry, changes: entry.changes.filter((change) => !targets.includes(change.element)) }))
@@ -4690,6 +5165,7 @@ function HandoffInspectorPanel() {
   const resetAll = () => {
     const touched = Array.from(originalsRef.current.keys());
     const layoutTargets = new Set(changesRef.current.filter((change) => change.kind === 'layout').map((change) => change.element));
+    removeDuplicates(changesRef.current);
     originalsRef.current.forEach(restoreOriginal);
     originalsRef.current.clear();
     tokenVariableOriginalsRef.current.forEach((_, name) => restoreTokenVariable(name));
@@ -4916,7 +5392,12 @@ function HandoffInspectorPanel() {
         canvasEdit={canvasEdit}
         canvasSize={canvasSize}
         canvasBusyRef={canvasBusyRef}
+        swallowClickRef={swallowClickRef}
+        guides={guides}
+        hoverPath={layerHoverPath}
         onCanvasResize={(direction, event, scale, onUpdate) => { if (snapshot) startResize(snapshot.element, direction, event, scale, onUpdate); }}
+        onCanvasMove={onCanvasMove}
+        onCanvasKey={onCanvasKey}
         onCanvasText={applyTextFromDevice}
         onFrameDocument={registerDeviceDocument}
         onSelectPath={selectFromDevice}
@@ -4926,6 +5407,7 @@ function HandoffInspectorPanel() {
         onRedo={redoHistory}
         onNotice={(label) => setToast({ id: Date.now(), label })}
       />}
+      {!deviceOpen && <GuideLayer guides={guides} live />}
       {!deviceOpen && mode !== 'handoff' && parentRect && <div className="hi-selection-parent" style={{ top: parentRect.top, left: parentRect.left, width: parentRect.width, height: parentRect.height }} />}
       {!deviceOpen && mode !== 'handoff' && locked && liveSelection.filter((element) => element.ownerDocument === document && element !== overlaySnapshot?.element).map((element) => {
         const rect = element.getBoundingClientRect();

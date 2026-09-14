@@ -2188,11 +2188,56 @@
   transform: translateX(-50%);
 }
 .hi-selection-parent--canvas { position: absolute; z-index: 2; border-width: calc(1px * var(--hi-chrome-scale, 1)); border-color: rgba(13,153,255,.5); }
+
+/* Smart guides: red for alignment, pink for equal spacing, blue for the reorder drop line.
+   Everything is counter-scaled so a line is one screen pixel at any zoom. */
+.hi-guides { position: absolute; z-index: 4; inset: 0; overflow: visible; pointer-events: none; }
+.hi-guides.is-live { position: fixed; z-index: 2147483602; }
+.hi-guide { position: absolute; display: block; --hi-guide-color: #f24822; }
+.hi-guide.is-x { width: 0; border-left: calc(1px * var(--hi-chrome-scale, 1)) solid var(--hi-guide-color); }
+.hi-guide.is-y { height: 0; border-top: calc(1px * var(--hi-chrome-scale, 1)) solid var(--hi-guide-color); }
+.hi-guide--gap { --hi-guide-color: #ff24bd; }
+.hi-guide--gap.is-x::before,
+.hi-guide--gap.is-x::after { position: absolute; left: calc(-4px * var(--hi-chrome-scale, 1)); width: calc(8px * var(--hi-chrome-scale, 1)); height: 0; content: ""; border-top: calc(1px * var(--hi-chrome-scale, 1)) solid var(--hi-guide-color); }
+.hi-guide--gap.is-x::before { top: 0; }
+.hi-guide--gap.is-x::after { bottom: 0; }
+.hi-guide--gap.is-y::before,
+.hi-guide--gap.is-y::after { position: absolute; top: calc(-4px * var(--hi-chrome-scale, 1)); width: 0; height: calc(8px * var(--hi-chrome-scale, 1)); content: ""; border-left: calc(1px * var(--hi-chrome-scale, 1)) solid var(--hi-guide-color); }
+.hi-guide--gap.is-y::before { left: 0; }
+.hi-guide--gap.is-y::after { right: 0; }
+.hi-guide--insert { --hi-guide-color: #0d99ff; }
+.hi-guide--insert.is-x { border-left-width: calc(2px * var(--hi-chrome-scale, 1)); margin-left: calc(-1px * var(--hi-chrome-scale, 1)); }
+.hi-guide--insert.is-y { border-top-width: calc(2px * var(--hi-chrome-scale, 1)); margin-top: calc(-1px * var(--hi-chrome-scale, 1)); }
+.hi-guide b {
+  position: absolute; top: 50%; left: 50%; padding: calc(2px * var(--hi-chrome-scale, 1)) calc(4px * var(--hi-chrome-scale, 1));
+  border-radius: calc(3px * var(--hi-chrome-scale, 1)); color: #fff; background: var(--hi-guide-color);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: calc(10px * var(--hi-chrome-scale, 1)); font-weight: 500; line-height: 1; white-space: nowrap;
+  transform: translate(-50%, -50%);
+}
+.hi-guide.is-x b { left: calc(6px * var(--hi-chrome-scale, 1)); transform: translate(0, -50%); }
+.hi-guide.is-y b { top: calc(6px * var(--hi-chrome-scale, 1)); transform: translate(-50%, 0); }
 .hi-selection-chrome .hi-handle { width: calc(8px * var(--hi-chrome-scale, 1)); height: calc(8px * var(--hi-chrome-scale, 1)); border-width: calc(1px * var(--hi-chrome-scale, 1)); }
 .hi-selection-chrome .hi-handle--n,
 .hi-selection-chrome .hi-handle--s { width: calc(22px * var(--hi-chrome-scale, 1)); border-color: transparent; background: transparent; }
 .hi-selection-chrome .hi-handle--e,
 .hi-selection-chrome .hi-handle--w { height: calc(22px * var(--hi-chrome-scale, 1)); border-color: transparent; background: transparent; }
+/* Offsets counter-scale with the sizes, so a handle stays centred on its edge at 25% as at 100%. */
+.hi-selection-chrome .hi-handle--n,
+.hi-selection-chrome .hi-handle--s { margin-left: calc(-11px * var(--hi-chrome-scale, 1)); }
+.hi-selection-chrome .hi-handle--e,
+.hi-selection-chrome .hi-handle--w { margin-top: calc(-11px * var(--hi-chrome-scale, 1)); }
+.hi-selection-chrome .hi-handle--n,
+.hi-selection-chrome .hi-handle--nw,
+.hi-selection-chrome .hi-handle--ne { top: calc(-4px * var(--hi-chrome-scale, 1)); }
+.hi-selection-chrome .hi-handle--s,
+.hi-selection-chrome .hi-handle--sw,
+.hi-selection-chrome .hi-handle--se { bottom: calc(-4px * var(--hi-chrome-scale, 1)); }
+.hi-selection-chrome .hi-handle--e,
+.hi-selection-chrome .hi-handle--ne,
+.hi-selection-chrome .hi-handle--se { right: calc(-4px * var(--hi-chrome-scale, 1)); }
+.hi-selection-chrome .hi-handle--w,
+.hi-selection-chrome .hi-handle--nw,
+.hi-selection-chrome .hi-handle--sw { left: calc(-4px * var(--hi-chrome-scale, 1)); }
 
 /* The right panel becomes the second, flush workspace column. */
 .hi-panel.hi-panel--workspace {
