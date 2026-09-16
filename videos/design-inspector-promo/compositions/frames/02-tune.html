@@ -1,0 +1,328 @@
+<template>
+  <div id="root" data-composition-id="02-tune" data-width="1920" data-height="1080">
+    <div class="clip f02-tune-ground" data-start="0" data-duration="6.5" data-track-index="0"></div>
+
+    <div class="clip f02-tune-stage" data-start="0" data-duration="6.5" data-track-index="1">
+      <section class="f02-tune-page" aria-label="Selected page element">
+        <div class="f02-tune-page-chrome">
+          <div class="f02-tune-brand-dot"></div>
+          <div class="f02-tune-page-line f02-tune-page-line-wide"></div>
+          <div class="f02-tune-page-line"></div>
+          <div class="f02-tune-page-chip">Preview</div>
+        </div>
+
+        <header class="f02-tune-title-block">
+          <div class="f02-tune-eyebrow">DESIGN INSPECTOR</div>
+          <h1 id="f02-tune-title">Tune it live.</h1>
+        </header>
+
+        <div class="f02-tune-canvas-label">SELECTED ELEMENT</div>
+        <div id="f02-tune-target-wrap" class="f02-tune-target-wrap">
+          <button id="f02-tune-target-button" class="f02-tune-target-button">
+            <span id="f02-tune-target-label">Button</span>
+          </button>
+          <div class="f02-tune-select-box">
+            <i class="f02-tune-handle f02-tune-handle-tl"></i><i class="f02-tune-handle f02-tune-handle-tr"></i>
+            <i class="f02-tune-handle f02-tune-handle-bl"></i><i class="f02-tune-handle f02-tune-handle-br"></i>
+          </div>
+        </div>
+
+        <div id="f02-tune-chip-top" class="f02-tune-measure f02-tune-measure-top"><b>8</b><span>radius</span></div>
+        <div id="f02-tune-chip-left" class="f02-tune-measure f02-tune-measure-left"><b id="f02-tune-measure-left-value">20</b><span>px</span></div>
+        <div id="f02-tune-chip-right" class="f02-tune-measure f02-tune-measure-right"><b id="f02-tune-measure-right-value">20</b><span>px</span></div>
+        <div class="f02-tune-baseline"></div>
+        <div class="f02-tune-binding-line"><span></span></div>
+      </section>
+
+      <aside class="f02-tune-panel" aria-label="Design inspector controls">
+        <div class="f02-tune-panel-top">
+          <div class="f02-tune-inspector-mark">DI</div>
+          <div>
+            <div class="f02-tune-panel-name">Inspector</div>
+            <div class="f02-tune-panel-sub">Button · selected</div>
+          </div>
+          <div class="f02-tune-live-pill"><i></i>LIVE</div>
+        </div>
+
+        <nav class="f02-tune-tabs">
+          <div id="f02-tune-design-tab" class="f02-tune-tab f02-tune-tab-active">Design</div>
+          <div id="f02-tune-handoff-tab" class="f02-tune-tab">Handoff</div>
+        </nav>
+
+        <div class="f02-tune-panel-viewport">
+          <div id="f02-tune-panel-content" class="f02-tune-panel-content">
+            <section id="f02-tune-layout-group" class="f02-tune-control-group">
+              <div class="f02-tune-group-head"><span>Layout</span><b>−</b></div>
+              <div class="f02-tune-field-row">
+                <label>Radius</label>
+                <div id="f02-tune-radius-field" class="f02-tune-field f02-tune-field-focus">
+                  <span id="f02-tune-radius-value">8</span><em>px</em>
+                  <div class="f02-tune-scrub-track"><i id="f02-tune-radius-fill"></i></div>
+                </div>
+              </div>
+              <div class="f02-tune-field-row">
+                <label>Horizontal</label>
+                <div id="f02-tune-padding-field" class="f02-tune-field">
+                  <span id="f02-tune-padding-value">20</span><em>px</em>
+                  <div class="f02-tune-scrub-track"><i id="f02-tune-padding-fill"></i></div>
+                </div>
+              </div>
+              <div class="f02-tune-field-row f02-tune-muted-row"><label>Vertical</label><div class="f02-tune-field"><span>14</span><em>px</em></div></div>
+            </section>
+
+            <section class="f02-tune-control-group f02-tune-fill-group">
+              <div class="f02-tune-group-head"><span>Fill</span><b>−</b></div>
+              <div class="f02-tune-swatches">
+                <div class="f02-tune-swatch" data-swatch="slate"><i></i></div>
+                <div class="f02-tune-swatch" data-swatch="blue"><i></i></div>
+                <div class="f02-tune-swatch" data-swatch="violet"><i></i><b id="f02-tune-swatch-check">✓</b></div>
+              </div>
+              <div class="f02-tune-swap-wrap">
+                <div id="f02-tune-token-out" class="f02-tune-token-card f02-tune-token-out">Local value</div>
+                <div id="f02-tune-token-in" class="f02-tune-token-card f02-tune-token-in"><i></i>brand/500</div>
+              </div>
+            </section>
+          </div>
+        </div>
+
+        <div class="f02-tune-panel-footer">
+          <div class="f02-tune-a11y-label">ACCESSIBILITY</div>
+          <div class="f02-tune-a11y-wrap">
+            <div id="f02-tune-a11y-checking" class="f02-tune-a11y-state f02-tune-a11y-checking"><i></i>Checking</div>
+            <div id="f02-tune-a11y-pass" class="f02-tune-a11y-state f02-tune-a11y-pass"><b>✓</b>AA · Pass</div>
+          </div>
+        </div>
+      </aside>
+
+      <div id="f02-tune-cursor" class="f02-tune-cursor"><div class="f02-tune-cursor-tip"></div><span></span></div>
+      <div class="f02-tune-progress"><i></i></div>
+    </div>
+  </div>
+
+  <style>
+    #root {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      container-type: size;
+      color: #171e31;
+    }
+    #root * { box-sizing: border-box; }
+    .f02-tune-ground {
+      position: absolute;
+      inset: 0;
+      background: #ffffff;
+    }
+    .f02-tune-stage { position: absolute; inset: 0; overflow: hidden; }
+    .f02-tune-page {
+      position: absolute;
+      left: 4.8cqw;
+      top: 7.4cqh;
+      width: 65.3cqw;
+      height: 74.8cqh;
+      border: 1.5px solid rgba(124,60,255,.2);
+      border-radius: 14px;
+      background: rgba(124,60,255,.025);
+      overflow: hidden;
+    }
+    .f02-tune-page-chrome {
+      height: 7.2cqh;
+      border-bottom: 1px solid rgba(124,60,255,.14);
+      display: flex;
+      align-items: center;
+      gap: .65cqw;
+      padding: 0 1.25cqw;
+    }
+    .f02-tune-brand-dot { width: 16px; height: 16px; border-radius: 50%; background:#7c3cff; }
+    .f02-tune-page-line { width: 3.5cqw; height: 7px; border-radius: 100px; background: rgba(59,130,246,.18); }
+    .f02-tune-page-line-wide { width: 5.8cqw; }
+    .f02-tune-page-chip {
+      margin-left:auto; padding:7px 14px; border-radius:100px; color:#7c3cff;
+      background:rgba(124,60,255,.08); font-size:12px; font-weight:600; letter-spacing:.05em;
+    }
+    .f02-tune-title-block { position:absolute; left:2.4cqw; top:11.3cqh; }
+    .f02-tune-eyebrow { color:#7c3cff; font-size:.8cqw; font-weight:650; letter-spacing:.08em; }
+    .f02-tune-title-block h1 {
+      margin: .55cqh 0 0; font-size:4.2cqw; line-height:1.08; letter-spacing:-.02em;
+      font-weight:700; color:#171e31;
+    }
+    .f02-tune-canvas-label {
+      position:absolute; left:16.3cqw; top:41.6cqh; font-size:.7cqw; font-weight:650;
+      letter-spacing:.09em; color:#9a9a9a;
+    }
+    .f02-tune-target-wrap {
+      position:absolute; left:15.85cqw; top:44.45cqh; width:12.5cqw; height:8.15cqh;
+      transform-origin:50% 50%;
+    }
+    .f02-tune-target-button {
+      position:absolute; inset:0; border-radius:8px; border:1.5px solid #3b82f6;
+      background:#ffffff; color:#171e31; font:600 1.15cqw/1 sans-serif; letter-spacing:-.01em;
+    }
+    .f02-tune-target-button span { display:inline-block; transform-origin:50% 50%; }
+    .f02-tune-select-box { position:absolute; inset:-7px; border:1.5px solid #3b82f6; border-radius:11px; pointer-events:none; }
+    .f02-tune-handle { position:absolute; width:10px; height:10px; border:2px solid #3b82f6; background:#fff; border-radius:3px; }
+    .f02-tune-handle-tl { left:-6px; top:-6px; } .f02-tune-handle-tr { right:-6px; top:-6px; }
+    .f02-tune-handle-bl { left:-6px; bottom:-6px; } .f02-tune-handle-br { right:-6px; bottom:-6px; }
+    .f02-tune-measure {
+      position:absolute; display:flex; align-items:center; gap:5px; padding:6px 10px; min-width:50px;
+      border:1px solid rgba(124,60,255,.2); border-radius:100px; background:#fff; color:#7c3cff;
+      font-size:12px; font-variant-numeric:tabular-nums; transform-origin:50% 50%;
+    }
+    .f02-tune-measure b { font-size:14px; min-width:17px; text-align:right; }
+    .f02-tune-measure span { color:#9a9a9a; }
+    .f02-tune-measure-top { left:20.3cqw; top:40.6cqh; }
+    .f02-tune-measure-left { left:10.1cqw; top:48.3cqh; }
+    .f02-tune-measure-right { left:29.2cqw; top:48.3cqh; }
+    .f02-tune-baseline { position:absolute; left:7cqw; right:7cqw; top:63.6cqh; height:1px; background:rgba(59,130,246,.14); }
+    .f02-tune-binding-line {
+      position:absolute; left:28.4cqw; top:48.45cqh; width:34cqw; height:1px;
+      background:linear-gradient(90deg,#3b82f6 0 46%,transparent 46% 54%,#7c3cff 54%);
+    }
+    .f02-tune-binding-line span { position:absolute; right:-4px; top:-4px; width:9px; height:9px; border-radius:50%; background:#7c3cff; }
+    .f02-tune-panel {
+      position:absolute; left:75.52cqw; top:7.4cqh; width:20.3cqw; height:74.8cqh;
+      border:1.5px solid rgba(124,60,255,.2); border-radius:14px; background:#fff; overflow:hidden;
+    }
+    .f02-tune-panel-top { height:8.4cqh; padding:0 1.05cqw; display:flex; align-items:center; gap:.7cqw; border-bottom:1px solid rgba(124,60,255,.14); }
+    .f02-tune-inspector-mark { width:36px; height:36px; border-radius:10px; display:grid; place-items:center; background:#7c3cff; color:#fff; font-size:13px; font-weight:750; }
+    .f02-tune-panel-name { font-size:16px; font-weight:680; }
+    .f02-tune-panel-sub { margin-top:3px; font-size:11px; color:#9a9a9a; }
+    .f02-tune-live-pill { margin-left:auto; padding:6px 9px; border-radius:100px; background:rgba(124,60,255,.08); color:#7c3cff; font-size:10px; font-weight:700; letter-spacing:.08em; }
+    .f02-tune-live-pill i { display:inline-block; width:6px; height:6px; border-radius:50%; margin-right:5px; background:#7c3cff; }
+    .f02-tune-tabs { height:5.8cqh; display:grid; grid-template-columns:1fr 1fr; padding:0 .8cqw; border-bottom:1px solid rgba(124,60,255,.12); }
+    .f02-tune-tab { display:grid; place-items:center; color:#9a9a9a; font-size:13px; font-weight:620; position:relative; }
+    .f02-tune-tab-active { color:#7c3cff; }
+    .f02-tune-tab-active::after { content:""; position:absolute; left:16%; right:16%; bottom:0; height:3px; background:#7c3cff; border-radius:6px 6px 0 0; }
+    .f02-tune-panel-viewport { position:absolute; left:0; right:0; top:14.2cqh; height:43cqh; overflow:hidden; }
+    .f02-tune-panel-content { position:absolute; inset:0; padding:1.35cqw 1.05cqw; }
+    .f02-tune-control-group { border:1.5px solid rgba(124,60,255,.2); background:rgba(124,60,255,.04); border-radius:12px; padding:.85cqw; transform-origin:50% 0%; }
+    .f02-tune-fill-group { margin-top:1cqh; }
+    .f02-tune-group-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:1cqh; font-size:14px; font-weight:680; }
+    .f02-tune-group-head b { color:#7c3cff; font-size:18px; }
+    .f02-tune-field-row { display:grid; grid-template-columns:1fr 1.25fr; align-items:center; gap:.5cqw; margin-top:.9cqh; }
+    .f02-tune-field-row label { font-size:12px; color:#3b82f6; }
+    .f02-tune-field { min-width:6.4cqw; padding:8px 9px; border:1px solid rgba(124,60,255,.2); border-radius:10px; background:#fff; color:#171e31; font-size:13px; font-variant-numeric:tabular-nums; position:relative; }
+    .f02-tune-field-focus { border-color:#7c3cff; }
+    .f02-tune-field span { display:inline-block; min-width:23px; font-weight:680; text-align:right; }
+    .f02-tune-field em { font-style:normal; color:#9a9a9a; margin-left:5px; }
+    .f02-tune-scrub-track { position:absolute; left:8px; right:8px; bottom:3px; height:2px; background:rgba(124,60,255,.1); border-radius:6px; overflow:hidden; }
+    .f02-tune-scrub-track i { display:block; width:12%; height:100%; background:#7c3cff; transform-origin:0 50%; }
+    .f02-tune-muted-row { opacity:.56; }
+    .f02-tune-swatches { display:flex; gap:.55cqw; }
+    .f02-tune-swatch { width:42px; height:32px; border-radius:9px; border:1.5px solid rgba(124,60,255,.2); padding:4px; position:relative; }
+    .f02-tune-swatch i { display:block; width:100%; height:100%; border-radius:6px; background:#171e31; }
+    .f02-tune-swatch[data-swatch="blue"] i { background:#3b82f6; }
+    .f02-tune-swatch[data-swatch="violet"] i { background:#7c3cff; }
+    .f02-tune-swatch-active { border-color:#7c3cff; background:rgba(124,60,255,.08); }
+    .f02-tune-swatch b { position:absolute; inset:0; display:grid; place-items:center; color:#fff; font-size:14px; }
+    .f02-tune-swap-wrap { position:relative; height:36px; margin-top:1.1cqh; }
+    .f02-tune-token-card { position:absolute; inset:0; display:flex; align-items:center; gap:8px; padding:0 11px; border-radius:100px; border:1px solid rgba(124,60,255,.2); background:#fff; color:#3b82f6; font-size:12px; transform-origin:50% 50%; }
+    .f02-tune-token-in { z-index:2; color:#7c3cff; }
+    .f02-tune-token-in i { width:10px; height:10px; border-radius:50%; background:#7c3cff; }
+    .f02-tune-panel-footer { position:absolute; left:1.05cqw; right:1.05cqw; bottom:1.35cqh; height:10.4cqh; padding-top:1.15cqh; border-top:1px solid rgba(124,60,255,.14); }
+    .f02-tune-a11y-label { font-size:10px; color:#9a9a9a; font-weight:700; letter-spacing:.08em; }
+    .f02-tune-a11y-wrap { position:relative; height:40px; margin-top:.7cqh; }
+    .f02-tune-a11y-state { position:absolute; inset:0; display:flex; align-items:center; gap:9px; border-radius:10px; padding:0 11px; font-size:13px; font-weight:650; transform-origin:50% 50%; }
+    .f02-tune-a11y-checking { background:rgba(124,60,255,.04); border:1px solid rgba(124,60,255,.2); color:#3b82f6; }
+    .f02-tune-a11y-checking i { width:12px; height:12px; border:2px solid #9a9a9a; border-right-color:#7c3cff; border-radius:50%; }
+    .f02-tune-a11y-pass { z-index:2; background:rgba(5,150,105,.06); border:1px solid rgba(5,150,105,.22); color:#059669; }
+    .f02-tune-a11y-pass b { width:20px; height:20px; border-radius:50%; display:grid; place-items:center; background:#059669; color:#fff; font-size:11px; }
+    .f02-tune-cursor { position:absolute; left:80.9cqw; top:35.6cqh; width:30px; height:38px; transform-origin:0 0; z-index:10; }
+    .f02-tune-cursor-tip { width:0; height:0; border-top:19px solid #171e31; border-right:13px solid transparent; filter:drop-shadow(0 0 1px #fff); transform:rotate(-17deg); }
+    .f02-tune-cursor span { position:absolute; left:11px; top:18px; width:16px; height:16px; border-radius:50%; border:2px solid rgba(124,60,255,.42); }
+    .f02-tune-progress { position:absolute; left:5cqw; right:5cqw; top:81.5cqh; height:3px; background:rgba(124,60,255,.08); }
+    .f02-tune-progress i { display:block; width:40%; height:100%; background:#7c3cff; }
+  </style>
+
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+  <script>
+    (() => {
+      const tl = gsap.timeline({ paused: true });
+      const q = (id) => document.getElementById(id);
+
+      const radiusState = { value: 8 };
+      const paddingState = { value: 20 };
+      const radiusValue = q("f02-tune-radius-value");
+      const radiusChip = q("f02-tune-chip-top").querySelector("b");
+      const paddingValue = q("f02-tune-padding-value");
+      const leftMeasure = q("f02-tune-measure-left-value");
+      const rightMeasure = q("f02-tune-measure-right-value");
+
+      tl.fromTo("#f02-tune-title", { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: .58, ease: "power3.out" }, .08);
+      tl.fromTo("#f02-tune-layout-group", { opacity: .35, scaleY: .78 }, { opacity: 1, scaleY: 1, duration: .62, ease: "power3.out" }, .08);
+      ["#f02-tune-chip-top", "#f02-tune-chip-left", "#f02-tune-chip-right"].forEach((el, i) => {
+        tl.fromTo(el, { opacity: 0, scale: 0, y: 10 }, { opacity: 1, scale: 1, y: 0, duration: .48, ease: "power3.out" }, .25 + i * .08);
+      });
+      tl.fromTo(".f02-tune-binding-line", { opacity: 0, scaleX: .18 }, { opacity: 1, scaleX: 1, duration: .6, transformOrigin: "0% 50%", ease: "power3.out" }, .54);
+
+      tl.addLabel("radius-edit", 1.2);
+      tl.fromTo("#f02-tune-cursor", { x: -20, y: -16, opacity: 0 }, { x: 0, y: 0, opacity: 1, duration: .34, ease: "power3.out" }, "radius-edit");
+      tl.to("#f02-tune-cursor", { x: 58, duration: 1.18, ease: "power1.inOut" }, "radius-edit+=.18");
+      tl.to(radiusState, {
+        value: 24, duration: 1.18, ease: "power1.inOut",
+        onUpdate: () => { const value = Math.round(radiusState.value); radiusValue.textContent = value; radiusChip.textContent = value; }
+      }, "radius-edit+=.18");
+      tl.to("#f02-tune-target-button, .f02-tune-select-box", { borderRadius: 24, duration: 1.18, ease: "power1.inOut" }, "radius-edit+=.18");
+      tl.to("#f02-tune-radius-fill", { scaleX: 1, duration: 1.18, ease: "power1.inOut" }, "radius-edit+=.18");
+
+      tl.addLabel("padding-edit", 3.0);
+      tl.to("#f02-tune-panel-content", { y: -82, duration: .5, ease: "power3.out" }, "padding-edit");
+      tl.to("#f02-tune-cursor", { x: -12, y: 51, duration: .38, ease: "power3.out" }, "padding-edit");
+      tl.to("#f02-tune-cursor", { x: 54, duration: 1.12, ease: "power1.inOut" }, "padding-edit+=.38");
+      tl.to(paddingState, {
+        value: 32, duration: 1.12, ease: "power1.inOut",
+        onUpdate: () => { const value = Math.round(paddingState.value); paddingValue.textContent = value; leftMeasure.textContent = value; rightMeasure.textContent = value; }
+      }, "padding-edit+=.38");
+      tl.to("#f02-tune-target-wrap", { scaleX: 1.2, duration: 1.12, ease: "power1.inOut" }, "padding-edit+=.38");
+      tl.to("#f02-tune-target-label", { scaleX: .8333, duration: 1.12, ease: "power1.inOut" }, "padding-edit+=.38");
+      tl.to("#f02-tune-chip-left", { x: -28, duration: 1.12, ease: "power1.inOut" }, "padding-edit+=.38");
+      tl.to("#f02-tune-chip-right", { x: 28, duration: 1.12, ease: "power1.inOut" }, "padding-edit+=.38");
+      tl.to("#f02-tune-padding-fill", { scaleX: 1, duration: 1.12, ease: "power1.inOut" }, "padding-edit+=.38");
+
+      tl.addLabel("token-edit", 4.8);
+      tl.to("#f02-tune-cursor", { x: -105, y: 138, duration: .34, ease: "power3.out" }, "token-edit");
+      const TOKEN_CONTENT = [
+        { key: "slate", hold: .12 },
+        { key: "blue", hold: .12 },
+        { key: "violet", hold: .48 }
+      ];
+      let tokenTime = 0;
+      const TOKEN_TIMELINE = TOKEN_CONTENT.map((entry) => {
+        const start = tokenTime; tokenTime += entry.hold; return { ...entry, start, end: tokenTime };
+      });
+      const tokenAt = (time) => {
+        for (let i = TOKEN_TIMELINE.length - 1; i >= 0; i--) if (time >= TOKEN_TIMELINE[i].start) return TOKEN_TIMELINE[i];
+        return TOKEN_TIMELINE[0];
+      };
+      const tokenDriver = { t: 0 };
+      let lastToken = "";
+      tl.to(tokenDriver, {
+        t: tokenTime, duration: tokenTime, ease: "none",
+        onUpdate: () => {
+          const entry = tokenAt(tokenDriver.t);
+          if (entry.key !== lastToken) {
+            document.querySelectorAll(".f02-tune-swatch").forEach((el) => el.classList.toggle("f02-tune-swatch-active", el.dataset.swatch === entry.key));
+            if (entry.key === "slate") gsap.set("#f02-tune-target-button", { backgroundColor: "#171e31", color: "#ffffff" });
+            if (entry.key === "blue") gsap.set("#f02-tune-target-button", { backgroundColor: "#3b82f6", color: "#ffffff" });
+            if (entry.key === "violet") gsap.set("#f02-tune-target-button", { backgroundColor: "#7c3cff", color: "#ffffff" });
+            lastToken = entry.key;
+          }
+        }
+      }, "token-edit+=.25");
+      tl.fromTo("#f02-tune-swatch-check", { opacity: 0, scale: 0 }, { opacity: 1, scale: 1, duration: .42, ease: "power3.out" }, "token-edit+=.52");
+      tl.to("#f02-tune-token-out", { scale: .72, opacity: 0, duration: .34, ease: "power2.in" }, "token-edit+=.12");
+      tl.fromTo("#f02-tune-token-in", { scale: .72, opacity: 0 }, { scale: 1, opacity: 1, duration: .56, ease: "back.out(1.4)" }, "token-edit+=.31");
+
+      tl.addLabel("resolve", 5.8);
+      tl.to("#f02-tune-a11y-checking", { scale: .72, opacity: 0, duration: .3, ease: "power2.in" }, "resolve");
+      tl.fromTo("#f02-tune-a11y-pass", { scale: .72, opacity: 0 }, { scale: 1, opacity: 1, duration: .5, ease: "back.out(1.4)" }, "resolve+=.15");
+      tl.set("#f02-tune-design-tab", { className: "f02-tune-tab" }, "resolve+=.18");
+      tl.set("#f02-tune-handoff-tab", { className: "f02-tune-tab f02-tune-tab-active" }, "resolve+=.18");
+      tl.to("#f02-tune-cursor", { x: 22, y: -305, duration: .48, ease: "power3.out" }, "resolve");
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines["02-tune"] = tl;
+    })();
+  </script>
+</template>

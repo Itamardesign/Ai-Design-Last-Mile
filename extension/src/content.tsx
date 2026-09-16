@@ -14,9 +14,11 @@ import { designToolsCss } from '../../src/generated/designToolsCss.js';
 import type { DesignTokens } from '../../src/types.js';
 import type { PageMessage } from './messages.js';
 import { loadGoogleFamilies } from './webfont.js';
-import { startNoteMirror } from './notes.js';
+import { noteKeyFor, startNoteMirror, type NotePage } from './notes.js';
 import { startEditMirror } from './edits.js';
 import type { HandoffDocument } from './handoff.js';
+import type { StoredEdits } from './merge.js';
+import type { ShareLinkAccess, ShareRole, ShareState } from './sharing.js';
 import { coachCss, showCoachMarks } from './coach.js';
 
 const HOST_TAG = 'meraki-design-inspector';
@@ -179,7 +181,16 @@ type CloudHost = typeof window & {
   __merakiInspectorCloud?: { save: (doc: HandoffDocument) => Promise<{ ok: boolean; error?: string }> };
 };
 
-type HubHost = typeof window & { __merakiInspectorHub?: () => void };
+type HubHost = typeof window & { __merakiInspectorHub?: () => Promise<boolean> };
+
+type CollaborationHost = typeof window & {
+  __merakiInspectorShare?: {
+    state: () => Promise<ShareState>;
+    setLink: (access: ShareLinkAccess) => Promise<{ token: string | null }>;
+    invite: (email: string, role: ShareRole) => Promise<{ token: string }>;
+    removeMember: (uid: string) => Promise<{ ok: boolean }>;
+  };
+};
 
 function boot(): InspectorApi {
   ensureClipboard();
@@ -232,10 +243,50 @@ function boot(): InspectorApi {
     };
   };
 
+  const shareContext = () => ({ pageKey: noteKeyFor(window.location), url: window.location.href.split('#meraki-review=')[0], title: document.title });
+  const invitationToken = () => new URLSearchParams(window.location.hash.replace(/^#/, '')).get('meraki-review') ?? undefined;
+  const hydrateSharedReview = (hydrated?: { notes?: NotePage; edits?: StoredEdits }) => {
+    if (hydrated?.notes) {
+      const storageKey = `meraki-inspector-comments:${window.location.pathname.replace(/\/+$/, '') || '/'}`;
+      window.localStorage.setItem(storageKey, JSON.stringify(hydrated.notes.notes));
+      window.dispatchEvent(new CustomEvent('meraki-inspector-collaboration-refresh', { detail: { comments: hydrated.notes.notes } }));
+    }
+    if (hydrated?.edits?.changes.length) {
+      const session = { savedAt: new Date(hydrated.edits.savedAt).toISOString(), variables: hydrated.edits.variables, changes: hydrated.edits.changes };
+      window.localStorage.setItem(`meraki-inspector-session:${window.location.pathname.replace(/\/+$/, '') || '/'}`, JSON.stringify(session));
+      window.dispatchEvent(new CustomEvent('meraki-inspector-collaboration-refresh', { detail: { session } }));
+    }
+  };
+
+  const publishCollaboration = (signedIn: boolean) => {
+    if (!signedIn) {
+      delete (window as CollaborationHost).__merakiInspectorShare;
+      return;
+    }
+    const request = async <T,>(message: object): Promise<T> => {
+      const answer = await chrome.runtime.sendMessage(message) as (T & { error?: string }) | undefined;
+      if (!answer) throw new Error('No answer from the extension.');
+      if (answer.error) throw new Error(answer.error);
+      return answer;
+    };
+    (window as CollaborationHost).__merakiInspectorShare = {
+      state: async () => {
+        const state = await request<ShareState>({ type: 'share:state', ...shareContext(), token: invitationToken() });
+        hydrateSharedReview(state.hydrated);
+        return state;
+      },
+      setLink: (access) => request({ type: 'share:link', ...shareContext(), access }),
+      invite: (email, role) => request({ type: 'share:invite', ...shareContext(), email, role }),
+      removeMember: (uid) => request({ type: 'share:removeMember', ...shareContext(), uid }),
+    };
+  };
+
   void (async () => {
     try {
       const account = await chrome.runtime.sendMessage({ type: 'account' });
-      publishCloud((account as { mode?: string } | undefined)?.mode === 'cloud');
+      const signedIn = (account as { mode?: string; profile?: unknown } | undefined)?.mode === 'cloud' && Boolean((account as { profile?: unknown } | undefined)?.profile);
+      publishCloud(signedIn);
+      publishCollaboration(signedIn);
     } catch {
       // The worker is between lives. The button stays absent for this mount, which is the honest
       // answer: nothing could be saved right now anyway.
@@ -247,7 +298,10 @@ function boot(): InspectorApi {
   // things, so it picks the capability up on its own once it is there.
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local' || !changes.account) return;
-    publishCloud((changes.account.newValue as { mode?: string } | undefined)?.mode === 'cloud');
+    const account = changes.account.newValue as { mode?: string; profile?: unknown } | undefined;
+    const signedIn = account?.mode === 'cloud' && Boolean(account.profile);
+    publishCloud(signedIn);
+    publishCollaboration(signedIn);
   });
 
   /*
@@ -257,10 +311,16 @@ function boot(): InspectorApi {
    * account — lives there, and the panel is where they are when they want it. A page cannot navigate
    * to a `chrome-extension://` URL, so this asks the worker to open it.
    */
-  (window as HubHost).__merakiInspectorHub = () => {
-    void chrome.runtime.sendMessage({ type: 'openOptions' }).catch(() => {
-      // The worker is between lives; the toolbar icon is still there.
-    });
+  (window as HubHost).__merakiInspectorHub = async () => {
+    // `chrome.runtime.id` goes undefined when the extension has been reloaded or updated underneath
+    // this page: the script is still here, but it belongs to nobody, and every message would throw.
+    if (!chrome.runtime?.id) return false;
+    try {
+      const answer = (await chrome.runtime.sendMessage({ type: 'openOptions' })) as { ok?: boolean } | undefined;
+      return answer?.ok === true;
+    } catch {
+      return false;
+    }
   };
 
   // Notes and unfinished edits are mirrored into extension storage, so a site clearing its own storage

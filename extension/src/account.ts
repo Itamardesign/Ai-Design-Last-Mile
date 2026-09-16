@@ -58,9 +58,8 @@ const SETUP_MESSAGE =
 /**
  * The workspace a document belongs to.
  *
- * Every stored document carries one of these, and today it is always the signer's own uid — which
- * makes the per-user rules trivial. It exists as a separate concept so that sharing a review with a
- * team later is a change of *value* (a real workspace id) rather than a migration of every path.
+ * A private review uses the signer's uid. Page-scoped collaboration can redirect one review into
+ * another user's workspace without changing the storage shape used by the rest of the extension.
  */
 export const workspaceIdFor = (profile: Profile): string => profile.uid;
 

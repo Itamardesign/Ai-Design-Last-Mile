@@ -8,9 +8,8 @@
  *     workspaces/{workspaceId}/handoffs/{docId}    a kept handoff, newest first
  *     handoffs/{workspaceId}/{docId}.png           its screenshot, in Cloud Storage
  *
- * `workspaceId` is the signer's own uid today — see account.ts. Sharing a review with a team later
- * changes what that value is, not the shape of any path, which is the whole reason it is a named
- * concept instead of `users/{uid}`.
+ * `workspaceId` is the review owner's uid. A collaborator's page mapping redirects only that page's
+ * notes and edits into the owner's workspace; their private reviews continue using their own uid.
  *
  * ## The rules this file obeys
  *
@@ -33,6 +32,7 @@ import { changedKeys, docIdFor, mergeEditMaps, mergeNoteMaps, type StoredEdits }
 import { readAllNotes, writeAllNotes, type NotePage } from './notes.js';
 import { readAllEdits, writeAllEdits } from './edits.js';
 import type { HandoffDocument } from './handoff.js';
+import { cloudTargetFor } from './sharing.js';
 
 /** Resolves the workspace to write into, or null when this install is not syncing. */
 async function workspace(): Promise<{ id: string; account: Account } | null> {
@@ -56,12 +56,14 @@ export async function pushNotes(previous: Record<string, NotePage>, current: Rec
 
   const batch = writeBatch(db());
   for (const key of keys) {
-    const reference = doc(db(), 'workspaces', target.id, 'notes', docIdFor(key));
+    const destination = await cloudTargetFor(key, target.account);
+    if (!destination) continue;
+    const reference = doc(db(), 'workspaces', destination.workspaceId, 'notes', destination.pageId);
     const page = current[key];
     // A page whose notes were all deleted is emptied rather than removed: `deleteDoc` in a batch with
     // no read is fine, but an empty page is also the honest record of "this page has no notes now",
     // and it stops a stale copy on another machine from resurrecting them on the next merge.
-    batch.set(reference, page ? { ...page, pageKey: key, workspaceId: target.id } : { pageKey: key, workspaceId: target.id, url: '', title: '', savedAt: Date.now(), notes: [] });
+    batch.set(reference, page ? { ...page, pageKey: key, workspaceId: destination.workspaceId } : { pageKey: key, workspaceId: destination.workspaceId, url: '', title: '', savedAt: Date.now(), notes: [] });
   }
   await batch.commit();
   await markSynced();
@@ -77,9 +79,11 @@ export async function pushEdits(previous: Record<string, StoredEdits>, current: 
 
   const batch = writeBatch(db());
   for (const key of keys) {
-    const reference = doc(db(), 'workspaces', target.id, 'edits', docIdFor(key));
+    const destination = await cloudTargetFor(key, target.account);
+    if (!destination || destination.role !== 'edit') continue;
+    const reference = doc(db(), 'workspaces', destination.workspaceId, 'edits', destination.pageId);
     const page = current[key];
-    batch.set(reference, page ? { ...page, pageKey: key, workspaceId: target.id } : { pageKey: key, workspaceId: target.id, url: '', title: '', savedAt: Date.now(), variables: [], changes: [] });
+    batch.set(reference, page ? { ...page, pageKey: key, workspaceId: destination.workspaceId } : { pageKey: key, workspaceId: destination.workspaceId, url: '', title: '', savedAt: Date.now(), variables: [], changes: [] });
   }
   await batch.commit();
   await markSynced();

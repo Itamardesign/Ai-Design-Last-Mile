@@ -7,15 +7,18 @@
  */
 
 :root {
-  --tool-bg: #f7f7f8;
+  /* The panel's own palette (see the hi-root tokens in HandoffInspector.tsx): off-white workspace,
+     white surfaces, near-black text and Figma's blue for the one accent. */
+  --tool-bg: #f5f3ee;
   --tool-panel: #ffffff;
-  --tool-border: #e5e5e8;
-  --tool-border-strong: #d7d7dc;
-  --tool-text: #202124;
-  --tool-muted: #6e6e78;
-  --tool-faint: #9999a3;
-  --tool-accent: #8b5cf6;
-  --tool-accent-soft: #f1ebff;
+  --tool-border: #e5e5e5;
+  --tool-border-strong: #cfcfcf;
+  --tool-text: #1e1e1e;
+  --tool-muted: #6e6e6e;
+  --tool-faint: #9e9e9e;
+  --tool-accent: #0d99ff;
+  --tool-accent-soft: #e5f4ff;
+  --tool-accent-ink: #0b6fc2;
   --tool-orange: #ff5511;
   --tool-danger: #e5484d;
   --tool-green: #12a150;
@@ -44,22 +47,6 @@ a:hover { text-decoration: underline; }
 
 .brand { display: flex; align-items: center; gap: 8px; }
 
-/* The hub's table of contents: chips, so it reads as a set of places rather than a paragraph of links. */
-.hub-nav { display: flex; flex-wrap: wrap; gap: 6px; }
-.hub-nav a {
-  padding: 5px 10px;
-  border: 1px solid var(--tool-border);
-  border-radius: 999px;
-  background: #fff;
-  color: var(--tool-muted);
-  font-size: 11px;
-  font-weight: 600;
-  text-decoration: none;
-  transition: border-color .16s ease, color .16s ease;
-}
-.hub-nav a:hover { border-color: var(--tool-accent); color: var(--tool-accent); text-decoration: none; }
-/* Jumped-to sections must not land under the sticky heading, and must be findable when they do. */
-section[id] { scroll-margin-top: 14px; }
 
 .brand-mark {
   display: grid;
@@ -69,7 +56,7 @@ section[id] { scroll-margin-top: 14px; }
   place-items: center;
   border-radius: 7px;
   color: #fff;
-  background: #27212d;
+  background: #151b2d;
   font-size: 12px;
   font-weight: 700;
 }
@@ -156,7 +143,7 @@ button.primary {
   color: #fff;
   background: var(--tool-accent);
 }
-button.primary:hover:not(:disabled) { background: #7c4ceb; }
+button.primary:hover:not(:disabled) { background: #0a86e0; }
 
 button.ghost { border-color: transparent; background: transparent; color: var(--tool-muted); }
 button.ghost:hover:not(:disabled) { background: #efeff1; color: var(--tool-text); }
@@ -175,7 +162,7 @@ button.wide { width: 100%; }
   font-weight: 600;
 }
 
-.pill.on { background: var(--tool-accent-soft); color: #6d31d8; }
+.pill.on { background: var(--tool-accent-soft); color: var(--tool-accent-ink); }
 .pill.warn { background: #fff1e8; color: #b23c00; }
 .pill.bad { background: #fdecec; color: #b4292d; }
 

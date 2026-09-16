@@ -100,7 +100,8 @@ That's the whole install. If the button doesn't appear, see [Troubleshooting](#t
 - **Edit** its content, typography, fill and layout from the panel on the right.
 - **Drag it, resize it, flip it** on the canvas, with Figma's keys: drag moves (and reorders inside
   a flex or grid row), red guides snap it to its siblings, `Shift` `H`/`V` flip, `Ctrl` `D`
-  duplicates, `Delete` hides, arrows nudge. `Ctrl` `Shift` `L` opens the **Layers** column, the page
+  duplicates, `Delete` hides, arrows nudge. The column on the left has two tabs, like Figma's:
+  **Pages** lists the site's pages (from its own links) and takes you to one; **Layers** is the page
   as a tree you can hover, select and hide from. The full map is in
   [extension/README.md](./extension/README.md#on-the-canvas).
 - **Preview** the page at real device sizes from the *Device preview* section.
@@ -119,8 +120,8 @@ Edits apply to the live page only. Refresh and they're gone — copy anything yo
 You don't have to configure fonts or colours. When it opens, the inspector reads the page and
 picks up:
 
-- **The fonts your site actually uses** — grouped separately from system fonts and the 10 most
-  popular Google Fonts, each previewed in its own typeface.
+- **The fonts your site actually uses** — grouped separately from system fonts and the complete,
+  searchable Google Fonts catalogue, each visible choice previewed in its own typeface.
 - **Your colour palette** — sorted by role (accent, text, surface, border), shown as swatches.
 - **Your type scale** — family, size, weight, line-height and letter-spacing per text style.
 - **Your spacing and radius scale**, plus any `--custom-properties` you declare on `:root`
@@ -230,8 +231,9 @@ the inspector shows a switcher in its header. With one collection the switcher i
 | `resolveDetectedTokens()` | Everything above, as one `DesignTokens`. |
 | `DESIGN_MODE_PARAM` | The `'designmode'` string, if you need it. |
 
-One note on privacy: the font picker fetches the 10 Google families **only** when you open it,
-so a page that never opens the picker never contacts `fonts.googleapis.com`.
+One note on privacy: Google Font preview files are fetched **only** when you open the picker, and
+only for the choices currently displayed. A page that never opens the picker never contacts
+`fonts.googleapis.com`.
 
 ## License
 

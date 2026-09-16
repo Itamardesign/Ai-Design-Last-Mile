@@ -29,6 +29,34 @@ const TYPES = {
  */
 const CHROME_SHIM = `<script>
   const store = { settings: undefined, account: { mode: 'undecided', profile: null } };
+  // ?demo fills the hub the way a week of use would, so its layout can be judged with content in it.
+  if (new URLSearchParams(location.search).has('demo')) {
+    const now = Date.now();
+    store.settings = {
+      version: 1,
+      defaultSystemId: 'sys-acme',
+      siteSystems: { 'https://app.acme.com': 'sys-acme', 'https://staging.acme.com': '__detect__' },
+      autoOrigins: ['https://staging.acme.com'],
+      relaxCsp: true,
+      systems: [{
+        id: 'sys-acme', name: 'Acme product system', source: 'paste', raw: '{}', shape: 'plain', warnings: [],
+        counts: { colors: 14, typography: 6, spacing: 8, radius: 3 }, updatedAt: now - 864e5 * 3,
+        tokens: { collections: [{ id: 'p', name: 'Product', colors: ['#0d99ff','#0b6fc2','#1e1e1e','#6e6e6e','#f5f3ee','#ff5511','#12a150','#e5484d','#ffd266','#7c3cff'].map(function (value, i) { return { label: 'c' + i, value: value }; }), typography: [] }], spacing: [], radius: [] },
+      }],
+    };
+    store.notes = {
+      'https://app.acme.com/pricing': { url: 'https://app.acme.com/pricing', title: 'Pricing — Acme', savedAt: now - 36e5,
+        notes: [{ id: '1', path: '', selector: 'h1', label: 'note 1', text: 'Headline wraps on 1280 — tighten tracking', createdAt: new Date(now - 36e5).toISOString(), author: 'Itamar' },
+                { id: '2', path: '', selector: '.cta', label: 'note 2', text: 'CTA should be brand/500, not the old purple', createdAt: new Date(now - 30e5).toISOString(), resolved: true }] },
+      'https://app.acme.com/': { url: 'https://app.acme.com/', title: 'Acme — Home', savedAt: now - 864e5,
+        notes: [{ id: '3', path: '', selector: 'nav', label: 'note 1', text: 'Nav height 64 → 56 to match the system', createdAt: new Date(now - 864e5).toISOString() }] },
+    };
+    store.handoffs = [
+      { id: 'h1', workspaceId: 'w', url: 'https://app.acme.com/pricing', title: 'Pricing — Acme', author: 'Itamar', changeCount: 12, noteCount: 2, issueCount: 1, savedAt: now - 2 * 36e5, markdown: '# Pricing', screenshotUrl: null },
+      { id: 'h2', workspaceId: 'w', url: 'https://app.acme.com/', title: 'Acme — Home', author: 'Itamar', changeCount: 4, noteCount: 1, issueCount: 0, savedAt: now - 3 * 864e5, markdown: '# Home', screenshotUrl: null },
+    ];
+    store.account = { mode: 'cloud', profile: { uid: 'u', name: 'Itamar', email: 'itamar@acme.com', photo: null }, syncedAt: now - 6e4 };
+  }
   const noop = async () => undefined;
   const tabState = (active) => ({
     tabId: 1,
@@ -67,10 +95,11 @@ const CHROME_SHIM = `<script>
     },
     tabs: { query: async () => [{ id: 1, url: 'https://example.com/pricing' }], create: noop },
     runtime: {
+      id: 'harness',
       sendMessage: async (message) => {
         if (message.type === 'state' || message.type === 'toggle') return tabState(message.type === 'toggle');
         if (message.type.startsWith('account')) return account(message);
-        if (message.type === 'handoffs') return { handoffs: [] };
+        if (message.type === 'handoffs') return { handoffs: store.handoffs ?? [] };
         return { ok: true };
       },
       openOptionsPage: noop,
@@ -90,7 +119,7 @@ createServer(async (request, response) => {
     response.end(
       page
         // The pages live at the root of the packed extension; here they are served out of dist/.
-        .replaceAll('href="ui.css"', 'href="/dist/ui.css"')
+        .replaceAll(/href="(\w+\.css)"/g, 'href="/dist/$1"')
         .replaceAll(/src="(\w+\.js)"/g, 'src="/dist/$1"')
         .replace(/<script src=/, `${CHROME_SHIM}<script src=`),
     );

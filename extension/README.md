@@ -61,7 +61,7 @@ The selection is edited by hand, with Figma's gestures and keys where the DOM ha
 | **`Ctrl` `D`** | Duplicate — a copy after the original, selected |
 | **`Delete`** | Hide. The layers panel, or Undo, brings it back |
 | **`Ctrl` `Z` / `Ctrl` `Shift` `Z`** | Undo / redo, including moves, flips and duplicates |
-| **`Ctrl` `Shift` `L`** | The **Layers** column: the page as a tree. Hover outlines, click selects, the chevron unfolds, the eye hides or shows |
+| **Pages / Layers tabs** (left column, always open) | **Pages**: the site's pages, from its own links, with a count of open notes and edits on each — click to go there. **Layers**: the page as a tree. Hover outlines, click selects, the chevron unfolds, the eye hides or shows |
 | **Click inside a selected group** | Keeps the group selected, so any part of it can be dragged. `Ctrl` + click or double-click reaches the child |
 | **`Shift` + click** | Adds to the selection; a drag then moves everything selected together |
 
@@ -173,8 +173,20 @@ from the popup — useful when the marketing site and the product are different 
 
 ## The hub
 
-Everything the tool keeps for you lives on one page: the design systems you connect, where each one
-applies, every review you have left, the handoffs you kept, and your account. Three ways in —
+Everything the tool keeps for you, laid out the way the panel is: a column of places on the left,
+one page at a time on the right.
+
+| | |
+|---|---|
+| **Overview** | How to start, and the numbers — systems connected, notes still open, handoffs kept, whether you are syncing — with the latest notes and handoffs a click away |
+| **Design systems** | Connect one by paste or URL, see what was read back, pick the default |
+| **Review notes** | Every page you have left a note on, newest first, each one a paste from being a ticket |
+| **Handoffs** | The documents you kept from the panel, as they read when you handed them over |
+| **Account** | Sign in, skip, or see what is syncing |
+| **Advanced** | Per-site rules, the sites the inspector starts on by itself, the strict-site switch, and the token formats the tool reads |
+
+The column's counts are the summary; a page's URL is its hash (`#notes`), so a link lands on the
+right place and Back works. Three ways in —
 
 - the **gear in the panel header**, which is where you are when you want it;
 - **Open your hub** in the popup, or the account line above it;
@@ -254,6 +266,14 @@ it does is identify the project. What actually protects one designer's review fr
 firebase deploy --only firestore:rules,storage
 ```
 
+The repo root carries a `firebase.json` and `.firebaserc` pointing at the `ai-last-mile` project, so the
+command works from there without further setup.
+
+The landing page's waitlist form writes to a `waitlist` collection through the Firestore REST API with
+the same public key. Its rule is create-only: one document per lower-cased address (a second join is a
+409 the form treats as success), a shape check on the fields, and no client may read, list, update or
+delete entries. Read the list from the Firebase console, or with owner credentials.
+
 `firebase/firestore.rules` and `firebase/storage.rules` allow a signed-in user to read and write their
 own workspace and nothing else. Both files carry the reasoning inline, including the one line that
 changes when a workspace becomes a shared, team-wide thing.
@@ -305,8 +325,8 @@ Worth knowing, because it runs on sites you do not own.
   site clearing its own storage cannot take your review with it. The toolbar badge shows how many
   notes on the page are still open, and **Copy review** in the popup puts the whole thing on the
   clipboard as markdown.
-- **It contacts `fonts.googleapis.com`** for the panel's own typeface, and again for the ten Google
-  families when you open the font picker.
+- **It contacts `fonts.googleapis.com`** for the panel's own typeface, and for the currently visible
+  Google Font previews when you open or search the complete font catalogue.
 - **It sends your notes, edits and kept handoffs to Firebase** — only if you signed in, and only your
   own. Skip on the settings page and nothing leaves the machine at all. Connected design systems are
   never uploaded either way.
@@ -340,7 +360,8 @@ node extension/test/server.mjs
 ```
 
 Then open `http://localhost:5177/` and press **inspector: on**. `/preview/options` and
-`/preview/popup` render the extension's own two pages against a fake `chrome` — including the account
+`/preview/popup` render the extension's own two pages against a fake `chrome` — add `?demo` to the
+hub's URL to see it with a connected system, notes and handoffs in it — including the account
 panel, where **Skip** genuinely works and **Sign in with Google** reports what a page with no
 `chrome.identity` can do about it.
 

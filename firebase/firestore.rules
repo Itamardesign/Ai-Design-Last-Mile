@@ -4,30 +4,100 @@ rules_version = '2';
  * Deploy with: firebase deploy --only firestore:rules
  *
  * The extension's API key is public — every Firebase web key is — so these rules are the only thing
- * standing between one designer's review and everybody else's. They say one thing: you may read and
- * write your own workspace, and nothing else in the database.
- *
- * `workspaceId` is the signer's uid today, which is why the check is a straight comparison. When a
- * workspace becomes a real, shared thing, this becomes a lookup against a members list —
- *
- *     function member(workspaceId) {
- *       return request.auth != null
- *         && exists(/databases/$(database)/documents/workspaces/$(workspaceId)/members/$(request.auth.uid));
- *     }
- *
- * — and every path below stays exactly as it is. That is the reason documents are stored under a
- * workspace rather than under `users/{uid}`.
+ * standing between one designer's review and everybody else's. A workspace owner keeps full access;
+ * collaborators get access only to the page they joined through a random, revocable invitation.
+ * Commenters may write notes, while suggested visual changes require the editor role.
  */
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    match /workspaces/{workspaceId} {
-      allow read, write: if request.auth != null && request.auth.uid == workspaceId;
+    function signedIn() {
+      return request.auth != null;
+    }
 
-      // notes/{pageId}, edits/{pageId}, handoffs/{docId} — same owner, same rule.
-      match /{document=**} {
-        allow read, write: if request.auth != null && request.auth.uid == workspaceId;
+    function owner(workspaceId) {
+      return signedIn() && request.auth.uid == workspaceId;
+    }
+
+    function member(workspaceId, pageId) {
+      return signedIn()
+        && exists(/databases/$(database)/documents/workspaces/$(workspaceId)/pages/$(pageId)/members/$(request.auth.uid));
+    }
+
+    function editor(workspaceId, pageId) {
+      return owner(workspaceId)
+        || (member(workspaceId, pageId)
+          && get(/databases/$(database)/documents/workspaces/$(workspaceId)/pages/$(pageId)/members/$(request.auth.uid)).data.role == 'edit');
+    }
+
+    // Random, 192-bit invitation ids are readable only by direct lookup, never listable. A signed-in
+    // recipient needs the document in order to prove page membership below.
+    match /reviewLinks/{token} {
+      allow get: if signedIn();
+      allow list: if false;
+      allow create: if signedIn() && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.workspaceId == request.auth.uid;
+      allow update, delete: if signedIn() && resource.data.createdBy == request.auth.uid;
+    }
+
+    // Landing-page waitlist. Anyone may add one address, nobody may read, list, change or remove
+    // entries from the client; the document id is the lower-cased address, so re-joining is a no-op
+    // rather than a duplicate.
+    match /waitlist/{emailId} {
+      allow read, list, update, delete: if false;
+      allow create: if request.resource.data.keys().hasOnly(['email', 'source', 'createdAt'])
+        && request.resource.data.email is string
+        && request.resource.data.email.size() >= 6
+        && request.resource.data.email.size() <= 254
+        && request.resource.data.email.matches('^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$')
+        && emailId == request.resource.data.email.lower()
+        && request.resource.data.source is string
+        && request.resource.data.createdAt is timestamp
+        && request.resource.data.createdAt > request.time - duration.value(10, 'm')
+        && request.resource.data.createdAt < request.time + duration.value(10, 'm');
+    }
+
+    match /workspaces/{workspaceId} {
+      allow read, write: if owner(workspaceId);
+
+      match /pages/{pageId} {
+        allow read: if owner(workspaceId) || member(workspaceId, pageId);
+        allow write: if owner(workspaceId);
+
+        match /members/{memberId} {
+          allow read: if owner(workspaceId) || member(workspaceId, pageId);
+          allow delete, update: if owner(workspaceId);
+          allow create: if signedIn() && memberId == request.auth.uid
+            && request.resource.data.uid == request.auth.uid
+            && request.resource.data.token is string
+            && get(/databases/$(database)/documents/reviewLinks/$(request.resource.data.token)).data.active == true
+            && get(/databases/$(database)/documents/reviewLinks/$(request.resource.data.token)).data.workspaceId == workspaceId
+            && get(/databases/$(database)/documents/reviewLinks/$(request.resource.data.token)).data.pageId == pageId
+            && get(/databases/$(database)/documents/reviewLinks/$(request.resource.data.token)).data.role == request.resource.data.role
+            && (get(/databases/$(database)/documents/reviewLinks/$(request.resource.data.token)).data.allowedEmail == null
+                || get(/databases/$(database)/documents/reviewLinks/$(request.resource.data.token)).data.allowedEmail == request.auth.token.email);
+        }
+
+        match /invites/{inviteId} {
+          allow read, write: if owner(workspaceId);
+        }
       }
+
+      match /notes/{pageId} {
+        allow read: if owner(workspaceId) || member(workspaceId, pageId);
+        // Commenters can add and resolve review notes. Suggested visual changes stay editor-only.
+        allow write: if owner(workspaceId) || member(workspaceId, pageId);
+      }
+
+      match /edits/{pageId} {
+        allow read: if owner(workspaceId) || member(workspaceId, pageId);
+        allow write: if editor(workspaceId, pageId);
+      }
+
+      match /handoffs/{documentId} {
+        allow read, write: if owner(workspaceId);
+      }
+
     }
   }
 }

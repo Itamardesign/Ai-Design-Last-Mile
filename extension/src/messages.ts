@@ -1,6 +1,7 @@
 /** The two conversations the extension has: popup <-> service worker, and service worker <-> page. */
 import type { DesignTokens } from '../../src/types.js';
 import type { HandoffDocument } from './handoff.js';
+import type { ShareLinkAccess, ShareRole } from './sharing.js';
 
 export type TabState = {
   tabId: number;
@@ -31,6 +32,11 @@ export type PopupRequest =
   | { type: 'handoffs' }
   /** Sent by the page: keep this handoff in the account. */
   | { type: 'handoff:save'; document: HandoffDocument }
+  /** Page-scoped collaboration: notes plus suggested visual changes. */
+  | { type: 'share:state'; pageKey: string; url: string; title: string; token?: string }
+  | { type: 'share:link'; pageKey: string; url: string; title: string; access: ShareLinkAccess }
+  | { type: 'share:invite'; pageKey: string; url: string; title: string; email: string; role: ShareRole }
+  | { type: 'share:removeMember'; pageKey: string; url: string; title: string; uid: string }
   /** Sent by the panel: open the settings page. A page cannot navigate to it on its own. */
   | { type: 'openOptions' }
   /** Sent by the page, not the popup: how many notes on it are still open. */

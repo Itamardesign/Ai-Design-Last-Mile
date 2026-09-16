@@ -7,6 +7,12 @@
       "runtimeArgs": ["extension/test/server.mjs"],
       "port": 5177,
       "autoPort": true
+    },
+    {
+      "name": "landing",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["landing/dev.mjs"],
+      "port": 4173
     }
   ]
 }
