@@ -1,0 +1,19 @@
+Pixel Poke turns any website into a design canvas. Click the toolbar button, click an element, and edit it right on the page — no source files, nothing installed into the site.
+
+WHAT YOU CAN DO
+• Select any element and edit its text, typography, colors, fills, spacing and layout
+• Drag to move or reorder, resize with handles, rotate, nudge with the arrow keys — with Figma-style snapping and smart guides
+• Hold Alt to measure distances between elements
+• Preview the page at real device sizes
+• Run accessibility checks on your selection
+• Leave comments pinned to elements, for the developer or for yourself
+• Copy your changes out as clean CSS, or as written handoff instructions ready to paste into a ticket or an AI coding tool
+
+WHO IT'S FOR
+Designers who want to tune a live site instead of describing changes in words, and developers who want the exact values instead of a screenshot with arrows.
+
+HOW IT WORKS
+Press Alt+Shift+D or click the toolbar icon to toggle the inspector on the current tab. Changes live only in your tab — reload and the page is back to normal. Everything runs locally in your browser. Sign in with Google (optional) only to sync notes, edits and saved handoffs across your devices, and to share a page with a collaborator.
+
+PRIVACY
+The extension needs access to the page you're inspecting in order to read and preview edits to its elements. It doesn't modify the website, has no analytics, and never sends page content anywhere. Full policy: https://<your-domain>/privacy

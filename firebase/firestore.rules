@@ -75,7 +75,8 @@ service cloud.firestore {
             && get(/databases/$(database)/documents/reviewLinks/$(request.resource.data.token)).data.pageId == pageId
             && get(/databases/$(database)/documents/reviewLinks/$(request.resource.data.token)).data.role == request.resource.data.role
             && (get(/databases/$(database)/documents/reviewLinks/$(request.resource.data.token)).data.allowedEmail == null
-                || get(/databases/$(database)/documents/reviewLinks/$(request.resource.data.token)).data.allowedEmail == request.auth.token.email);
+                // The invite stores the address lower-cased; the token carries it as Google issued it.
+                || get(/databases/$(database)/documents/reviewLinks/$(request.resource.data.token)).data.allowedEmail == request.auth.token.email.lower());
         }
 
         match /invites/{inviteId} {

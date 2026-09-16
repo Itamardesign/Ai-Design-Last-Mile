@@ -26,7 +26,7 @@ Then in Chrome:
 The purple mark appears in the toolbar. Pin it, and you are done.
 
 To hand the folder to someone else, `npm run pack:extension` writes a
-`meraki-design-inspector-<version>.zip` beside it — the same file the Chrome Web Store takes.
+`pixel-poke-<version>.zip` beside it — the same file the Chrome Web Store takes.
 
 ---
 

@@ -1247,7 +1247,8 @@ function createSnapshot(element: HTMLElement): ElementSnapshot {
     'font-family': computed.fontFamily,
     'font-size': computed.fontSize,
     'font-weight': computed.fontWeight,
-    'line-height': computed.lineHeight,
+    // `normal` is a height too — close to 1.2× the font size — and reads as 0 in a number field otherwise.
+    'line-height': computed.lineHeight === 'normal' ? `${Math.round(Number.parseFloat(computed.fontSize) * 1.2)}px` : computed.lineHeight,
     'letter-spacing': computed.letterSpacing,
     'text-align': computed.textAlign,
     'box-shadow': computed.boxShadow,
@@ -2566,7 +2567,7 @@ function ColorField({ label, value, tokens, onChange, alpha = true, controlId }:
         <i style={{ background: withAlpha(hex, opacity) }} />
         <input type="color" value={hex} onChange={(event) => onChange(withAlpha(event.target.value, opacity))} aria-label={`${label} colour`} />
       </label>
-      <input key={hex} className="hi-color-field-hex" defaultValue={matched ? matched.label : hex.toUpperCase()} aria-label={`${label} hex`} spellCheck={false}
+      <input key={`${hex}:${matched?.label ?? ''}`} className="hi-color-field-hex" defaultValue={matched ? matched.label : hex.toUpperCase()} aria-label={`${label} hex`} spellCheck={false}
         onFocus={(event) => { if (matched) event.target.value = hex.toUpperCase(); event.target.select(); }}
         onKeyDown={(event) => { if (event.key === 'Enter') { commitHex(event.currentTarget.value); event.currentTarget.blur(); } }}
         onBlur={(event) => { if (event.target.value.trim().toUpperCase() !== hex.toUpperCase() && event.target.value.trim() !== matched?.label) commitHex(event.target.value); }} />

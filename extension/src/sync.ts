@@ -32,13 +32,64 @@ import { changedKeys, docIdFor, mergeEditMaps, mergeNoteMaps, type StoredEdits }
 import { readAllNotes, writeAllNotes, type NotePage } from './notes.js';
 import { readAllEdits, writeAllEdits } from './edits.js';
 import type { HandoffDocument } from './handoff.js';
-import { cloudTargetFor } from './sharing.js';
+import { cloudTargetFor, forgetSharedPage, type SharedPage } from './sharing.js';
 
 /** Resolves the workspace to write into, or null when this install is not syncing. */
 async function workspace(): Promise<{ id: string; account: Account } | null> {
   const account = await readAccount();
   if (account.mode !== 'cloud' || !account.profile) return null;
   return { id: workspaceIdFor(account.profile), account };
+}
+
+/**
+ * One write per page, grouped by the workspace it lands in.
+ *
+ * A private page goes to this person's own workspace; a page somebody shared with them goes to the
+ * owner's. Each workspace gets its own batch, because a batch is atomic: one refused write — the
+ * owner removed this person, or turned the link off — would otherwise take every private page down
+ * with it, on every retry, for good. A refused *shared* page is forgotten instead, so the next push
+ * lands the page in this person's own workspace like any other; a refused private page is left for
+ * the caller's retry, since nothing about it can be fixed from here.
+ */
+async function pushGrouped<T extends { url: string; title: string; savedAt: number }>(
+  keys: string[],
+  account: Account,
+  collectionName: 'notes' | 'edits',
+  current: Record<string, T>,
+  empty: () => Omit<T, 'url' | 'title' | 'savedAt'>,
+  allowed: (destination: SharedPage) => boolean,
+): Promise<void> {
+  const groups = new Map<string, Array<{ key: string; destination: SharedPage }>>();
+  for (const key of keys) {
+    const destination = await cloudTargetFor(key, account);
+    if (!destination || !allowed(destination)) continue;
+    const group = groups.get(destination.workspaceId) ?? [];
+    group.push({ key, destination });
+    groups.set(destination.workspaceId, group);
+  }
+
+  let failure: unknown;
+  for (const [workspaceId, entries] of groups) {
+    const batch = writeBatch(db());
+    for (const { key, destination } of entries) {
+      const reference = doc(db(), 'workspaces', workspaceId, collectionName, destination.pageId);
+      const page = current[key];
+      // A page whose content was all deleted is emptied rather than removed: an empty page is the
+      // honest record of "this page has nothing now", and it stops a stale copy on another machine
+      // from resurrecting it on the next merge.
+      batch.set(reference, page ? { ...page, pageKey: key, workspaceId } : { ...empty(), pageKey: key, workspaceId, url: '', title: '', savedAt: Date.now() });
+    }
+    try {
+      await batch.commit();
+    } catch (error) {
+      const shared = workspaceId !== workspaceIdFor(account.profile!);
+      if (shared && (error as { code?: string }).code === 'permission-denied') {
+        await Promise.all(entries.map(({ key }) => forgetSharedPage(key)));
+      }
+      failure ??= error;
+    }
+  }
+  if (failure) throw failure;
 }
 
 /**
@@ -54,22 +105,11 @@ export async function pushNotes(previous: Record<string, NotePage>, current: Rec
   const keys = changedKeys(previous, current);
   if (!keys.length) return;
 
-  const batch = writeBatch(db());
-  for (const key of keys) {
-    const destination = await cloudTargetFor(key, target.account);
-    if (!destination) continue;
-    const reference = doc(db(), 'workspaces', destination.workspaceId, 'notes', destination.pageId);
-    const page = current[key];
-    // A page whose notes were all deleted is emptied rather than removed: `deleteDoc` in a batch with
-    // no read is fine, but an empty page is also the honest record of "this page has no notes now",
-    // and it stops a stale copy on another machine from resurrecting them on the next merge.
-    batch.set(reference, page ? { ...page, pageKey: key, workspaceId: destination.workspaceId } : { pageKey: key, workspaceId: destination.workspaceId, url: '', title: '', savedAt: Date.now(), notes: [] });
-  }
-  await batch.commit();
+  await pushGrouped(keys, target.account, 'notes', current, (): Pick<NotePage, 'notes'> => ({ notes: [] }), () => true);
   await markSynced();
 }
 
-/** The same, for unfinished style edits. */
+/** The same, for unfinished style edits — which only editors may send to a shared page. */
 export async function pushEdits(previous: Record<string, StoredEdits>, current: Record<string, StoredEdits>): Promise<void> {
   const target = await workspace();
   if (!target) return;
@@ -77,15 +117,7 @@ export async function pushEdits(previous: Record<string, StoredEdits>, current: 
   const keys = changedKeys(previous, current);
   if (!keys.length) return;
 
-  const batch = writeBatch(db());
-  for (const key of keys) {
-    const destination = await cloudTargetFor(key, target.account);
-    if (!destination || destination.role !== 'edit') continue;
-    const reference = doc(db(), 'workspaces', destination.workspaceId, 'edits', destination.pageId);
-    const page = current[key];
-    batch.set(reference, page ? { ...page, pageKey: key, workspaceId: destination.workspaceId } : { pageKey: key, workspaceId: destination.workspaceId, url: '', title: '', savedAt: Date.now(), variables: [], changes: [] });
-  }
-  await batch.commit();
+  await pushGrouped(keys, target.account, 'edits', current, (): Pick<StoredEdits, 'variables' | 'changes'> => ({ variables: [], changes: [] }), (destination) => destination.role === 'edit');
   await markSynced();
 }
 

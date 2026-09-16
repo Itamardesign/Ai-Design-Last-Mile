@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#faf7ef" />
+    <meta name="description" content="What the Pixel Poke Chrome extension stores, what it sends, and what it never touches." />
+    <title>Privacy Policy — Pixel Poke</title>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geom:wght@400;500;600;700;800&display=swap" />
+    <style>
+      :root{--ink:#071b43;--blue:#0869e8;--body:#174f8a;--cream:#fbf8ef;--line:rgba(16,112,213,.2);--surface:rgba(255,255,255,.76)}
+      *{box-sizing:border-box}
+      html{background:var(--cream)}
+      body{margin:0;font-family:'Geom','Montserrat','Avenir Next',system-ui,sans-serif;color:var(--ink);background:var(--cream);font-synthesis:none;line-height:1.6;-webkit-font-smoothing:antialiased}
+      .wrap{max-width:760px;margin:0 auto;padding:56px 24px 96px}
+      .brand{display:inline-flex;align-items:center;gap:9px;text-decoration:none;color:var(--ink);font-weight:800;font-size:19px;letter-spacing:-.045em}
+      .brand svg{width:28px;height:28px}
+      .brand b{color:var(--blue);font-weight:800}
+      h1{font-size:clamp(34px,5vw,46px);letter-spacing:-.04em;line-height:1.05;margin:44px 0 10px}
+      .meta{color:var(--body);font-size:14px;margin:0 0 36px}
+      h2{font-size:21px;letter-spacing:-.02em;margin:40px 0 10px}
+      p,li{color:var(--body);font-size:16px}
+      ul{padding-left:20px}
+      li{margin:6px 0}
+      strong{color:var(--ink);font-weight:600}
+      a{color:var(--blue)}
+      .card{background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:22px 24px;margin:20px 0}
+      .card p{margin:0}
+      table{width:100%;border-collapse:collapse;font-size:15px;margin:16px 0}
+      th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top;color:var(--body)}
+      th{color:var(--ink);font-weight:600}
+      footer{margin-top:64px;padding-top:24px;border-top:1px solid var(--line);font-size:14px;color:var(--body);display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}
+      footer a{text-decoration:none}
+    </style>
+  </head>
+  <body>
+    <main class="wrap">
+      <a class="brand" href="/" aria-label="Pixel Poke home">
+        <svg viewBox="0 0 32 32" aria-hidden="true"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2386f5"/><stop offset="1" stop-color="#0655c9"/></linearGradient></defs><rect x="2" y="2" width="28" height="28" rx="8" fill="url(#g)"/><rect x="10" y="10" width="12" height="12" rx="2" fill="none" stroke="#fff" stroke-width="2"/><circle cx="22" cy="22" r="3" fill="#fff"/></svg>
+        <span>Pixel<b>Poke</b></span>
+      </a>
+
+      <h1>Privacy Policy</h1>
+      <p class="meta">Pixel Poke — Chrome extension · Last updated September 16, 2026</p>
+
+      <div class="card">
+        <p><strong>In one paragraph:</strong> the extension runs on the page you choose to inspect and keeps your work on your own computer. Nothing leaves your machine unless you sign in with Google, and then only your own notes, style edits and saved handoffs are synced to your account so you can pick them up elsewhere. The extension never modifies the website itself, never sends page content to us, has no analytics, and never sells or shares data with anyone.</p>
+      </div>
+
+      <h2>What the extension does</h2>
+      <p>Pixel Poke lets you select an element on any website, adjust its design visually in your current tab, check accessibility, leave notes, and copy the result out as CSS or written handoff instructions. Changes exist only in your browser tab; reloading the page restores it. No website files are read or written, and nothing is installed into the site.</p>
+
+      <h2>Two modes: local and cloud</h2>
+      <p>When you first open the settings page you are asked whether to keep your work local or sign in. Until you choose, and whenever you choose <strong>local</strong>, the extension makes no network requests of its own and stores everything in Chrome's extension storage on your device.</p>
+      <p>If you choose <strong>cloud</strong> and sign in with Google, the items listed below are mirrored to your account so a second computer or a reinstalled browser can pick them up. You can sign out at any time from the extension's settings page; new work then stays local.</p>
+
+      <h2>Data we store</h2>
+      <table>
+        <tr><th>Data</th><th>Where it lives</th><th>Why</th></tr>
+        <tr><td>Your notes and comments on pages</td><td>On your device; also in your cloud workspace when signed in</td><td>So your review survives a reload and can be shared</td></tr>
+        <tr><td>Unfinished style edits (the CSS values you changed)</td><td>On your device; also in your cloud workspace when signed in</td><td>So you can resume a session</td></tr>
+        <tr><td>Saved handoffs, including a screenshot of the page you were editing</td><td>On your device; also in your cloud workspace when signed in</td><td>So you can find and re-send a handoff later</td></tr>
+        <tr><td>Page identifiers (the URL of the page you inspected)</td><td>Alongside the items above</td><td>To attach notes and edits to the right page</td></tr>
+        <tr><td>Your Google account name, email address and profile photo</td><td>In your cloud workspace, only when signed in</td><td>To identify your workspace and show who left a note when you share a page</td></tr>
+        <tr><td>Your settings (design system, which sites auto-start the inspector)</td><td>On your device</td><td>To remember your preferences</td></tr>
+      </table>
+      <p>Cloud data is stored in Google Firebase (Cloud Firestore and Cloud Storage) under an identifier tied to your account. Access rules restrict every workspace to its owner and to the people the owner has explicitly invited to a specific page.</p>
+
+      <h2>What we do not collect</h2>
+      <ul>
+        <li>No analytics, tracking pixels, or usage telemetry.</li>
+        <li>No browsing history. The extension only acts on a tab when you turn it on there.</li>
+        <li>No page content is sent anywhere. The only page-related data that leaves your device is what you yourself create: notes, changed style values, and a screenshot you chose to save with a handoff.</li>
+        <li>No passwords, form entries, or keystrokes on the sites you visit.</li>
+        <li>No selling, renting, or sharing of personal data with third parties. Data is never used for advertising.</li>
+      </ul>
+
+      <h2>Sharing a page</h2>
+      <p>If you invite someone to a page or create a review link, the invited people can see the notes and edits on that page, along with your name and email as the workspace owner, and you can see theirs. Invitations and links can be revoked at any time from the Share panel. Nobody can list or discover a workspace without a direct invitation.</p>
+
+      <h2>Permissions the extension asks for</h2>
+      <ul>
+        <li><strong>Access to websites (<code>&lt;all_urls&gt;</code>, scripting, tabs)</strong> — to run the inspector on the page you choose and preview your edits in place. It runs only when you toggle it on.</li>
+        <li><strong>Storage</strong> — to keep your notes, edits, handoffs and settings on your device.</li>
+        <li><strong>Identity</strong> — to let you optionally sign in with the Google account already in Chrome. No password is ever handled by the extension.</li>
+        <li><strong>Declarative net request (with host access)</strong> — to let the inspector load inside pages that would otherwise block embedded tools; it does not read or alter your traffic.</li>
+      </ul>
+
+      <h2>Google user data</h2>
+      <p>The extension's use of information received from Google APIs adheres to the <a href="https://developers.google.com/terms/api-services-user-data-policy" rel="noopener">Google API Services User Data Policy</a>, including the Limited Use requirements. The Google profile data received (name, email, photo) is used only to identify your workspace and display you to collaborators, and is never transferred to others except as needed to provide that feature, or used for advertising.</p>
+
+      <h2>Retention and deletion</h2>
+      <p>Local data stays on your device until you delete it in the extension or uninstall the extension. Cloud data stays in your workspace until you delete it. To delete your whole workspace and account data, email us at the address below from your Google account address and we will remove it within 30 days.</p>
+
+      <h2>Children</h2>
+      <p>The extension is a professional tool and is not directed at children under 13.</p>
+
+      <h2>Changes</h2>
+      <p>If this policy changes in a way that matters, the date at the top will be updated and the new version published at this address.</p>
+
+      <h2>Contact</h2>
+      <p>Itamar Katan · <a href="mailto:itamark1997@gmail.com">itamark1997@gmail.com</a><br />Source code: <a href="https://github.com/Itamardesign/Ai-Design-Last-Mile" rel="noopener">github.com/Itamardesign/Ai-Design-Last-Mile</a></p>
+
+      <footer><span>© 2026 Pixel Poke</span><a href="/">← Back to the site</a></footer>
+    </main>
+  </body>
+</html>

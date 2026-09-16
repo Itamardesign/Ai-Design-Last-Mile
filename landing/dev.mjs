@@ -9,6 +9,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const out = path.join(here, 'dist');
 await mkdir(out, { recursive: true });
 await copyFile(path.join(here, 'index.html'), path.join(out, 'index.html'));
+await copyFile(path.join(here, 'privacy.html'), path.join(out, 'privacy.html'));
 await copyFile(path.join(here, 'src', 'styles.css'), path.join(out, 'styles.css'));
 
 const ctx = await context({

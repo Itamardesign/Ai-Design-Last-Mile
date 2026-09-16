@@ -20,4 +20,5 @@ await build({
 });
 
 await copyFile(path.join(here, 'index.html'), path.join(out, 'index.html'));
+await copyFile(path.join(here, 'privacy.html'), path.join(out, 'privacy.html'));
 await copyFile(path.join(here, 'src', 'styles.css'), path.join(out, 'styles.css'));

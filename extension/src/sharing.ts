@@ -93,6 +93,20 @@ export async function sharedPageFor(pageKey: string): Promise<SharedPage | null>
   return (await sharedPages())[pageKey] ?? null;
 }
 
+/**
+ * Drops a page's mapping into somebody else's workspace.
+ *
+ * Called when the cloud refuses a write there — the owner removed this person, or turned the link
+ * off. Left in place, the mapping would send every later push to a door that stays shut, and the
+ * page's notes would never reach this person's own workspace either.
+ */
+export async function forgetSharedPage(pageKey: string): Promise<void> {
+  const pages = await sharedPages();
+  if (!(pageKey in pages)) return;
+  delete pages[pageKey];
+  await chrome.storage.local.set({ [SHARED_PAGES_KEY]: pages });
+}
+
 export async function cloudTargetFor(pageKey: string, account: Account): Promise<SharedPage | null> {
   const shared = await sharedPageFor(pageKey);
   if (shared) return shared;
