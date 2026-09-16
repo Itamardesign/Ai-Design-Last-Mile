@@ -34,6 +34,7 @@ import {
   History,
   Layers,
   Image as ImageIcon,
+  Keyboard,
   Layers3,
   Link2,
   LoaderCircle,
@@ -49,7 +50,6 @@ import {
   Palette,
   PanelLeft,
   PanelRight,
-  PenTool,
   Plus,
   RefreshCw,
   RotateCcw,
@@ -1039,8 +1039,45 @@ function classifyElement(element: HTMLElement): { kind: ElementKind; hint: strin
 
 function visible(element: HTMLElement) {
   const rect = element.getBoundingClientRect();
-  const style = getComputedStyle(element);
+  const style = computedStyleOf(element);
   return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && !element.closest(IGNORED_SELECTOR);
+}
+
+type ReorderContext = {
+  item: HTMLElement;
+  parent: HTMLElement;
+  siblings: HTMLElement[];
+  parentStyle: CSSStyleDeclaration;
+  promoted: boolean;
+};
+
+function visibleElementChildren(parent: HTMLElement) {
+  return Array.from(parent.children).filter((node): node is HTMLElement => isElementNode(node) && visible(node));
+}
+
+/**
+ * Find the DOM node that actually participates in layout.
+ *
+ * A common card is `grid > wrapper > card`. Selecting the card gives it one direct sibling—the
+ * wrapper's only child—even though the wrapper is one of many grid items. Climb only until a real
+ * flex/grid boundary is found, so dragging the card moves its grid item instead of claiming it is
+ * alone or applying a meaningless margin to the nested child.
+ */
+function reorderContextFor(element: HTMLElement): ReorderContext | null {
+  const directParent = element.parentElement;
+  if (!directParent) return null;
+  const directSiblings = visibleElementChildren(directParent);
+  if (directSiblings.length > 1) return { item: element, parent: directParent, siblings: directSiblings, parentStyle: computedStyleOf(directParent), promoted: false };
+
+  let item = directParent;
+  for (let depth = 0; depth < 8 && item.parentElement && item !== element.ownerDocument.body; depth += 1) {
+    const parent = item.parentElement;
+    const parentStyle = computedStyleOf(parent);
+    const siblings = visibleElementChildren(parent);
+    if (/flex|grid/.test(parentStyle.display) && siblings.length > 1) return { item, parent, siblings, parentStyle, promoted: true };
+    item = parent;
+  }
+  return { item: element, parent: directParent, siblings: directSiblings, parentStyle: computedStyleOf(directParent), promoted: false };
 }
 
 function getComponentFamily(selected: HTMLElement, kind: ElementKind): ComponentFamilyInfo {
@@ -2951,7 +2988,7 @@ function rollbackResize(session: ResizeSession) {
   });
 }
 
-/* Drag to move — reorder inside a flex or grid parent, free move with snapping anywhere else. */
+/* Drag to move — reorder in page flow, free move only when truly positioned. */
 
 /** Pointer travel before a press turns into a drag; below this it is a click. */
 const MOVE_DEAD_ZONE = 4;
@@ -2990,7 +3027,7 @@ type MoveSession = {
 type MoveMember = {
   element: HTMLElement;
   mirror: HTMLElement | null;
-  /** `margin-*` in flow, `left`/`top` once the element is positioned — whichever actually moves it. */
+  /** Free-move coordinates. Flow elements take the reorder path and never commit these margins. */
   offsetProperties: [string, string];
   startOffsets: [number, number];
   inline: Record<string, string>;
@@ -3035,15 +3072,14 @@ function gatherSnapTargets(view: HTMLElement): SnapTarget[] {
 
 function beginMove(element: HTMLElement, view: HTMLElement, event: PointerEvent, zoom: number, mirror: HTMLElement | null, members: MoveMember[], onUpdate: (() => void) | null): MoveSession {
   const parent = view.parentElement;
-  const parentStyle = parent ? getComputedStyle(parent) : null;
-  const style = getComputedStyle(view);
+  const parentStyle = parent ? computedStyleOf(parent) : null;
+  const style = computedStyleOf(view);
   const positioned = style.position === 'absolute' || style.position === 'fixed';
-  const inFlow = parentStyle ? parentStyle.display.includes('flex') || parentStyle.display.includes('grid') : false;
-  // Alt asks for a free move even inside a flex row — the way Alt-drag ignores auto layout in
-  // Figma — and a multi-selection always moves freely: there is no one row to reorder within.
-  const mode: MoveSession['mode'] = inFlow && !positioned && !event.altKey && members.length === 1 ? 'reorder' : 'free';
-  const siblings = parent ? Array.from(parent.children).filter((node): node is HTMLElement => isElementNode(node) && visible(node)) : [];
-  const flow: MoveSession['flow'] = parentStyle && (parentStyle.flexDirection.startsWith('column') || (parentStyle.display.includes('grid') && parentStyle.gridAutoFlow.startsWith('column')) || (parentStyle.display.includes('grid') && parentStyle.gridTemplateColumns.split(' ').length <= 1)) ? 'column' : 'row';
+  const siblings = parent ? visibleElementChildren(parent) : [];
+  // Auto-layout children change order and positioned elements change coordinates. We never fake
+  // coordinates by adding margins to an in-flow card.
+  const mode: MoveSession['mode'] = !positioned && members.length === 1 && siblings.length > 1 ? 'reorder' : 'free';
+  const flow: MoveSession['flow'] = !parentStyle || (!parentStyle.display.includes('flex') && !parentStyle.display.includes('grid')) || parentStyle.flexDirection.startsWith('column') || (parentStyle.display.includes('grid') && parentStyle.gridAutoFlow.startsWith('column')) || (parentStyle.display.includes('grid') && parentStyle.gridTemplateColumns.split(' ').length <= 1) ? 'column' : 'row';
   return {
     element,
     view,
@@ -3190,20 +3226,24 @@ function layerChildren(element: Element): HTMLElement[] {
 function layerLabel(element: HTMLElement) {
   const tag = element.tagName.toLowerCase();
   const name = element.id ? `#${element.id}` : element.classList[0] ? `.${element.classList[0]}` : '';
+  const selector = `${tag}${name}`;
   const own = Array.from(element.childNodes).filter((node) => node.nodeType === 3).map((node) => node.textContent ?? '').join(' ');
   const text = normalizeText(own || (element.children.length === 0 ? element.textContent ?? '' : ''));
   const attribute = element instanceof HTMLImageElement ? element.alt : element instanceof HTMLInputElement ? element.placeholder || element.value : '';
-  return { label: `${tag}${name}`, detail: text ? `“${text.slice(0, 40)}${text.length > 40 ? '…' : ''}”` : attribute ? `“${attribute.slice(0, 40)}”` : '' };
+  const humanName = normalizeText(attribute || text);
+  return humanName
+    ? { label: humanName.slice(0, 40) + (humanName.length > 40 ? '…' : ''), detail: selector }
+    : { label: selector, detail: '' };
 }
 
 /** Flattens the tree from `root` into the rows that are currently unfolded. */
-function flattenLayers(root: Element, expanded: ReadonlySet<string>, hiddenBy: (element: HTMLElement) => boolean): LayerRow[] {
+function flattenLayers(root: Element, expanded: ReadonlySet<string>, hiddenBy: (element: HTMLElement) => boolean, forceOpen = false): LayerRow[] {
   const rows: LayerRow[] = [];
   const walk = (element: HTMLElement, depth: number) => {
     if (rows.length >= MAX_LAYER_ROWS) return;
     const children = layerChildren(element);
     const path = getUniquePath(element);
-    const open = expanded.has(path);
+    const open = forceOpen || expanded.has(path);
     const { label, detail } = layerLabel(element);
     rows.push({ path, element, depth, hasChildren: children.length > 0, expanded: open, hidden: hiddenBy(element), label, detail, kind: classifyElement(element).kind });
     if (open) children.forEach((child) => walk(child, depth + 1));
@@ -3242,6 +3282,7 @@ function LayersPanel({ root, side, selectedPath, editVersion, onHover, onSelect,
   onClose: () => void;
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const [query, setQuery] = useState('');
   const listRef = useRef<HTMLDivElement>(null);
   const body = root?.body ?? null;
 
@@ -3271,7 +3312,12 @@ function LayersPanel({ root, side, selectedPath, editVersion, onHover, onSelect,
     window.setTimeout(() => listRef.current?.querySelector<HTMLElement>('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' }), 40);
   }, [root, selectedPath]);
 
-  const rows = useMemo(() => body ? flattenLayers(body, expanded, (element) => getComputedStyle(element).display === 'none') : [], [body, expanded, editVersion]);
+  const rows = useMemo(() => {
+    if (!body) return [];
+    const needle = query.trim().toLocaleLowerCase();
+    const flattened = flattenLayers(body, expanded, (element) => getComputedStyle(element).display === 'none', Boolean(needle));
+    return needle ? flattened.filter((row) => `${row.label} ${row.detail}`.toLocaleLowerCase().includes(needle)) : flattened;
+  }, [body, expanded, editVersion, query]);
 
   const toggle = (path: string) => setExpanded((current) => {
     const next = new Set(current);
@@ -3281,6 +3327,7 @@ function LayersPanel({ root, side, selectedPath, editVersion, onHover, onSelect,
 
   return <aside className={`hi-layers hi-layers--${side}`} aria-label="Layers" onMouseLeave={() => onHover(null)}>
     <header><Layers size={14} /><strong>Layers</strong><button title="Close layers (Ctrl+Shift+L)" aria-label="Close layers" onClick={onClose}><X size={14} /></button></header>
+    <label className="hi-layers-search"><ScanSearch size={13} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search layers" aria-label="Search layers" />{query && <button aria-label="Clear layer search" onClick={() => setQuery('')}><X size={12} /></button>}</label>
     <div className="hi-layers-list" ref={listRef} role="tree">
       {rows.map((row) => {
         const Icon = LAYER_ICONS[row.kind];
@@ -3302,7 +3349,7 @@ function LayersPanel({ root, side, selectedPath, editVersion, onHover, onSelect,
         </div>;
       })}
       {rows.length >= MAX_LAYER_ROWS && <p className="hi-layers-more">Showing the first {MAX_LAYER_ROWS} layers.</p>}
-      {!rows.length && <p className="hi-layers-more">Nothing on the page yet.</p>}
+      {!rows.length && <p className="hi-layers-more">{query ? 'No matching layers.' : 'Nothing on the page yet.'}</p>}
     </div>
   </aside>;
 }
@@ -3395,8 +3442,15 @@ function revertTextEdit(session: TextEditSession) {
 }
 
 /** The eight grab points, drawn inside whichever selection box is already positioned over the element. */
-function CanvasHandles({ size, onStart, onRotateStart }: { size: string | null; onStart: (direction: ResizeDirection, event: ReactPointerEvent) => void; onRotateStart?: (event: ReactPointerEvent) => void }) {
+function CanvasHandles({ size, onStart, onRotateStart, onMoveStart }: { size: string | null; onStart: (direction: ResizeDirection, event: ReactPointerEvent) => void; onRotateStart?: (event: ReactPointerEvent) => void; onMoveStart?: (event: ReactPointerEvent) => void }) {
   return <>
+    {onMoveStart && <button
+      type="button"
+      className="hi-move-grip"
+      title="Drag to move or reorder"
+      aria-label="Move selection"
+      onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); onMoveStart(event); }}
+    ><Move size={12} /></button>}
     {/* The rotate grips sit just outside each corner, where Figma's cursor turns into an arc. */}
     {onRotateStart && (['nw', 'ne', 'se', 'sw'] as const).map((corner) => <button
       key={`rotate-${corner}`}
@@ -4363,6 +4417,9 @@ function HandoffInspectorPanel() {
    */
   const [mode, setMode] = useState<InspectorMode>('design');
   const [canvasTool, setCanvasTool] = useState<'move' | 'comment' | 'hand'>('move');
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const [actionQuery, setActionQuery] = useState('');
+  const [actionIndex, setActionIndex] = useState(0);
   const commentMode = mode === 'comment' && canvasTool === 'comment';
 
   /**
@@ -4406,11 +4463,16 @@ function HandoffInspectorPanel() {
   const [ratioLocked, setRatioLocked] = useState(false);
   /** A fill type chosen in the panel before it has a value to show for itself (Image with no picture yet). */
   const [fillTypeChoice, setFillTypeChoice] = useState<FillType | null>(null);
-  const [layersOpen, setLayersOpen] = useState(() => isBrowser && window.localStorage.getItem('meraki-inspector-layers') === 'open');
+  const [layersOpen, setLayersOpen] = useState(() => {
+    if (!isBrowser) return false;
+    const stored = window.localStorage.getItem('meraki-inspector-layers');
+    return stored ? stored === 'open' : window.innerWidth >= 1120;
+  });
   const textEditRef = useRef<TextEditSession | null>(null);
   const canvasBusyRef = useRef(false);
   const stateMarkRef = useRef(1);
   const panelRef = useRef<HTMLElement>(null);
+  const panelMenuRef = useRef<HTMLDetailsElement>(null);
   const selectedRef = useRef<HTMLElement | null>(null);
   const selectedElementsRef = useRef<HTMLElement[]>([]);
   const hoverRef = useRef<HTMLElement | null>(null);
@@ -4425,6 +4487,32 @@ function HandoffInspectorPanel() {
   const redoStackRef = useRef<HistoryEntry[]>([]);
   const historyBatchRef = useRef<{ label: string; changes: DesignChange[] } | null>(null);
   const hasSavedRef = useRef(false);
+
+  // Native <details> keeps itself open when the user returns to the canvas. A design tool menu
+  // should get out of the way as soon as attention moves elsewhere.
+  useEffect(() => {
+    if (!open) return;
+    const closeMenuOutside = (event: PointerEvent) => {
+      const menu = panelMenuRef.current;
+      if (!menu?.open) return;
+      if (event.target instanceof Node && menu.contains(event.target)) return;
+      menu.open = false;
+    };
+    document.addEventListener('pointerdown', closeMenuOutside, true);
+    deviceDocument?.addEventListener('pointerdown', closeMenuOutside, true);
+    return () => {
+      document.removeEventListener('pointerdown', closeMenuOutside, true);
+      deviceDocument?.removeEventListener('pointerdown', closeMenuOutside, true);
+    };
+  }, [deviceDocument, open]);
+
+  // Filtering always starts keyboard navigation from the best visible match.
+  useEffect(() => {
+    if (!actionsOpen) return;
+    setActionIndex(0);
+    if (panelMenuRef.current) panelMenuRef.current.open = false;
+  }, [actionsOpen, actionQuery]);
+
   // Canvas gestures outlive the render that started them, so they read the selection through refs.
   const snapshotRef = useRef<ElementSnapshot | null>(null);
   const scopeRef = useRef<DesignScope>('free');
@@ -5495,23 +5583,60 @@ function HandoffInspectorPanel() {
   const startMove = (view: HTMLElement, event: PointerEvent, zoom: number, onUpdate: (() => void) | null) => {
     if (moveRef.current || resizeRef.current) return;
     finishTextEdit(true);
-    const path = getUniquePath(view);
+    const selectedPath = getUniquePath(view);
     let element: HTMLElement | null = null;
     if (view.ownerDocument === document) element = view;
-    else { try { element = document.querySelector<HTMLElement>(path); } catch { element = null; } }
+    else { try { element = document.querySelector<HTMLElement>(selectedPath); } catch { element = null; } }
     if (!element || element.closest(IGNORED_SELECTOR)) element = view;
-    const mirror = view === element ? (deviceDocRef.current?.querySelector<HTMLElement>(path) ?? null) : view;
+
+    let moveView = view;
+    const selectedStyle = computedStyleOf(element);
+    const positioned = selectedStyle.position === 'absolute' || selectedStyle.position === 'fixed';
+    if (!positioned) {
+      const context = reorderContextFor(element);
+      if (!context || context.siblings.length < 2) {
+        setCanvasNote('No neighbouring layout items were found. Select the card wrapper or its grid parent.');
+        return;
+      }
+      element = context.item;
+      const itemPath = getUniquePath(element);
+      if (moveView.ownerDocument === element.ownerDocument) moveView = element;
+      else {
+        let resolvedView: HTMLElement | null = null;
+        try { resolvedView = moveView.ownerDocument.querySelector<HTMLElement>(itemPath); } catch { resolvedView = null; }
+        if (resolvedView) moveView = resolvedView;
+        else {
+          // Responsive markup sometimes adds a wrapper only inside the preview. Resolve its layout
+          // boundary locally instead of falling back to the nested one-child node.
+          const viewContext = reorderContextFor(moveView);
+          if (viewContext && viewContext.siblings.length > 1) moveView = viewContext.item;
+        }
+      }
+      if (context.promoted) setCanvasNote('Dragging the containing grid item.');
+    }
+
+    const path = getUniquePath(element);
+    const mirror = moveView === element ? (deviceDocRef.current?.querySelector<HTMLElement>(path) ?? null) : moveView;
     // The rest of a multi-selection travels with the primary, each from its own margins.
     const twinOf = (node: HTMLElement) => {
       if (node === element) return mirror === element ? null : mirror;
       try { return deviceDocRef.current?.querySelector<HTMLElement>(getUniquePath(node)) ?? null; } catch { return null; }
     };
-    const members = [element, ...targetsFor(element).filter((node) => node !== element)].map((node) => moveMember(node, twinOf(node)));
-    const session = beginMove(element, view, event, zoom, mirror === element ? null : mirror, members, onUpdate);
-    if (session.mode === 'reorder' && session.siblingRects.length < 2) session.mode = 'free';
+    const memberElements = positioned ? [element, ...targetsFor(element).filter((node) => node !== element)] : [element];
+    const members = memberElements.map((node) => moveMember(node, twinOf(node)));
+    const siblings = element.parentElement ? visibleElementChildren(element.parentElement) : [];
+    if (!positioned && siblings.length < 2) {
+      setCanvasNote('No neighbouring layout items were found. Select the card wrapper or its grid parent.');
+      return;
+    }
+    const session = beginMove(element, moveView, event, zoom, mirror === element ? null : mirror, members, onUpdate);
+    if (session.mode === 'reorder' && session.siblingRects.length < 2) {
+      setCanvasNote('No neighbouring layout items were found. Select the card wrapper or its grid parent.');
+      return;
+    }
     moveRef.current = session;
-    const win = view.ownerDocument.defaultView ?? window;
-    const captureTarget = event.target instanceof Element ? event.target : view;
+    const win = moveView.ownerDocument.defaultView ?? window;
+    const captureTarget = event.target instanceof Element ? event.target : moveView;
     try { captureTarget.setPointerCapture(event.pointerId); } catch { /* Capture is a nicety; the window listeners still run. */ }
 
     const onMove = (moveEvent: globalThis.PointerEvent) => {
@@ -5650,6 +5775,19 @@ function HandoffInspectorPanel() {
     const onShortcut = (event: KeyboardEvent) => {
       const target = event.target;
       const command = event.metaKey || event.ctrlKey;
+      if (command && event.key === '/') {
+        event.preventDefault();
+        event.stopPropagation();
+        setActionsOpen((current) => !current);
+        setActionQuery('');
+        return;
+      }
+      if (event.key === 'Escape' && actionsOpen) {
+        event.preventDefault();
+        event.stopPropagation();
+        setActionsOpen(false);
+        return;
+      }
       if (command && event.key.toLowerCase() === 'z') {
         if (target instanceof HTMLElement && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
         event.preventDefault();
@@ -5690,12 +5828,12 @@ function HandoffInspectorPanel() {
     const horizontal = key === 'ArrowLeft' || key === 'ArrowRight';
     const sign = key === 'ArrowLeft' || key === 'ArrowUp' ? -1 : 1;
     const targets = currentTargets();
+    if (!targets.length || !/^(absolute|fixed)$/.test(getComputedStyle(targets[0]).position)) return;
     beginHistoryBatch(`Nudge ${key.replace('Arrow', '').toLowerCase()} ${step}px`);
     targets.forEach((element) => {
-      // A positioned element moves by its offsets; anything in flow moves by its margins.
       const style = getComputedStyle(element);
-      const positioned = style.position === 'absolute' || style.position === 'fixed';
-      const property = positioned ? (horizontal ? 'left' : 'top') : (horizontal ? 'margin-left' : 'margin-top');
+      const property = horizontal ? 'left' : 'top';
+      applyStyleTo([element], horizontal ? 'right' : 'bottom', 'auto');
       const current = Number.parseFloat(style.getPropertyValue(property)) || 0;
       applyStyleTo([element], property, `${current + sign * step}px`);
     });
@@ -5803,11 +5941,35 @@ function HandoffInspectorPanel() {
 
   /* The Position & size and Align sections read and write through these. */
 
-  const parentIsFlexOrGrid = Boolean(snapshot?.element.parentElement && /flex|grid/.test(getComputedStyle(snapshot.element.parentElement).display));
-  const isPositioned = Boolean(snapshot && /^(absolute|fixed)$/.test(getComputedStyle(snapshot.element).position));
-  /** X and Y are the offsets that actually move the element: left/top when positioned, margins otherwise. */
-  const positionProperty = (axis: 'x' | 'y') => (isPositioned ? (axis === 'x' ? 'left' : 'top') : (axis === 'x' ? 'margin-left' : 'margin-top'));
-  const positionValue = (axis: 'x' | 'y') => (snapshot ? Math.round(Number.parseFloat(getComputedStyle(snapshot.element).getPropertyValue(positionProperty(axis))) || 0) : 0);
+  const isPositioned = Boolean(snapshot && /^(absolute|fixed)$/.test(computedStyleOf(snapshot.element).position));
+  const layoutContext = snapshot && !isPositioned ? reorderContextFor(snapshot.element) : null;
+  const layoutItem = layoutContext?.item ?? snapshot?.element ?? null;
+  const parentLayoutStyle = layoutContext?.parentStyle ?? (snapshot?.element.parentElement ? computedStyleOf(snapshot.element.parentElement) : null);
+  const parentIsFlexOrGrid = Boolean(parentLayoutStyle && /flex|grid/.test(parentLayoutStyle.display));
+  const layoutFlow: 'row' | 'column' = !parentLayoutStyle || (
+    (!parentLayoutStyle.display.includes('flex') && !parentLayoutStyle.display.includes('grid'))
+    || parentLayoutStyle.flexDirection.startsWith('column')
+    || (parentLayoutStyle.display.includes('grid') && parentLayoutStyle.gridAutoFlow.startsWith('column'))
+    || (parentLayoutStyle.display.includes('grid') && parentLayoutStyle.gridTemplateColumns.split(' ').length <= 1)
+  ) ? 'column' : 'row';
+  const layoutSiblings = layoutContext?.siblings ?? [];
+  const layoutPosition = layoutItem ? layoutSiblings.indexOf(layoutItem) : -1;
+  const canReorderInLayout = !isPositioned && layoutPosition >= 0 && layoutSiblings.length > 1;
+
+  /** Positioned nodes have real coordinates relative to their containing block; flow nodes do not. */
+  const positionValue = (axis: 'x' | 'y') => {
+    if (!snapshot || !isPositioned) return 0;
+    const style = getComputedStyle(snapshot.element);
+    if (style.position === 'fixed') return Math.round(axis === 'x' ? snapshot.element.getBoundingClientRect().left : snapshot.element.getBoundingClientRect().top);
+    return Math.round(axis === 'x' ? snapshot.element.offsetLeft : snapshot.element.offsetTop);
+  };
+  const setPositionCoordinate = (axis: 'x' | 'y', value: string) => {
+    if (!snapshot || !isPositioned) return;
+    beginHistoryBatch(`Set ${axis.toUpperCase()}`);
+    applyStyle(axis === 'x' ? 'right' : 'bottom', 'auto');
+    applyStyle(axis === 'x' ? 'left' : 'top', value);
+    finishHistoryBatch();
+  };
 
   /** W and H from the panel; with the ratio locked the other side follows. */
   const resizeTo = (dimension: 'width' | 'height', value: number) => {
@@ -5848,13 +6010,32 @@ function HandoffInspectorPanel() {
   /** Returns true when the key was a selection command and has been carried out. */
   const handleCanvasKey = (event: KeyboardEvent): boolean => {
     const command = event.metaKey || event.ctrlKey;
+    if (command && event.key === '/') { setActionsOpen((current) => !current); setActionQuery(''); return true; }
+    if (command && event.shiftKey && event.key.toLowerCase() === 'h') { setMode('handoff'); return true; }
     if (command && event.shiftKey && event.key.toLowerCase() === 'l') { setLayersOpen((current) => !current); return true; }
     if (!canvasEdit || !selectedRef.current) return false;
     if (command && !event.shiftKey && !event.altKey && event.key.toLowerCase() === 'd') { duplicateSelection(); return true; }
     if (!command && !event.altKey && (event.key === 'Delete' || event.key === 'Backspace')) { hideElements(currentTargets()); return true; }
     if (!command && !event.altKey && event.shiftKey && event.key.toLowerCase() === 'h') { flip('x'); return true; }
     if (!command && !event.altKey && event.shiftKey && event.key.toLowerCase() === 'v') { flip('y'); return true; }
-    if (!command && !event.altKey && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) { nudge(event.key, event.shiftKey ? 10 : 1); return true; }
+    if (!command && !event.altKey && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
+      const element = selectedRef.current;
+      const style = element ? getComputedStyle(element) : null;
+      if (style && /^(absolute|fixed)$/.test(style.position)) { nudge(event.key, event.shiftKey ? 10 : 1); return true; }
+      const context = element ? reorderContextFor(element) : null;
+      const parentStyle = context?.parentStyle ?? null;
+      if (context && parentStyle && context.siblings.length > 1) {
+        const column = (!parentStyle.display.includes('flex') && !parentStyle.display.includes('grid'))
+          || parentStyle.flexDirection.startsWith('column')
+          || (parentStyle.display.includes('grid') && parentStyle.gridAutoFlow.startsWith('column'))
+          || (parentStyle.display.includes('grid') && parentStyle.gridTemplateColumns.split(' ').length <= 1);
+        const earlier = column ? event.key === 'ArrowUp' : event.key === 'ArrowLeft';
+        const later = column ? event.key === 'ArrowDown' : event.key === 'ArrowRight';
+        if (earlier || later) reorder(earlier ? -1 : 1);
+        else setCanvasNote(`This layout moves ${column ? 'up and down' : 'left and right'}.`);
+        return true;
+      }
+    }
     return false;
   };
   canvasKeyRef.current = handleCanvasKey;
@@ -5997,17 +6178,18 @@ function HandoffInspectorPanel() {
   };
 
   const reorder = (direction: -1 | 1) => {
-    if (!snapshot?.element.parentElement) return;
-    const element = snapshot.element;
-    const parent = element.parentElement;
-    const display = getComputedStyle(parent).display;
-    if (!display.includes('flex') && !display.includes('grid')) return;
-    const sibling = direction < 0 ? element.previousElementSibling : element.nextElementSibling;
-    if (!(sibling instanceof HTMLElement)) return;
+    if (!snapshot) return;
+    const context = reorderContextFor(snapshot.element);
+    if (!context) return;
+    const { item: element, parent, siblings } = context;
+    const index = siblings.indexOf(element);
+    const sibling = siblings[index + direction];
+    if (index < 0 || !sibling) return;
     storeOriginal(element);
     const domBefore = captureOriginalState(element);
-    if (direction < 0) parent.insertBefore(element, sibling); else parent.insertBefore(sibling, element);
-    recordChange({ element, selector: getSelector(element), property: 'layout:order', before: 'Original order', after: direction < 0 ? 'Moved earlier' : 'Moved later', kind: 'layout', domBefore, domAfter: captureOriginalState(element) }, 'Reorder selection');
+    if (direction < 0) parent.insertBefore(element, sibling);
+    else parent.insertBefore(element, sibling.nextSibling);
+    recordChange({ element, selector: getSelector(element), property: 'layout:order', before: 'Original order', after: `Moved to position ${index + direction + 1}`, kind: 'layout', domBefore, domAfter: captureOriginalState(element) }, 'Reorder selection');
     mirrorToDevice([parent], restoreInDevice);
     refresh(element);
   };
@@ -6102,6 +6284,13 @@ function HandoffInspectorPanel() {
   const responsiveIssueCount = snapshot && deviceDocument
     ? (() => { const node = resolveInDocument(deviceDocument, snapshot); return node ? measureInFrame(node, snapshot, inspectorDevicePresets.find((item) => item.id === devicePreset)?.width ?? 1440).issues.length : 1; })()
     : 0;
+  const quickActions = [
+    { label: layersOpen ? 'Hide layers' : 'Show layers', shortcut: 'Ctrl Shift L', run: () => setLayersOpen((current) => !current) },
+    { label: deviceOpen ? 'Return to live page' : 'Open device canvas', shortcut: '', run: () => deviceOpen ? setDeviceOpen(false) : openDevice('desktop') },
+    { label: `Dock panel ${dock === 'left' ? 'right' : 'left'}`, shortcut: '', run: () => setDock(dock === 'left' ? 'right' : 'left') },
+    { label: mode === 'handoff' ? 'Return to edit' : 'Open handoff', shortcut: 'Ctrl Shift H', run: () => { setMode(mode === 'handoff' ? 'design' : 'handoff'); if (mode === 'handoff') setCanvasTool('move'); } },
+    ...(locked ? [{ label: 'Clear selection', shortcut: 'Esc', run: unlock }] : []),
+  ].filter((action) => action.label.toLocaleLowerCase().includes(actionQuery.trim().toLocaleLowerCase()));
 
   return <div data-inspector-ui className="hi-root" dir="ltr" style={{
     '--hi-canvas': '#f5f5f5',
@@ -6186,7 +6375,7 @@ function HandoffInspectorPanel() {
         const rect = element.getBoundingClientRect();
         return <div key={getUniquePath(element)} className="hi-selection hi-selection--peer is-locked" style={{ top: rect.top, left: rect.left, width: rect.width, height: rect.height }} />;
       })}
-      {!deviceOpen && mode !== 'handoff' && overlaySnapshot && overlayRect && <SelectionChrome rect={overlayRect} className={`hi-selection is-live ${locked ? 'is-locked' : ''} ${canvasSize ? 'is-resizing' : ''}`} label={`${liveSelection.length > 1 ? `${liveSelection.length} layers · ` : ''}${round(overlayRect.width)} × ${round(overlayRect.height)}`} handles={canvasHandlesVisible ? <CanvasHandles size={null} onStart={(direction, event) => startResize(overlaySnapshot.element, direction, event, 1, null)} onRotateStart={(event) => startRotate(overlaySnapshot.element, event)} /> : null}>
+      {!deviceOpen && mode !== 'handoff' && overlaySnapshot && overlayRect && <SelectionChrome rect={overlayRect} className={`hi-selection is-live ${locked ? 'is-locked' : ''} ${canvasSize ? 'is-resizing' : ''}`} label={`${liveSelection.length > 1 ? `${liveSelection.length} layers · ` : ''}${round(overlayRect.width)} × ${round(overlayRect.height)}`} handles={canvasHandlesVisible ? <CanvasHandles size={null} onStart={(direction, event) => startResize(overlaySnapshot.element, direction, event, 1, null)} onRotateStart={(event) => startRotate(overlaySnapshot.element, event)} onMoveStart={(event) => startMove(overlaySnapshot.element, event.nativeEvent, 1, null)} /> : null}>
         {/* Offered right where the selection is, so commenting is one click from picking rather
             than a hunt down the panel — but only in the tab where commenting is the job. */}
         {locked && commentMode && <button
@@ -6196,12 +6385,36 @@ function HandoffInspectorPanel() {
         ><MessageSquare size={11} />{selectedCommentCount || 'Comment'}</button>}
       </SelectionChrome>}
       {!deviceOpen && mode !== 'handoff' && locked && !canvasSize && overlaySnapshot && <div className="hi-measurements">{SIDES.map((side) => overlaySnapshot.siblingDistances[side] !== undefined ? <span key={side} className={`hi-measure hi-measure-${side}`} style={{ top: side === 'top' ? overlaySnapshot.rect.top - 22 : side === 'bottom' ? overlaySnapshot.rect.bottom + 6 : overlaySnapshot.rect.top + overlaySnapshot.rect.height / 2, left: side === 'left' ? overlaySnapshot.rect.left - 42 : side === 'right' ? overlaySnapshot.rect.right + 7 : overlaySnapshot.rect.left + overlaySnapshot.rect.width / 2 }}>{overlaySnapshot.siblingDistances[side]}px</span> : null)}</div>}
+      {actionsOpen && <div className="hi-command-backdrop" onMouseDown={() => setActionsOpen(false)}>
+        <section className="hi-command" role="dialog" aria-modal="true" aria-label="Quick actions" onMouseDown={(event) => event.stopPropagation()}>
+          <label><ScanSearch size={16} /><input
+            autoFocus
+            value={actionQuery}
+            onChange={(event) => setActionQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'ArrowDown') { event.preventDefault(); setActionIndex((current) => quickActions.length ? (current + 1) % quickActions.length : 0); }
+              else if (event.key === 'ArrowUp') { event.preventDefault(); setActionIndex((current) => quickActions.length ? (current - 1 + quickActions.length) % quickActions.length : 0); }
+              else if (event.key === 'Home') { event.preventDefault(); setActionIndex(0); }
+              else if (event.key === 'End') { event.preventDefault(); setActionIndex(Math.max(0, quickActions.length - 1)); }
+              else if (event.key === 'Enter' && quickActions.length) {
+                event.preventDefault();
+                quickActions[Math.min(actionIndex, quickActions.length - 1)].run();
+                setActionsOpen(false);
+              }
+            }}
+            placeholder="Search actions"
+            aria-label="Search actions"
+            aria-controls="hi-quick-actions"
+            aria-activedescendant={quickActions[actionIndex] ? `hi-quick-action-${actionIndex}` : undefined}
+          /></label>
+          <div id="hi-quick-actions">{quickActions.map((action, index) => <button id={`hi-quick-action-${index}`} className={index === actionIndex ? 'is-active' : ''} key={action.label} onMouseEnter={() => setActionIndex(index)} onClick={() => { action.run(); setActionsOpen(false); }}>{action.label}{action.shortcut && <kbd>{action.shortcut}</kbd>}</button>)}</div>
+          {!quickActions.length && <p>No matching actions.</p>}
+        </section>
+      </div>}
       <nav className={`hi-canvas-toolbar ${deviceOpen ? 'is-device' : ''} hi-canvas-toolbar--${dock} ${layersOpen ? 'has-layers' : ''}`} aria-label="Canvas tools">
-        <button className={canvasTool === 'move' && mode === 'design' ? 'is-active' : ''} aria-pressed={canvasTool === 'move' && mode === 'design'} title="Design — select and edit (V)" onClick={() => { setCanvasTool('move'); setMode('design'); }}><PenTool size={16} /><span>Design</span><kbd>V</kbd></button>
+        <button className={canvasTool === 'move' && mode === 'design' ? 'is-active' : ''} aria-pressed={canvasTool === 'move' && mode === 'design'} title="Select and edit (V)" onClick={() => { setCanvasTool('move'); setMode('design'); }}><MousePointer2 size={16} /><span>Select</span><kbd>V</kbd></button>
         <button className={canvasTool === 'comment' && mode === 'comment' ? 'is-active' : ''} aria-pressed={canvasTool === 'comment' && mode === 'comment'} title="Comment (C)" onClick={() => { setCanvasTool('comment'); setMode('comment'); }}><MessageSquare size={16} /><span>Comment</span><kbd>C</kbd></button>
         <button className={canvasTool === 'hand' ? 'is-active' : ''} aria-pressed={canvasTool === 'hand'} title="Interact — use the page as a visitor, drag to pan (I / hold Space)" onClick={() => setCanvasTool('hand')}><MousePointerClick size={16} /><span>Interact</span><kbd>I</kbd></button>
-        <i />
-        <button className={mode === 'handoff' ? 'is-active' : ''} aria-pressed={mode === 'handoff'} title="Open handoff (Ctrl+Shift+H)" onClick={() => setMode('handoff')}><Code2 size={16} /><span>Handoff</span></button>
         {deviceOpen && <>
           <i />
           <DeviceControls
@@ -6219,17 +6432,17 @@ function HandoffInspectorPanel() {
       <aside ref={panelRef} className={`hi-panel hi-panel--${dock} ${deviceOpen ? 'hi-panel--workspace' : ''}`}>
         <header className="hi-header">
           <div className="hi-mode-tabs" role="tablist" aria-label="Inspector mode">
-            <button role="tab" aria-selected={mode === 'design'} className={mode === 'design' ? 'is-active' : ''} onClick={() => { setMode('design'); setCanvasTool('move'); }}>Design</button>
-            <button role="tab" aria-selected={mode === 'comment'} className={mode === 'comment' ? 'is-active' : ''} onClick={() => { setMode('comment'); setCanvasTool('comment'); }}>Comment</button>
+            <button role="tab" aria-selected={mode !== 'handoff'} className={mode !== 'handoff' ? 'is-active' : ''} onClick={() => { setMode('design'); setCanvasTool('move'); }}>Edit</button>
             <button role="tab" aria-selected={mode === 'handoff'} className={mode === 'handoff' ? 'is-active' : ''} onClick={() => setMode('handoff')}>Handoff</button>
           </div>
-          <details className="hi-panel-menu">
+          <details ref={panelMenuRef} className="hi-panel-menu">
             <summary title="Inspector options" aria-label="Inspector options"><MoreHorizontal size={16} /></summary>
-            <div>
+            <div onClickCapture={() => { if (panelMenuRef.current) panelMenuRef.current.open = false; }}>
               <button onClick={() => setDock(dock === 'left' ? 'right' : 'left')}>{dock === 'left' ? <PanelRight size={14} /> : <PanelLeft size={14} />}Dock {dock === 'left' ? 'right' : 'left'}</button>
               {hasSecondCollection && <button onClick={() => setSecondaryCollectionActive((current) => !current)}><Component size={14} />{secondaryCollectionActive ? designTokens.collections[0]?.name : designTokens.collections[1]?.name}</button>}
               {hubAvailable() && <button onClick={() => (window as HubHost).__merakiInspectorHub?.()}><Settings size={14} />Settings</button>}
               <button onClick={() => setLayersOpen((current) => !current)}><Layers size={14} />{layersOpen ? 'Hide layers' : 'Show layers'}<kbd>Ctrl+Shift+L</kbd></button>
+              <button onClick={() => { setActionsOpen(true); setActionQuery(''); }}><Keyboard size={14} />Quick actions<kbd>Ctrl+/</kbd></button>
               {deviceOpen ? <button onClick={() => setDeviceOpen(false)}><ExternalLink size={14} />Live page</button> : <button onClick={() => openDevice('desktop')}><Monitor size={14} />Device canvas</button>}
               {locked && <button onClick={unlock}><Unlock size={14} />Clear selection</button>}
               <button onClick={() => setOpen(false)}><X size={14} />Close</button>
@@ -6239,7 +6452,7 @@ function HandoffInspectorPanel() {
         {mode !== 'handoff' && <nav className="hi-breadcrumb" aria-label="Selection breadcrumb">
           {breadcrumbNodes.length ? breadcrumbNodes.map((node, index) => <span key={getUniquePath(node)}>{index > 0 && <i>›</i>}<button title={getSelector(node)} onClick={() => selectElement(node)}>{node.tagName.toLowerCase()}{node.classList[0] ? `.${node.classList[0]}` : ''}</button></span>) : <small>Click anything to select it</small>}
         </nav>}
-        {restorable && !changes.length && <div className="hi-restore">
+        {restorable && !changes.length && <div className="hi-restore hi-restore--compact">
           <History size={17} />
           <span><strong>{restorable.changes.length} edit{restorable.changes.length === 1 ? '' : 's'} from your last session</strong><small>Saved {new Date(restorable.savedAt).toLocaleString()} on this page.</small></span>
           <div><button className="is-primary" onClick={() => restoreSession(restorable)}>Restore</button><button onClick={discardSession}>Discard</button></div>
@@ -6261,11 +6474,10 @@ function HandoffInspectorPanel() {
               {/* Editing every matching variant at once is only meaningful against a real design
                   system — without one there is nothing that defines what a "component" is, so the
                   control is shown but locked, with the reason on hover. */}
-              <div className={`hi-scope ${designSystemConnected ? '' : 'is-locked'}`} title={designSystemConnected ? undefined : DESIGN_SYSTEM_REQUIRED}>
+              {designSystemConnected ? <div className="hi-scope">
                 <button className={scope === 'free' ? 'is-active' : ''} aria-disabled={!designSystemConnected} onClick={() => designSystemConnected && setScope('free')}>Single</button>
                 <button className={scope === 'component' ? 'is-active' : ''} aria-disabled={!designSystemConnected} onClick={() => designSystemConnected && setScope('component')}>All variants</button>
-                {!designSystemConnected && <Lock size={11} />}
-              </div></div>
+              </div> : <div className="hi-scope-status" title={DESIGN_SYSTEM_REQUIRED}><Lock size={11} /><span>Single element</span><small>Connect tokens for variants</small></div>}</div>
               {canvasNote && <div className="hi-restore is-note"><CircleAlert size={16} /><span><small>{canvasNote}</small></span><div><button onClick={() => setCanvasNote(null)}>Dismiss</button></div></div>}
               <div className="hi-reset-row"><button onClick={resetElement} disabled={!currentTargets().some((element) => changes.some((change) => change.element === element))}><RotateCcw size={13} />Reset selection</button><button onClick={resetAll} disabled={!changes.length}><RotateCcw size={13} />Reset all</button></div></>}
               {commentMode && <ToolSection title={`Comments · ${elementComments.length}`} icon={MessageSquare} openWhen={commentMode || focusComposer > 0 || elementComments.length > 0}>
@@ -6342,11 +6554,21 @@ function HandoffInspectorPanel() {
                   return <button key={id} title={disabled ? `${label} — needs a flex or grid parent` : label} aria-label={label} disabled={disabled} onClick={() => alignSelection(id)}><Icon size={14} /></button>;
                 })}
               </div>
-              <ToolSection title="Position & size" icon={Move}>
-                <div className="hi-control-pair">
-                  <NumberField label="X" value={positionValue('x')} onChange={(value) => applyStyle(positionProperty('x'), value)} />
-                  <NumberField label="Y" value={positionValue('y')} onChange={(value) => applyStyle(positionProperty('y'), value)} />
-                </div>
+              <ToolSection title={isPositioned ? 'Position & size' : canReorderInLayout ? 'Layout position & size' : 'Size'} icon={Move}>
+                {isPositioned && <div className="hi-control-pair">
+                  <NumberField label="X" value={positionValue('x')} onChange={(value) => setPositionCoordinate('x', value)} />
+                  <NumberField label="Y" value={positionValue('y')} onChange={(value) => setPositionCoordinate('y', value)} />
+                </div>}
+                {canReorderInLayout && <div className="hi-layout-position">
+                  <span><strong>{parentLayoutStyle?.display.includes('grid') ? 'Position in grid' : parentIsFlexOrGrid ? 'Position in layout' : 'Position in page flow'}</strong><small>{layoutContext?.promoted ? 'Containing item · ' : ''}{layoutPosition + 1} of {layoutSiblings.length} · drag or use {layoutFlow === 'column' ? '↑ ↓' : '← →'}</small></span>
+                  <div>
+                    <button disabled={layoutPosition <= 0} title="Move earlier" aria-label="Move earlier" onClick={() => reorder(-1)}>{layoutFlow === 'column' ? <ArrowUp size={14} /> : <ArrowLeft size={14} />}</button>
+                    <button disabled={layoutPosition < 0 || layoutPosition >= layoutSiblings.length - 1} title="Move later" aria-label="Move later" onClick={() => reorder(1)}>{layoutFlow === 'column' ? <ArrowDown size={14} /> : <ArrowRight size={14} />}</button>
+                  </div>
+                </div>}
+                {!isPositioned && !canReorderInLayout && <div className="hi-layout-position is-passive">
+                  <span><strong>In page flow</strong><small>Its parent controls where it sits.</small></span>
+                </div>}
                 <div className="hi-control-pair hi-control-pair--lock">
                   <NumberField label="W" value={round(snapshot.rect.width)} min={1} onChange={(value) => resizeTo('width', Number(value))} />
                   <button className={`hi-ratio-lock ${ratioLocked ? 'is-active' : ''}`} title={ratioLocked ? 'Unlock proportions' : 'Lock proportions'} aria-pressed={ratioLocked} onClick={() => setRatioLocked((locked) => !locked)}>{ratioLocked ? <Link2 size={12} /> : <Unlink size={12} />}</button>
@@ -6359,11 +6581,12 @@ function HandoffInspectorPanel() {
                     <button title="Flip vertical (Shift+V)" aria-label="Flip vertical" aria-pressed={isFlipped(snapshot.element, 'y')} className={isFlipped(snapshot.element, 'y') ? 'is-active' : ''} onClick={() => flip('y')}><FlipVertical2 size={14} /></button>
                   </div>
                 </div>
+              </ToolSection>
+              <ToolSection title="Advanced layout" icon={Settings} defaultOpen={false}>
                 <div className="hi-segmented hi-segmented--display" aria-label="Display">
                   {DISPLAY_MODES.map(({ value, label }) => <button key={value} title={value === 'none' ? 'Hidden' : label} aria-pressed={snapshot.styles.display === value} className={snapshot.styles.display === value ? 'is-active' : ''} onClick={() => applyStyle('display', value)}>{value === 'none' ? 'hidden' : label}</button>)}
                 </div>
                 <BoxSidesField label="Margin" property="margin" element={snapshot.element} onChange={applyStyle} />
-                <div className="hi-reorder"><button onClick={() => reorder(-1)}><ArrowLeft size={13} /><ArrowUp size={13} />Earlier</button><button onClick={() => reorder(1)}>Later<ArrowDown size={13} /><ArrowRight size={13} /></button></div>
                 <div className="hi-reorder"><button title="Duplicate (Ctrl+D)" onClick={duplicateSelection}><Copy size={13} />Duplicate</button><button title="Hide (Delete) · the layers panel or Undo brings it back" onClick={() => hideElements(currentTargets())}><EyeOff size={13} />Hide</button></div>
               </ToolSection>
               {(snapshot.styles.display.includes('flex') || snapshot.styles.display.includes('grid')) && <ToolSection title="Auto layout" icon={Layers3}>
@@ -6403,12 +6626,14 @@ function HandoffInspectorPanel() {
                 <ColorField label="Colour" value={liveStyle?.borderColor ?? snapshot.styles.border} tokens={colorTokens} onChange={(value) => applyStyle('border-color', value)} />
                 <div className="hi-control-pair"><NumberField label="Width" value={liveStyle?.borderWidth ?? 0} min={0} onChange={(value) => { beginHistoryBatch('Set stroke'); applyStyle('border-width', value); if ((liveStyle?.borderStyle ?? 'none') === 'none' && Number(value) > 0) applyStyle('border-style', 'solid'); finishHistoryBatch(); }} /><SelectField label="Style" compact value={liveStyle?.borderStyle ?? 'solid'} options={BORDER_STYLES} onChange={(value) => applyStyle('border-style', value)} /></div>
               </ToolSection>
-              <ToolSection title="Effects" icon={Sparkles}>
+              <ToolSection title="Effects" icon={Sparkles} defaultOpen={false}>
                 <SelectField label="Shadow" value={snapshot.styles['box-shadow']} options={shadowOptions(snapshot.styles['box-shadow'])} onChange={(value) => applyStyle('box-shadow', value)} />
                 <div className="hi-control-pair">
                   <NumberField label="Radius" value={snapshot.styles['border-radius']} min={0} onChange={(value) => applyStyle('border-radius', value)} />
                   <NumberField label="Opacity" value={cssNumber(snapshot.styles.opacity, 1) * 100} min={0} max={100} suffix="%" onChange={(value) => applyStyle('opacity', String(Number(value) / 100))} />
                 </div>
+              </ToolSection>
+              <ToolSection title="Advanced effects" icon={Settings} defaultOpen={false}>
                 <div className="hi-control-pair">
                   <NumberField label="Layer blur" value={readFilterPart(snapshot.element, 'filter', 'blur')} min={0} onChange={(value) => applyStyle('filter', withFilterPart(snapshot.element, 'filter', 'blur', Number(value) > 0 ? `${Number(value)}px` : null))} />
                   <NumberField label="Backdrop blur" value={readFilterPart(snapshot.element, 'backdrop-filter', 'blur')} min={0} onChange={(value) => applyStyle('backdrop-filter', withFilterPart(snapshot.element, 'backdrop-filter', 'blur', Number(value) > 0 ? `${Number(value)}px` : null))} />
@@ -6443,8 +6668,10 @@ function HandoffInspectorPanel() {
               </ToolSection>
               <ToolSection title="Accessibility check" icon={ShieldCheck} badge={accessibilityBadge} defaultOpen={false}><AccessibilityPanel snapshot={snapshot} /></ToolSection>
               <MeasurementDetails snapshot={snapshot} />
-              <ToolSection title="Token binding" icon={Link2} defaultOpen={false} disabled={!designSystemConnected} disabledHint={DESIGN_SYSTEM_REQUIRED}><TokenBindingPanel snapshot={snapshot} colorTokens={colorTokens} onBind={applyTokenBinding} /></ToolSection>
-              <ToolSection title="Page token audit" icon={ScanSearch} defaultOpen={false} disabled={!designSystemConnected} disabledHint={DESIGN_SYSTEM_REQUIRED}><PageTokenAudit colorTokens={colorTokens} onSelect={selectElement} /></ToolSection></>}
+              {designSystemConnected ? <>
+                <ToolSection title="Token binding" icon={Link2} defaultOpen={false}><TokenBindingPanel snapshot={snapshot} colorTokens={colorTokens} onBind={applyTokenBinding} /></ToolSection>
+                <ToolSection title="Page token audit" icon={ScanSearch} defaultOpen={false}><PageTokenAudit colorTokens={colorTokens} onSelect={selectElement} /></ToolSection>
+              </> : <button className="hi-connect-system" title={DESIGN_SYSTEM_REQUIRED} disabled={!hubAvailable()} onClick={() => (window as HubHost).__merakiInspectorHub?.()}><Link2 size={14} /><span><strong>Connect design system</strong><small>Unlock variants and token tools</small></span><ChevronDown size={13} /></button>}</>}
               {<ToolSection title={mode === 'comment' ? `Notes · ${comments.length}` : `Designer changes · ${changes.length + comments.length}`} icon={Code2} defaultOpen openWhen={changes.length + comments.length > 0}>{(changes.length || comments.length) ? <>
                 <div className="hi-handoff-actions">
                   <CopyButton value={handoffText} label="Copy everything" />

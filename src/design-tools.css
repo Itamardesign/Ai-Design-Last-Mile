@@ -1519,6 +1519,15 @@
 .hi-control-pair--lock { grid-template-columns: 1fr 24px 1fr; gap: 3px; }
 .hi-ratio-lock { display: grid; width: 24px; height: 28px; padding: 0; align-self: center; place-items: center; border: 0; border-radius: 4px; color: var(--tool-muted); background: transparent; cursor: pointer; }
 .hi-ratio-lock.is-active { color: #0d99ff; }
+.hi-layout-position { display: flex; min-height: 42px; padding: 6px 7px 6px 9px; align-items: center; justify-content: space-between; gap: 10px; border: 1px solid var(--tool-border); border-radius: 7px; background: #fff; }
+.hi-layout-position > span { display: grid; min-width: 0; gap: 2px; }
+.hi-layout-position strong { color: var(--hi-text); font-size: 10.5px; font-weight: 600; }
+.hi-layout-position small { color: var(--hi-muted); font-size: 9px; white-space: nowrap; }
+.hi-layout-position > div { display: grid; flex: none; grid-template-columns: repeat(2, 28px); gap: 3px; }
+.hi-layout-position button { display: grid; width: 28px; height: 28px; padding: 0; place-items: center; border: 1px solid var(--tool-border); border-radius: 5px; color: var(--hi-muted); background: #fff; cursor: pointer; }
+.hi-layout-position button:hover:not(:disabled) { border-color: var(--hi-accent); color: var(--hi-accent); background: var(--hi-accent-soft); }
+.hi-layout-position button:disabled { opacity: .32; cursor: default; }
+.hi-layout-position.is-passive { min-height: 38px; background: #f7f7f7; }
 .hi-segmented--display { grid-template-columns: repeat(6, 1fr); }
 .hi-segmented--display button { font-size: 8px; text-transform: lowercase; }
 .hi-pattern-presets button { background-color: #fff; }
@@ -2197,6 +2206,15 @@
   border-radius: calc(3px * var(--hi-chrome-scale, 1)); background: #0d99ff; font-size: calc(10px * var(--hi-chrome-scale, 1)); font-weight: 500;
   transform: translateX(-50%);
 }
+.hi-selection-chrome .hi-move-grip {
+  position: absolute; z-index: 5; top: calc(-30px * var(--hi-chrome-scale, 1)); left: 50%;
+  display: grid; width: calc(24px * var(--hi-chrome-scale, 1)); height: calc(24px * var(--hi-chrome-scale, 1)); padding: 0;
+  place-items: center; border: 0; border-radius: calc(6px * var(--hi-chrome-scale, 1)); color: #fff; background: #0d99ff;
+  box-shadow: 0 calc(2px * var(--hi-chrome-scale, 1)) calc(6px * var(--hi-chrome-scale, 1)) rgba(0,0,0,.22);
+  cursor: grab; pointer-events: auto; transform: translateX(-50%);
+}
+.hi-selection-chrome .hi-move-grip:active { cursor: grabbing; }
+.hi-selection-chrome .hi-move-grip svg { width: calc(12px * var(--hi-chrome-scale, 1)); height: calc(12px * var(--hi-chrome-scale, 1)); }
 .hi-selection-parent--canvas { position: absolute; z-index: 2; border-width: calc(1px * var(--hi-chrome-scale, 1)); border-color: rgba(13,153,255,.5); }
 
 /* Smart guides: red for alignment, pink for equal spacing, blue for the reorder drop line.
@@ -2499,6 +2517,75 @@
   .hi-device-overlay--left.has-layers { padding-right: 212px; }
   .hi-canvas-toolbar.is-device.has-layers.hi-canvas-toolbar--right { left: calc(212px + (100vw - min(360px, 44vw) - 212px) / 2); }
   .hi-canvas-toolbar.is-device.has-layers.hi-canvas-toolbar--left { left: calc(min(360px, 44vw) + (100vw - min(360px, 44vw) - 212px) / 2); }
+}
+
+/* Fast navigation ------------------------------------------------------------ */
+.hi-layers { grid-template-rows: auto auto minmax(0, 1fr); }
+.hi-layers-search {
+  display: grid; min-height: 38px; margin: 8px; padding: 0 8px;
+  grid-template-columns: 14px minmax(0, 1fr) auto; align-items: center; gap: 6px;
+  border: 1px solid #dedbd4; border-radius: 8px; color: #858993; background: #fff;
+}
+.hi-layers-search:focus-within { border-color: #0d99ff; box-shadow: 0 0 0 2px rgba(13,153,255,.13); }
+.hi-layers-search input { min-width: 0; height: 30px; padding: 0; border: 0; outline: 0; color: #24272e; background: transparent; font: inherit; font-size: 11px; }
+.hi-layers-search button { display: grid; width: 24px; height: 24px; padding: 0; place-items: center; border: 0; border-radius: 5px; color: #858993; background: transparent; cursor: pointer; }
+.hi-layers-search button:hover { color: #24272e; background: #eeece6; }
+.hi-layer-name { align-items: baseline; }
+.hi-layer-name small { margin-left: auto; font-family: "SFMono-Regular", Consolas, monospace; }
+
+/* A saved session is useful context, not the primary task. */
+.hi-restore.hi-restore--compact {
+  min-height: 46px; padding: 7px 10px; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 8px;
+  border-radius: 0; border-width: 0 0 1px; box-shadow: none;
+}
+.hi-restore.hi-restore--compact > span { gap: 0; }
+.hi-restore.hi-restore--compact strong { font-size: 11px; }
+.hi-restore.hi-restore--compact small { overflow: hidden; max-width: 180px; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.hi-restore.hi-restore--compact > div { grid-column: auto; }
+.hi-restore.hi-restore--compact button { min-height: 28px; padding: 0 9px; border-radius: 6px; font-size: 10px; }
+
+.hi-scope-status { display: flex; min-height: 28px; padding: 0 9px; align-items: center; gap: 6px; color: #737782; font-size: 10px; }
+.hi-scope-status span { color: #34373e; font-weight: 600; }
+.hi-scope-status small { margin-left: auto; color: #858993; font-size: 9px; }
+.hi-connect-system { display: grid; width: calc(100% - 24px); min-height: 44px; margin: 8px 12px; padding: 0 10px; grid-template-columns: 16px minmax(0,1fr) 14px; align-items: center; gap: 8px; border: 1px dashed #c9c5bc; border-radius: 8px; color: #737782; background: rgba(255,255,255,.5); font: inherit; text-align: left; cursor: pointer; }
+.hi-connect-system:hover:not(:disabled) { border-color: #0d99ff; color: #0d78d4; background: #eaf5ff; }
+.hi-connect-system:disabled { cursor: help; opacity: .72; }
+.hi-connect-system span { display: grid; gap: 1px; }
+.hi-connect-system strong { color: #34373e; font-size: 11px; }
+.hi-connect-system small { color: #858993; font-size: 9px; }
+.hi-connect-system > svg:last-child { transform: rotate(-90deg); }
+
+/* Quick actions -------------------------------------------------------------- */
+.hi-command-backdrop { position: fixed; z-index: 2147483646; inset: 0; display: grid; padding-top: min(18vh, 160px); place-items: start center; background: rgba(21,24,31,.2); backdrop-filter: blur(2px); }
+.hi-command { width: min(460px, calc(100vw - 32px)); overflow: hidden; border: 1px solid rgba(31,35,43,.18); border-radius: 12px; color: #24272e; background: #fff; box-shadow: 0 20px 70px rgba(22,26,35,.28); }
+.hi-command > label { display: grid; min-height: 48px; padding: 0 14px; grid-template-columns: 18px 1fr; align-items: center; gap: 8px; border-bottom: 1px solid #e5e5e5; color: #737782; }
+.hi-command input { height: 46px; border: 0; outline: 0; color: #24272e; background: transparent; font: inherit; font-size: 13px; }
+.hi-command > div { display: grid; padding: 6px; }
+.hi-command button { display: flex; min-height: 38px; padding: 0 10px; align-items: center; border: 0; border-radius: 7px; color: #34373e; background: transparent; font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+.hi-command button:hover, .hi-command button:focus-visible, .hi-command button.is-active { outline: 0; background: #e5f4ff; }
+.hi-command kbd { margin-left: auto; color: #858993; font: 9px/1 "SFMono-Regular", Consolas, monospace; }
+.hi-command p { margin: 0; padding: 14px; color: #858993; font-size: 11px; }
+
+/* Narrow windows use the properties panel as a drawer instead of squeezing it. */
+@media (max-width: 760px) {
+  .hi-layers { display: none; }
+  .hi-device-overlay,
+  .hi-device-overlay--right,
+  .hi-device-overlay--left { padding-right: 0; padding-left: 0; }
+  .hi-panel.hi-panel--workspace,
+  .hi-panel.hi-panel--workspace.hi-panel--left,
+  .hi-panel.hi-panel--workspace.hi-panel--right {
+    top: 8px; right: 8px; bottom: 8px; left: auto;
+    width: min(360px, calc(100vw - 16px)); max-width: min(360px, calc(100vw - 16px));
+  }
+  .hi-canvas-toolbar.is-device,
+  .hi-canvas-toolbar.is-device.hi-canvas-toolbar--left,
+  .hi-canvas-toolbar.is-device.hi-canvas-toolbar--right {
+    left: 50%; max-width: calc(100vw - 16px); overflow-x: auto;
+  }
+  .hi-canvas-toolbar.is-device .hi-device-model { display: none; }
+  .hi-restore.hi-restore--compact small,
+  .hi-scope-status small { display: none; }
 }
 
 .hi-panel--workspace .hi-color-field-row { grid-template-columns: 56px 36px minmax(0, 1fr) 68px 36px; }
