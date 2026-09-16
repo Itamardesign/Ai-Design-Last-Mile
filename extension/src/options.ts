@@ -21,6 +21,7 @@ import {
   type StoredSystem,
 } from './storage.js';
 import { normalizeDesignTokens } from './tokens.js';
+import { requestAllSitesAccess } from './permissions.js';
 import { notesAsMarkdown, openNoteCount, readAllNotes, writeAllNotes, type NotePage } from './notes.js';
 import type { Account } from './account.js';
 import type { KeptHandoff } from './sync.js';
@@ -753,6 +754,12 @@ async function connect(system: StoredSystem): Promise<void> {
 defaultSelect.addEventListener('change', () => void save({ ...settings, defaultSystemId: defaultSelect.value }));
 
 relax.addEventListener('change', async () => {
+  // Stripping headers happens before a page loads, on whichever site the designer opens next, so
+  // this is the one setting that needs every site. Chrome asks once; a "no" leaves the switch off.
+  if (relax.checked && !(await requestAllSitesAccess())) {
+    relax.checked = false;
+    return;
+  }
   await save({ ...settings, relaxCsp: relax.checked });
   await chrome.runtime.sendMessage({ type: 'setRelaxCsp', relaxCsp: relax.checked });
 });

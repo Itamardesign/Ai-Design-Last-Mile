@@ -16,6 +16,7 @@ import {
   writeSettings,
 } from './storage.js';
 import type { PageMessage, PopupRequest, TabState } from './messages.js';
+import { hasAllSitesAccess, hasOriginAccess } from './permissions.js';
 import type { StoredEdits } from './merge.js';
 import type { NotePage } from './notes.js';
 import type { DesignTokens } from '../../src/types.js';
@@ -53,7 +54,9 @@ async function setHeaderRules(tabId: number, on: boolean): Promise<void> {
     return;
   }
   const settings = await readSettings();
-  if (!settings.relaxCsp) {
+  // Header rules need host access for the site. `activeTab` grants it for the tab the designer
+  // clicked; the hub asks for every site when the switch is turned on. Without either, skip quietly.
+  if (!settings.relaxCsp || !(await hasAllSitesAccess())) {
     await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds });
     return;
   }
@@ -145,7 +148,7 @@ async function activate(tabId: number): Promise<void> {
   if (isRestricted(tab.url)) return;
 
   const origin = originOf(tab.url);
-  await setHeaderRules(tabId, true);
+  await setHeaderRules(tabId, true).catch(() => {});
   const { tokens, systemName } = await tokensFor(origin);
   const payload: PageMessage = { type: 'inspector:set', active: true, tokens, systemName };
 
@@ -363,7 +366,10 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   const origin = originOf(tab.url);
   const settings = await readSettings();
   const wasActive = (await activeTabs()).includes(tabId);
-  const shouldRun = wasActive || (origin !== null && settings.autoOrigins.includes(origin));
+  // A tab that was already running keeps its `activeTab` grant across same-origin navigations. An
+  // auto-start origin is only honoured while the site-level grant the popup asked for still stands.
+  const shouldRun = wasActive
+    || (origin !== null && settings.autoOrigins.includes(origin) && (await hasOriginAccess(origin)));
   if (!shouldRun) return;
   await activate(tabId);
 });

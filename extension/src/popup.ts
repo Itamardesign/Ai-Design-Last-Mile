@@ -2,7 +2,8 @@
  * The toolbar popup: turn the inspector on here, and say which design system this site is designed
  * against. Anything that needs typing (adding a system) lives in the settings page instead.
  */
-import { DETECT, readSettings } from './storage.js';
+import { DETECT, originOf, readSettings } from './storage.js';
+import { requestOriginAccess } from './permissions.js';
 import { notesAsMarkdown, openNoteCount, readAllNotes, type NotePage } from './notes.js';
 import type { PopupRequest, TabState } from './messages.js';
 import type { Account } from './account.js';
@@ -206,6 +207,11 @@ systemSelect.addEventListener('change', async () => {
 autoToggle.addEventListener('change', async () => {
   const tab = await currentTab();
   if (!tab?.id) return;
+  // Starting without a click needs the site granted up front. Chrome asks; a "no" leaves it off.
+  if (autoToggle.checked && !(await requestOriginAccess(originOf(tab.url)))) {
+    autoToggle.checked = false;
+    return;
+  }
   paint(await ask<TabState>({ type: 'setAutoStart', tabId: tab.id, autoStart: autoToggle.checked }));
 });
 
