@@ -32,10 +32,13 @@
     "node": ">=18"
   },
   "scripts": {
+    "dev:landing": "node landing/dev.mjs",
+    "build:landing": "node landing/build.mjs",
     "clean": "node scripts/clean.mjs",
     "build": "npm run clean && node scripts/gen-styles.mjs && tsc -p tsconfig.json && node scripts/copy-assets.mjs",
     "prepare": "node scripts/prepare.mjs",
     "build:extension": "node extension/build.mjs",
+    "update:google-fonts": "node scripts/update-google-fonts.mjs",
     "dev:extension": "node extension/build.mjs --watch",
     "typecheck:extension": "tsc -p extension/tsconfig.json",
     "pack:extension": "node extension/build.mjs && node extension/zip.mjs",

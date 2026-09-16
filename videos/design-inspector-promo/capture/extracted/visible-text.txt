@@ -1,0 +1,10 @@
+Meraki Mind Design Inspector
+
+Inspect any interface. Select an element, edit content, typography, fill and layout live,
+bind real design tokens, check accessibility, and export implementation-ready CSS and
+written handoff instructions. Source files are never touched.
+
+Core product beats for this 15-second showcase:
+- click any element to inspect it
+- tune spacing, radius, typography, and colour live
+- hand off clean CSS and developer instructions

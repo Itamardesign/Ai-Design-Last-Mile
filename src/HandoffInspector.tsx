@@ -17,6 +17,7 @@ import {
   Check,
   CheckCircle2,
   ChevronDown,
+  ChevronRight,
   CircleAlert,
   Clipboard,
   Cloud,
@@ -30,6 +31,7 @@ import {
   FlipHorizontal2,
   FlipVertical2,
   FileCode2,
+  FileText,
   Gauge,
   History,
   Layers,
@@ -39,9 +41,11 @@ import {
   Link2,
   LoaderCircle,
   Lock,
+  Mail,
   MessageSquare,
   MoreHorizontal,
   PaintBucket,
+  Pencil,
   Pipette,
   Monitor,
   MousePointerClick,
@@ -56,6 +60,7 @@ import {
   RotateCw,
   ScanSearch,
   Settings,
+  Share2,
   ShieldCheck,
   Smartphone,
   Sparkles,
@@ -66,6 +71,8 @@ import {
   Unlink,
   Unlock,
   Upload,
+  UserPlus,
+  Users,
   Wand2,
   X,
 } from 'lucide-react';
@@ -328,7 +335,19 @@ const TEXT_ALIGNMENTS = [
   { value: 'right', label: 'Align right', Icon: AlignRight },
   { value: 'justify', label: 'Justify', Icon: AlignJustify },
 ] as const;
-const PSEUDO_RE = /:(hover|active|focus-visible|focus-within|focus)(?![\w-])/g;
+/**
+ * The selector tokens that put an element into one of the six panel states. Pseudo-classes cover
+ * hover/focus/pressed; disabled, loading and error are attribute-driven in most component libraries,
+ * so those attribute forms count as state rules too — otherwise the tiles would have nothing to show.
+ */
+const STATE_TOKEN_RE = /:(hover|active|focus-visible|focus-within|focus|disabled|invalid)(?![\w-])|\[(disabled|aria-disabled|aria-busy|aria-invalid)(?:\s*=\s*["']?true["']?)?\]/g;
+const STATE_TOKEN_NAME: Record<string, string> = { 'aria-disabled': 'disabled', 'aria-busy': 'loading', 'aria-invalid': 'error', invalid: 'error' };
+function stateTokenName(match: RegExpMatchArray) { const token = match[1] ?? match[2]; return STATE_TOKEN_NAME[token] ?? token; }
+/** Which detected rules describe a panel state: `pressed` is CSS `:active`, and any focus flavour counts as focus. */
+function ruleMatchesState(rule: StateRule, state: ComponentStateId) {
+  const needle = state === 'pressed' ? 'active' : state;
+  return rule.state.split(', ').some((token) => token === needle || (needle === 'focus' && token.startsWith('focus')));
+}
 const COMPONENT_STATES: Array<{ id: ComponentStateId; label: string; Icon: typeof MousePointer2 }> = [
   { id: 'hover', label: 'Hover', Icon: MousePointer2 },
   { id: 'focus', label: 'Focus', Icon: ScanSearch },
@@ -456,6 +475,8 @@ type PageComment = {
 type CommentAnchor = { tag: string; text: string; classes: string[]; role?: string; ancestor?: string };
 
 const COMMENTS_STORAGE_KEY = 'meraki-inspector-comments';
+/** Which side-panel tab was last in use — Pages or Layers — so the column reopens where it was left. */
+const SIDE_TAB_STORAGE_KEY = 'meraki-inspector-side-tab';
 const COMMENT_AUTHOR_KEY = 'meraki-inspector-author';
 
 const anchorText = (element: Element): string => (element.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 90);
@@ -1121,14 +1142,15 @@ function getReadableStateRules(element: HTMLElement): StateRule[] {
   const found: StateRule[] = [];
   const visit = (rules: CSSRuleList) => {
     for (const rule of Array.from(rules)) {
-      if (rule instanceof CSSStyleRule && PSEUDO_RE.test(rule.selectorText)) {
-        PSEUDO_RE.lastIndex = 0;
-        const baseSelector = rule.selectorText.replace(PSEUDO_RE, '').replace(/\s+/g, ' ').trim();
-        PSEUDO_RE.lastIndex = 0;
+      if (rule instanceof CSSStyleRule && STATE_TOKEN_RE.test(rule.selectorText)) {
+        STATE_TOKEN_RE.lastIndex = 0;
+        // Stripping the tokens can leave a bare compound like `.btn` or nothing (`[disabled]` alone → `*`).
+        const baseSelector = rule.selectorText.replace(STATE_TOKEN_RE, '').replace(/\s+/g, ' ').trim() || '*';
+        STATE_TOKEN_RE.lastIndex = 0;
         try {
-          if (baseSelector && (element.matches(baseSelector) || Boolean(element.closest(baseSelector)))) {
-            const state = Array.from(rule.selectorText.matchAll(PSEUDO_RE)).map((match) => match[1]).join(', ');
-            PSEUDO_RE.lastIndex = 0;
+          if (element.matches(baseSelector) || Boolean(element.closest(baseSelector))) {
+            const state = Array.from(new Set(Array.from(rule.selectorText.matchAll(STATE_TOKEN_RE)).map(stateTokenName))).join(', ');
+            STATE_TOKEN_RE.lastIndex = 0;
             found.push({
               state,
               selector: rule.selectorText,
@@ -1147,6 +1169,15 @@ function getReadableStateRules(element: HTMLElement): StateRule[] {
   return found.slice(0, 18);
 }
 
+/*
+ * Elements in the device frame belong to another window, so `instanceof HTMLImageElement` against
+ * this window's class is false for every one of them. The tag is the same in every realm.
+ */
+function isImageElement(node: Element): node is HTMLImageElement { return node.tagName === 'IMG'; }
+function isVideoElement(node: Element): node is HTMLVideoElement { return node.tagName === 'VIDEO'; }
+function isSvgRoot(node: Element): node is SVGSVGElement { return node.namespaceURI === 'http://www.w3.org/2000/svg' && node.tagName.toLowerCase() === 'svg'; }
+function isSvgElement(node: Element): node is SVGElement { return node.namespaceURI === 'http://www.w3.org/2000/svg'; }
+
 function getAssets(element: HTMLElement): AssetInfo[] {
   const assets: AssetInfo[] = [];
   const descendants = [element, ...Array.from(element.querySelectorAll<HTMLElement>('*')).slice(0, 80)];
@@ -1154,10 +1185,12 @@ function getAssets(element: HTMLElement): AssetInfo[] {
   let svgIndex = 0;
   let backgroundIndex = 0;
   for (const node of descendants) {
-    if (node instanceof HTMLImageElement) {
+    if (isImageElement(node)) {
       assets.push({ id: `img-${imageIndex++}`, type: 'img', label: node.alt || 'Image', src: node.currentSrc || node.src, element: node });
+      // A picture component's blur placeholder is the same asset, not a second one.
+      continue;
     }
-    if (node instanceof SVGSVGElement) {
+    if (isSvgRoot(node)) {
       const clone = node.cloneNode(true) as SVGElement;
       clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
       const text = new XMLSerializer().serializeToString(clone);
@@ -1639,9 +1672,135 @@ const cloudAvailable = () => typeof window !== 'undefined' && typeof (window as 
  * the account. An app rendering this component has its own settings screen and no need of ours, so the
  * button is absent there rather than pointing somewhere that does not exist.
  */
-type HubHost = typeof window & { __merakiInspectorHub?: () => void };
+/** The host's way to its own settings page. Resolves false when it could not get there. */
+type HubHost = typeof window & { __merakiInspectorHub?: () => void | boolean | Promise<boolean | void> };
 
 const hubAvailable = () => typeof window !== 'undefined' && typeof (window as HubHost).__merakiInspectorHub === 'function';
+
+type ShareRole = 'comment' | 'edit';
+type ShareLinkAccess = 'off' | ShareRole;
+type ShareMember = { uid: string; name: string | null; email: string | null; photo: string | null; role: ShareRole; joinedAt: number };
+type ShareInvite = { token: string; email: string; role: ShareRole; createdAt: number };
+type ShareState = {
+  signedIn: true;
+  owner: boolean;
+  role: 'owner' | ShareRole;
+  linkAccess: ShareLinkAccess;
+  linkToken: string | null;
+  members: ShareMember[];
+  invites: ShareInvite[];
+  profile: { uid: string; name: string | null; email: string | null; photo: string | null };
+  ownerProfile: { uid: string; name: string | null; email: string | null; photo: string | null };
+};
+type ShareHost = typeof window & {
+  __merakiInspectorShare?: {
+    state: () => Promise<ShareState>;
+    setLink: (access: ShareLinkAccess) => Promise<{ token: string | null }>;
+    invite: (email: string, role: ShareRole) => Promise<{ token: string }>;
+    removeMember: (uid: string) => Promise<{ ok: boolean }>;
+  };
+};
+
+const collaborationHost = () => typeof window === 'undefined' ? undefined : (window as ShareHost).__merakiInspectorShare;
+const collaborationLink = (token: string) => `${window.location.origin}${window.location.pathname}${window.location.search}#meraki-review=${token}`;
+
+function openInvitationEmail(email: string, token: string, role: ShareRole): void {
+  const link = collaborationLink(token);
+  const pageName = document.title.trim() || 'this website';
+  const permission = role === 'edit' ? 'comment and suggest design changes' : 'view and comment';
+  const subject = `Invitation to review ${pageName}`;
+  const body = [
+    'Hi,',
+    '',
+    `I invited you to review ${pageName}. You’ll be able to ${permission}.`,
+    '',
+    'Open the shared review:',
+    link,
+    '',
+    `Sign in to Meraki Design Inspector with ${email} to accept the invitation.`,
+  ].join('\n');
+  const draft = document.createElement('a');
+  draft.href = `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  draft.style.display = 'none';
+  document.body.appendChild(draft);
+  draft.click();
+  draft.remove();
+}
+
+function SharePopover({ onClose }: { onClose: () => void }) {
+  const host = collaborationHost();
+  const [state, setState] = useState<ShareState | null>(null);
+  const [loading, setLoading] = useState(Boolean(host));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [email, setEmail] = useState('');
+  const [inviteRole, setInviteRole] = useState<ShareRole>('comment');
+
+  const reload = useCallback(async () => {
+    if (!host) return;
+    setLoading(true);
+    setError('');
+    try { setState(await host.state()); }
+    catch (reason) { setError((reason as Error).message); }
+    finally { setLoading(false); }
+  }, [host]);
+
+  useEffect(() => { void reload(); }, [reload]);
+
+  const copyToken = async (token: string, label: string) => {
+    await navigator.clipboard.writeText(collaborationLink(token));
+    setNotice(label);
+    window.setTimeout(() => setNotice(''), 2200);
+  };
+
+  const changeLink = async (access: ShareLinkAccess) => {
+    if (!host) return;
+    setBusy(true); setError('');
+    try {
+      const answer = await host.setLink(access);
+      await reload();
+      if (answer.token) await copyToken(answer.token, 'Share link copied');
+      else setNotice('Link access turned off');
+    } catch (reason) { setError((reason as Error).message); }
+    finally { setBusy(false); }
+  };
+
+  const invite = async () => {
+    if (!host || !email.trim()) return;
+    const recipient = email.trim();
+    setBusy(true); setError('');
+    try {
+      const answer = await host.invite(recipient, inviteRole);
+      // The draft is the primary handoff. Copying first leaves a fallback if the machine has no
+      // default mail app, or the browser blocks the external-protocol prompt.
+      try { await navigator.clipboard.writeText(collaborationLink(answer.token)); } catch { /* The draft still contains the link. */ }
+      setNotice('Invitation created · opening email draft');
+      openInvitationEmail(recipient, answer.token, inviteRole);
+      setEmail('');
+      await reload();
+    } catch (reason) { setError((reason as Error).message); }
+    finally { setBusy(false); }
+  };
+
+  return <div className="hi-share-scrim" onPointerDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <section className="hi-share-popover" role="dialog" aria-modal="true" aria-label="Share this review">
+      <header><span><Share2 size={16} /><strong>Share this review</strong></span><button aria-label="Close sharing" onClick={onClose}><X size={15} /></button></header>
+      {!host ? <div className="hi-share-signin"><Users size={25} /><strong>Collaborate with registered users</strong><p>Sign in to invite people and share this page’s notes and suggested design changes.</p><button onClick={() => (window as HubHost).__merakiInspectorHub?.()}><UserPlus size={14} />Sign in in Settings</button></div>
+      : loading && !state ? <div className="hi-share-loading"><LoaderCircle size={18} />Loading sharing…</div>
+      : state ? <div className="hi-share-body">
+        {state.owner ? <>
+          <div className="hi-share-invite"><label><Mail size={13} /><input value={email} type="email" placeholder="name@company.com" aria-label="Email to invite" onChange={(event) => setEmail(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void invite(); }} /></label><select value={inviteRole} aria-label="Invitation permission" onChange={(event) => setInviteRole(event.target.value as ShareRole)}><option value="comment">Can comment</option><option value="edit">Can edit</option></select><button disabled={busy || !email.trim()} onClick={() => void invite()}>Invite</button></div>
+          <small className="hi-share-invite-hint">Creates the invitation, copies its link, and opens a prefilled email draft.</small>
+          <div className="hi-share-link-row"><span><Link2 size={14} /><span><strong>Anyone with the link</strong><small>{state.linkAccess === 'off' ? 'Only invited people can open it' : state.linkAccess === 'edit' ? 'Can edit suggestions' : 'Can view and comment'}</small></span></span><select disabled={busy} value={state.linkAccess} aria-label="Link access" onChange={(event) => void changeLink(event.target.value as ShareLinkAccess)}><option value="off">Off</option><option value="comment">Can comment</option><option value="edit">Can edit</option></select></div>
+          {state.linkToken && <button className="hi-share-copy" onClick={() => void copyToken(state.linkToken!, 'Share link copied')}><Link2 size={13} />Copy link</button>}
+        </> : <div className="hi-share-access"><CheckCircle2 size={17} /><span><strong>Shared with you</strong><small>You {state.role === 'edit' ? 'can comment and suggest changes' : 'can view and comment'}.</small></span><button onClick={() => void reload()}><RefreshCw size={13} />Refresh</button></div>}
+        <div className="hi-share-people"><strong>People with access</strong>{!state.owner && <article><span className="hi-share-avatar">{(state.ownerProfile.name || state.ownerProfile.email || '?').slice(0, 1).toUpperCase()}</span><span><b>{state.ownerProfile.name || state.ownerProfile.email || 'Review owner'}</b><small>Owner</small></span></article>}<article><span className="hi-share-avatar">{(state.profile.name || state.profile.email || '?').slice(0, 1).toUpperCase()}</span><span><b>{state.profile.name || state.profile.email || 'You'} (you)</b><small>{state.owner ? 'Owner' : state.role === 'edit' ? 'Can edit' : 'Can comment'}</small></span></article>{state.members.filter((member) => member.uid !== state.profile.uid).map((member) => <article key={member.uid}><span className="hi-share-avatar">{(member.name || member.email || '?').slice(0, 1).toUpperCase()}</span><span><b>{member.name || member.email || 'Collaborator'}</b><small>{member.role === 'edit' ? 'Can edit' : 'Can comment'}</small></span>{state.owner && <button aria-label={`Remove ${member.name || member.email || 'collaborator'}`} onClick={async () => { if (!host) return; setBusy(true); try { await host.removeMember(member.uid); await reload(); } catch (reason) { setError((reason as Error).message); } finally { setBusy(false); } }}><X size={13} /></button>}</article>)}{state.owner && state.invites.map((entry) => <article key={entry.token} className="is-pending"><span className="hi-share-avatar"><Mail size={11} /></span><span><b>{entry.email}</b><small>Invited · {entry.role === 'edit' ? 'Can edit' : 'Can comment'}</small></span><button title="Copy invitation" onClick={() => void copyToken(entry.token, 'Invitation link copied')}><Copy size={12} /></button></article>)}</div>
+      </div> : null}
+      {error && <p className="hi-share-error">{error}</p>}{notice && <div className="hi-share-notice"><Check size={13} />{notice}</div>}
+    </section>
+  </div>;
+}
 
 /**
  * A short name for an element, for the handoff report.
@@ -2182,24 +2341,64 @@ function SizeField({ label, value, presets, unit = 'px', min = 0, onChange, comp
  */
 function FontField({ label, value, projectFonts, onChange }: { label: string; value: string; projectFonts: FontOption[]; onChange: (value: string) => void }) {
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [visibleLimit, setVisibleLimit] = useState(60);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const pickerRef = useRef<HTMLDivElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
-  const menuBox = useMenuAnchor(open, pickerRef, 320);
+  const menuBox = useMenuAnchor(open, pickerRef, 440);
   const portal = usePortalTarget(pickerRef, open);
   const groups = useMemo(() => buildFontGroups(projectFonts), [projectFonts]);
+  const filteredGroups = useMemo(() => {
+    const needle = query.trim().toLocaleLowerCase();
+    return groups.map((group) => ({
+      ...group,
+      fonts: needle ? group.fonts.filter((font) => font.label.toLocaleLowerCase().includes(needle)) : group.fonts,
+    })).filter((group) => group.fonts.length);
+  }, [groups, query]);
+  const googleMatchCount = filteredGroups.find((group) => group.id === 'google')?.fonts.length ?? 0;
+  const visibleGroups = useMemo(() => filteredGroups.map((group) => (
+    group.id === 'google' ? { ...group, fonts: group.fonts.slice(0, visibleLimit) } : group
+  )), [filteredGroups, visibleLimit]);
+  const previewFonts = useMemo(() => visibleGroups.find((group) => group.id === 'google')?.fonts ?? [], [visibleGroups]);
   const current = primaryFontFamily(value) || 'Inherited';
+  const expandedFontBrowser = visibleLimit > 60;
+  const fontMenuStyle: CSSProperties | undefined = menuBox ? (() => {
+    const gutter = 12;
+    const width = Math.min(expandedFontBrowser ? 560 : 420, window.innerWidth - gutter * 2);
+    if (expandedFontBrowser) {
+      const height = Math.min(680, window.innerHeight - gutter * 2);
+      return {
+        top: Math.max(gutter, (window.innerHeight - height) / 2),
+        left: Math.max(gutter, (window.innerWidth - width) / 2),
+        width,
+        height,
+        maxHeight: height,
+      };
+    }
+    return {
+      top: menuBox.top,
+      left: Math.max(gutter, Math.min(menuBox.left + menuBox.width - width, window.innerWidth - width - gutter)),
+      width,
+      maxHeight: menuBox.maxHeight,
+    };
+  })() : undefined;
 
   useDismissOnOutsidePress(open, [rootRef, menuRef], useCallback(() => setOpen(false), []));
 
   useEffect(() => {
     if (!open) return;
-    // Only reaches the network once the user actually opens the list.
-    ensureGoogleFontsLoaded();
     const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.stopPropagation(); setOpen(false); } };
     document.addEventListener('keydown', onKey, true);
     return () => document.removeEventListener('keydown', onKey, true);
   }, [open]);
+
+  useEffect(() => {
+    if (!open || !previewFonts.length) return;
+    // The catalogue is local; only the currently displayed preview faces reach the network.
+    const timer = window.setTimeout(() => ensureGoogleFontsLoaded(previewFonts), 120);
+    return () => window.clearTimeout(timer);
+  }, [open, previewFonts]);
 
   return <div className="hi-control hi-font-field" ref={rootRef}>
     <span>{label}</span>
@@ -2210,28 +2409,48 @@ function FontField({ label, value, projectFonts, onChange }: { label: string; va
       </button>
       {open && menuBox && portal && createPortal(<div
         ref={menuRef}
-        className="hi-font-menu"
-        role="listbox"
-        style={{ top: menuBox.top, left: menuBox.left, width: Math.max(menuBox.width, 232), maxHeight: menuBox.maxHeight }}
+        className={`hi-font-menu ${expandedFontBrowser ? 'is-expanded' : ''}`}
+        style={fontMenuStyle}
       >
-        {groups.map((group) => <section key={group.id}>
-          <header><strong>{group.label}</strong><small>{group.hint}</small></header>
-          {group.fonts.map((font) => {
-            const active = primaryFontFamily(value).toLowerCase() === font.label.toLowerCase();
-            return <button
-              type="button"
-              key={`${group.id}-${font.label}`}
-              role="option"
-              aria-selected={active}
-              className={active ? 'is-active' : ''}
-              onClick={() => { onChange(font.stack); setOpen(false); }}
-            >
-              <span className="hi-font-name">{font.label}</span>
-              {/* The preview is the point: it renders in the face being offered, not the panel's. */}
-              <span className="hi-font-sample" style={{ fontFamily: font.stack }}>Ag 123</span>
-            </button>;
-          })}
-        </section>)}
+        <div className="hi-font-search">
+          <ScanSearch size={14} />
+          <input
+            autoFocus
+            type="search"
+            value={query}
+            aria-label="Search font families"
+            placeholder="Search all Google Fonts…"
+            onChange={(event) => { setQuery(event.target.value); setVisibleLimit(60); }}
+            onKeyDown={(event) => event.stopPropagation()}
+          />
+          {query && <button type="button" aria-label="Clear font search" onClick={() => { setQuery(''); setVisibleLimit(60); }}><X size={12} /></button>}
+        </div>
+        <div className="hi-font-options" role="listbox">
+          {visibleGroups.map((group) => <section key={group.id}>
+            <header><strong>{group.label}</strong><small>{group.hint}</small></header>
+            {group.fonts.map((font) => {
+              const active = primaryFontFamily(value).toLowerCase() === font.label.toLowerCase();
+              return <button
+                type="button"
+                key={`${group.id}-${font.label}`}
+                role="option"
+                aria-selected={active}
+                className={active ? 'is-active' : ''}
+                onClick={() => { onChange(font.stack); setOpen(false); }}
+              >
+                <span className="hi-font-name">{font.label}</span>
+                {/* The preview is the point: it renders in the face being offered, not the panel's. */}
+                <span className="hi-font-sample" style={{ fontFamily: font.stack }}>Ag 123</span>
+              </button>;
+            })}
+          </section>)}
+          {!visibleGroups.length && <p className="hi-font-empty">No fonts match “{query.trim()}”.</p>}
+        </div>
+        {googleMatchCount > visibleLimit && <button
+          type="button"
+          className="hi-font-more"
+          onClick={() => setVisibleLimit((limit) => limit + 60)}
+        >Show 60 more <small>{visibleLimit} of {googleMatchCount}</small></button>}
       </div>, portal)}
     </div>
   </div>;
@@ -2330,7 +2549,7 @@ function withFilterPart(element: HTMLElement, property: 'filter' | 'backdrop-fil
  * One colour: a swatch, the hex, and its opacity, with the system's palette a click away.
  * Every fill, stroke and text colour is this same control, so there is no tab to land on wrong.
  */
-function ColorField({ label, value, tokens, onChange, alpha = true }: { label: string; value: string; tokens: readonly BrandColorToken[]; onChange: (value: string) => void; alpha?: boolean }) {
+function ColorField({ label, value, tokens, onChange, alpha = true, controlId }: { label: string; value: string; tokens: readonly BrandColorToken[]; onChange: (value: string) => void; alpha?: boolean; controlId?: string }) {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const hex = toColorInput(value);
   const opacity = colorAlpha(value);
@@ -2340,7 +2559,7 @@ function ColorField({ label, value, tokens, onChange, alpha = true }: { label: s
     if (!/^#?[0-9a-f]{6}$/i.test(trimmed) && !toHex(trimmed).startsWith('#')) return;
     onChange(withAlpha(trimmed.startsWith('#') ? trimmed : toHex(trimmed), opacity));
   };
-  return <div className="hi-color-field">
+  return <div className="hi-color-field" data-hi-control={controlId}>
     <div className="hi-color-field-row">
       <span className="hi-color-field-label">{label}</span>
       <label className="hi-color-field-swatch" title={matched ? `${matched.label} · ${matched.value}` : 'Pick any colour'}>
@@ -3020,6 +3239,9 @@ type MoveSession = {
   currentIndex: number;
   insertion: InsertionPoint | null;
   guides: SnapGuide[];
+  /** Temporary lift/fade treatment on the node under the pointer. */
+  visualInline: Record<string, { value: string; priority: string }>;
+  visualActive: boolean;
   moved: boolean;
   onUpdate: (() => void) | null;
 };
@@ -3098,9 +3320,31 @@ function beginMove(element: HTMLElement, view: HTMLElement, event: PointerEvent,
     currentIndex: siblings.indexOf(view),
     insertion: null,
     guides: [],
+    visualInline: Object.fromEntries(['opacity', 'outline', 'outline-offset', 'cursor', 'transition', 'will-change'].map((property) => [property, { value: view.style.getPropertyValue(property), priority: view.style.getPropertyPriority(property) }])),
+    visualActive: false,
     moved: false,
     onUpdate,
   };
+}
+
+/** Lift the item without changing its geometry; the insertion line still shows the exact landing spot. */
+function previewMoveVisual(session: MoveSession) {
+  if (session.visualActive) return;
+  session.visualActive = true;
+  session.view.style.setProperty('opacity', '.68', 'important');
+  session.view.style.setProperty('outline', '2px solid #0d99ff', 'important');
+  session.view.style.setProperty('outline-offset', '3px', 'important');
+  session.view.style.setProperty('cursor', 'grabbing', 'important');
+  session.view.style.setProperty('transition', 'opacity 120ms ease, outline-color 120ms ease', 'important');
+  session.view.style.setProperty('will-change', 'opacity', 'important');
+}
+
+function rollbackMoveVisual(session: MoveSession) {
+  Object.entries(session.visualInline).forEach(([property, original]) => {
+    if (original.value) session.view.style.setProperty(property, original.value, original.priority);
+    else session.view.style.removeProperty(property);
+  });
+  session.visualActive = false;
 }
 
 /** Applies the pointer to the session. Returns false while still inside the dead zone. */
@@ -3142,6 +3386,7 @@ function previewMove(session: MoveSession) {
 }
 
 function rollbackMove(session: MoveSession) {
+  rollbackMoveVisual(session);
   session.members.forEach((member) => {
     const nodes = new Set([member.element, member.mirror, member.element === session.element ? session.view : null]);
     nodes.forEach((node) => {
@@ -3205,6 +3450,8 @@ function isFlipped(element: HTMLElement, axis: 'x' | 'y') {
 const LAYER_SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'LINK', 'META', 'TITLE', 'HEAD', 'BR', 'WBR']);
 /** Past this many rows the tree is a list of everything; nothing is gained by drawing more. */
 const MAX_LAYER_ROWS = 2000;
+/** Deep DOM trees stay readable instead of spending the whole panel on indentation. */
+const MAX_VISIBLE_LAYER_DEPTH = 3;
 
 type LayerRow = {
   path: string;
@@ -3229,7 +3476,7 @@ function layerLabel(element: HTMLElement) {
   const selector = `${tag}${name}`;
   const own = Array.from(element.childNodes).filter((node) => node.nodeType === 3).map((node) => node.textContent ?? '').join(' ');
   const text = normalizeText(own || (element.children.length === 0 ? element.textContent ?? '' : ''));
-  const attribute = element instanceof HTMLImageElement ? element.alt : element instanceof HTMLInputElement ? element.placeholder || element.value : '';
+  const attribute = isImageElement(element) ? element.alt : element instanceof HTMLInputElement ? element.placeholder || element.value : '';
   const humanName = normalizeText(attribute || text);
   return humanName
     ? { label: humanName.slice(0, 40) + (humanName.length > 40 ? '…' : ''), detail: selector }
@@ -3263,14 +3510,166 @@ const LAYER_ICONS: Record<ElementKind, typeof Type> = {
   generic: Square,
 };
 
+/* Pages — the site as a list, the way Figma lists the pages of a file. */
+
+type SitePage = {
+  /** Pathname with no trailing slash, the same shape the per-page storage keys use. */
+  path: string;
+  href: string;
+  label: string;
+  /** Where the link was found: a page the site's own navigation names outranks a footnote. */
+  navigational: boolean;
+  notes: number;
+  edits: number;
+};
+
+/** A pathname in the shape the notes and session keys use, so a page and its storage agree. */
+function normalizePagePath(pathname: string): string {
+  return pathname.replace(/\/+$/, '') || '/';
+}
+
+/** How many open notes and unsaved edits are stored for a page, read the way the page itself would. */
+function storedCountsFor(path: string): { notes: number; edits: number } {
+  let notes = 0;
+  let edits = 0;
+  try {
+    const stored = JSON.parse(readStoredPreference(`${COMMENTS_STORAGE_KEY}:${path}`) ?? '[]') as PageComment[];
+    if (Array.isArray(stored)) notes = stored.filter((comment) => !comment.resolved).length;
+  } catch { notes = 0; }
+  try {
+    const stored = JSON.parse(readStoredPreference(`${SESSION_STORAGE_PREFIX}${path}`) ?? 'null') as StoredSession | null;
+    if (Array.isArray(stored?.changes)) edits = stored!.changes.length;
+  } catch { edits = 0; }
+  return { notes, edits };
+}
+
+/** Every path this browser has notes or edits for, whether or not the current page links to it. */
+function storedPagePaths(): string[] {
+  if (!isBrowser) return [];
+  const paths = new Set<string>();
+  try {
+    for (let index = 0; index < window.localStorage.length; index += 1) {
+      const key = window.localStorage.key(index) ?? '';
+      if (key.startsWith(`${COMMENTS_STORAGE_KEY}:`)) paths.add(key.slice(COMMENTS_STORAGE_KEY.length + 1));
+      else if (key.startsWith(SESSION_STORAGE_PREFIX)) paths.add(key.slice(SESSION_STORAGE_PREFIX.length));
+    }
+  } catch {
+    // Storage blocked: the list is just what the page links to.
+  }
+  return Array.from(paths);
+}
+
 /**
- * The layers panel: a left column with the DOM from body down.
+ * The pages of the site, as far as this page can see them.
  *
- * Hover outlines the element on the canvas, click selects it, the chevron unfolds it, and the eye
- * hides or shows it as a recorded edit. The tree follows the selection — picking something on the
- * canvas unfolds its ancestors and scrolls its row into view — so the two are one selection, not two.
+ * Same-origin links, one row per path, named by the link that pointed there — navigation, header and
+ * footer links first, because those are the names the site calls its pages by. Pages this browser
+ * has notes or edits on are listed too, even when nothing here links to them, so a review is not
+ * lost behind a link that moved. The current page is always first.
  */
-function LayersPanel({ root, side, selectedPath, editVersion, onHover, onSelect, onToggleHidden, onClose }: {
+function discoverPages(root: Document): SitePage[] {
+  const origin = window.location.origin;
+  const current = normalizePagePath(window.location.pathname);
+  const byPath = new Map<string, SitePage>();
+  const add = (path: string, href: string, label: string, navigational: boolean) => {
+    const existing = byPath.get(path);
+    if (existing) {
+      if (navigational && !existing.navigational) { existing.navigational = true; if (label) existing.label = label; }
+      else if (!existing.label && label) existing.label = label;
+      return;
+    }
+    byPath.set(path, { path, href, label, navigational, notes: 0, edits: 0 });
+  };
+  add(current, `${origin}${current}`, normalizeText(root.title) || current, true);
+  const anchors = Array.from(root.querySelectorAll<HTMLAnchorElement>('a[href]')).filter((anchor) => !anchor.matches(IGNORED_SELECTOR));
+  anchors.forEach((anchor) => {
+    let url: URL;
+    try { url = new URL(anchor.getAttribute('href') ?? '', root.baseURI || window.location.href); } catch { return; }
+    if (url.origin !== origin || !/^https?:$/.test(url.protocol)) return;
+    if (/\.(pdf|zip|png|jpe?g|gif|svg|webp|mp4|mp3|css|js|json|xml)$/i.test(url.pathname)) return;
+    const label = normalizeText(anchor.getAttribute('aria-label') || anchor.textContent || anchor.title || '').slice(0, 60);
+    add(normalizePagePath(url.pathname), `${url.origin}${url.pathname}${url.search}`, label, Boolean(anchor.closest('nav, header, footer, [role="navigation"], aside')));
+  });
+  storedPagePaths().forEach((path) => add(path, `${origin}${path}`, '', false));
+  const pages = Array.from(byPath.values()).map((page) => ({ ...page, ...storedCountsFor(page.path), label: page.label || page.path }));
+  return pages.sort((a, b) => {
+    if (a.path === current) return -1;
+    if (b.path === current) return 1;
+    if (a.navigational !== b.navigational) return a.navigational ? -1 : 1;
+    return a.path.localeCompare(b.path);
+  });
+}
+
+/**
+ * The pages tab: every page of the site this one can see, the current one highlighted, with a count of
+ * open notes and unsaved edits where the browser has some. Choosing one navigates there; the
+ * inspector comes back up on the new page with that page's own notes and edits.
+ */
+function PagesPanel({ root, editVersion, onNavigate }: { root: Document | null; editVersion: number; onNavigate: (page: SitePage) => void }) {
+  const [query, setQuery] = useState('');
+  // The site decides what is listed, and a site can change under the inspector: an app router swaps
+  // the URL and the navigation without a reload. Re-read on history moves and when the DOM settles
+  // after a change, so the list is always the site as it is now.
+  const [siteVersion, setSiteVersion] = useState(0);
+  useEffect(() => {
+    if (!root || !isBrowser) return;
+    const bump = () => setSiteVersion((version) => version + 1);
+    const view = root.defaultView ?? window;
+    view.addEventListener('popstate', bump);
+    view.addEventListener('hashchange', bump);
+    let timer = 0;
+    const observer = new MutationObserver((mutations) => {
+      if (!mutations.some((mutation) => Array.from(mutation.addedNodes).concat(Array.from(mutation.removedNodes)).some((node) => isElementNode(node) && !(node as Element).matches(IGNORED_SELECTOR)))) return;
+      window.clearTimeout(timer);
+      timer = window.setTimeout(bump, 400);
+    });
+    if (root.body) observer.observe(root.body, { childList: true, subtree: true });
+    return () => { view.removeEventListener('popstate', bump); view.removeEventListener('hashchange', bump); observer.disconnect(); window.clearTimeout(timer); };
+  }, [root]);
+  const current = isBrowser ? normalizePagePath(window.location.pathname) : '/';
+  const pages = useMemo(() => (root ? discoverPages(root) : []), [root, editVersion, siteVersion]);
+  const needle = query.trim().toLocaleLowerCase();
+  const rows = needle ? pages.filter((page) => `${page.label} ${page.path}`.toLocaleLowerCase().includes(needle)) : pages;
+  return <>
+    <label className="hi-layers-search"><ScanSearch size={13} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search pages" aria-label="Search pages" />{query && <button aria-label="Clear page search" onClick={() => setQuery('')}><X size={12} /></button>}</label>
+    <div className="hi-layers-list" role="listbox" aria-label="Pages">
+      {rows.map((page) => {
+        const isCurrent = page.path === current;
+        const marks = [page.notes ? `${page.notes} note${page.notes === 1 ? '' : 's'}` : '', page.edits ? `${page.edits} edit${page.edits === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ');
+        return <div
+          key={page.path}
+          role="option"
+          aria-selected={isCurrent}
+          className={`hi-layer hi-page ${isCurrent ? 'is-selected' : ''}`}
+          title={`${page.label}\n${page.path}${marks ? `\n${marks}` : ''}`}
+          onClick={() => { if (!isCurrent) onNavigate(page); }}
+        >
+          <span className="hi-page-mark" aria-hidden>{isCurrent ? <ChevronRight size={12} /> : null}</span>
+          <FileText size={12} />
+          <span className="hi-layer-name">
+            <span className="hi-layer-label">{page.label}</span>
+            {page.label !== page.path && <small className="hi-layer-detail">{page.path}</small>}
+          </span>
+          {(page.notes > 0 || page.edits > 0) && <span className="hi-page-badges" aria-label={marks}>
+            {page.notes > 0 && <i className="hi-page-badge hi-page-badge--notes"><MessageSquare size={9} />{page.notes}</i>}
+            {page.edits > 0 && <i className="hi-page-badge hi-page-badge--edits"><Pencil size={9} />{page.edits}</i>}
+          </span>}
+        </div>;
+      })}
+      {!rows.length && <p className="hi-layers-more">{query ? 'No matching pages.' : 'No other pages linked from here.'}</p>}
+    </div>
+  </>;
+}
+
+type SideTab = 'pages' | 'layers';
+
+/**
+ * The side column: Pages or Layers, one tab at a time, the way Figma's left panel works.
+ *
+ * It is always there while the inspector is open — the canvas sits between it and the properties
+ * panel, and neither of them closes on its own. Pages lists the site; Layers lists the page.
+ */
+function SidePanel({ root, side, selectedPath, editVersion, onHover, onSelect, onToggleHidden, onNavigate }: {
   root: Document | null;
   /** Opposite the properties panel, so the canvas sits between the two. */
   side: 'left' | 'right';
@@ -3279,12 +3678,73 @@ function LayersPanel({ root, side, selectedPath, editVersion, onHover, onSelect,
   onHover: (path: string | null) => void;
   onSelect: (path: string) => void;
   onToggleHidden: (path: string, hidden: boolean) => void;
-  onClose: () => void;
+  onNavigate: (page: SitePage) => void;
+}) {
+  const [tab, setTab] = useState<SideTab>(() => (readStoredPreference(SIDE_TAB_STORAGE_KEY) === 'pages' ? 'pages' : 'layers'));
+  const pick = (next: SideTab) => {
+    setTab(next);
+    try { window.localStorage.setItem(SIDE_TAB_STORAGE_KEY, next); } catch { /* remembered for this session only */ }
+  };
+  return <aside className={`hi-layers hi-layers--${side}`} aria-label={tab === 'pages' ? 'Pages' : 'Layers'} onMouseLeave={() => onHover(null)}>
+    <header role="tablist" aria-label="Side panel">
+      <button role="tab" aria-selected={tab === 'pages'} className={tab === 'pages' ? 'is-active' : ''} onClick={() => pick('pages')}><FileText size={13} />Pages</button>
+      <button role="tab" aria-selected={tab === 'layers'} className={tab === 'layers' ? 'is-active' : ''} onClick={() => pick('layers')}><Layers size={13} />Layers</button>
+    </header>
+    {tab === 'pages'
+      ? <PagesPanel root={root} editVersion={editVersion} onNavigate={onNavigate} />
+      : <LayersPanel root={root} selectedPath={selectedPath} editVersion={editVersion} onHover={onHover} onSelect={onSelect} onToggleHidden={onToggleHidden} />}
+  </aside>;
+}
+
+/**
+ * The layers tab: the DOM from body down.
+ *
+ * Hover outlines the element on the canvas, click selects it, the chevron unfolds it, and the eye
+ * hides or shows it as a recorded edit. The tree follows the selection — picking something on the
+ * canvas unfolds its ancestors and scrolls its row into view — so the two are one selection, not two.
+ */
+function LayersPanel({ root, selectedPath, editVersion, onHover, onSelect, onToggleHidden }: {
+  root: Document | null;
+  selectedPath: string | null;
+  editVersion: number;
+  onHover: (path: string | null) => void;
+  onSelect: (path: string) => void;
+  onToggleHidden: (path: string, hidden: boolean) => void;
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [query, setQuery] = useState('');
+  const [treeVersion, setTreeVersion] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
   const body = root?.body ?? null;
+
+  // Client-side navigation usually keeps the same Document and body nodes, so neither `root` nor
+  // `body` changes even though the page underneath the Layers tab has been replaced. Observe that
+  // document and invalidate the flattened tree after its router has settled.
+  useEffect(() => {
+    if (!root || !body) return;
+    const view = root.defaultView;
+    let timer = 0;
+    const bump = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => setTreeVersion((version) => version + 1), 80);
+    };
+    const observer = new MutationObserver((mutations) => {
+      const pageChanged = mutations.some((mutation) => {
+        const target = mutation.target.nodeType === 1 ? mutation.target as Element : mutation.target.parentElement;
+        return !target?.closest(IGNORED_SELECTOR);
+      });
+      if (pageChanged) bump();
+    });
+    observer.observe(body, { attributes: true, characterData: true, childList: true, subtree: true });
+    view?.addEventListener('popstate', bump);
+    view?.addEventListener('hashchange', bump);
+    return () => {
+      observer.disconnect();
+      view?.removeEventListener('popstate', bump);
+      view?.removeEventListener('hashchange', bump);
+      window.clearTimeout(timer);
+    };
+  }, [body, root]);
 
   // A fresh document starts with its first two levels open, which is where the page's regions live.
   useEffect(() => {
@@ -3315,9 +3775,9 @@ function LayersPanel({ root, side, selectedPath, editVersion, onHover, onSelect,
   const rows = useMemo(() => {
     if (!body) return [];
     const needle = query.trim().toLocaleLowerCase();
-    const flattened = flattenLayers(body, expanded, (element) => getComputedStyle(element).display === 'none', Boolean(needle));
+    const flattened = flattenLayers(body, expanded, (element) => computedStyleOf(element).display === 'none', Boolean(needle));
     return needle ? flattened.filter((row) => `${row.label} ${row.detail}`.toLocaleLowerCase().includes(needle)) : flattened;
-  }, [body, expanded, editVersion, query]);
+  }, [body, expanded, editVersion, query, treeVersion]);
 
   const toggle = (path: string) => setExpanded((current) => {
     const next = new Set(current);
@@ -3325,12 +3785,16 @@ function LayersPanel({ root, side, selectedPath, editVersion, onHover, onSelect,
     return next;
   });
 
-  return <aside className={`hi-layers hi-layers--${side}`} aria-label="Layers" onMouseLeave={() => onHover(null)}>
-    <header><Layers size={14} /><strong>Layers</strong><button title="Close layers (Ctrl+Shift+L)" aria-label="Close layers" onClick={onClose}><X size={14} /></button></header>
+  const isSearching = Boolean(query.trim());
+
+  return <>
     <label className="hi-layers-search"><ScanSearch size={13} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search layers" aria-label="Search layers" />{query && <button aria-label="Clear layer search" onClick={() => setQuery('')}><X size={12} /></button>}</label>
     <div className="hi-layers-list" ref={listRef} role="tree">
       {rows.map((row) => {
         const Icon = LAYER_ICONS[row.kind];
+        const visualDepth = isSearching ? 0 : Math.min(row.depth, MAX_VISIBLE_LAYER_DEPTH);
+        const showDepthCue = isSearching ? row.depth > 0 : row.depth > MAX_VISIBLE_LAYER_DEPTH;
+        const fullLabel = row.detail ? `${row.label} · ${row.detail}` : row.label;
         return <div
           key={row.path}
           role="treeitem"
@@ -3338,20 +3802,25 @@ function LayersPanel({ root, side, selectedPath, editVersion, onHover, onSelect,
           aria-expanded={row.hasChildren ? row.expanded : undefined}
           aria-selected={row.path === selectedPath}
           className={`hi-layer ${row.path === selectedPath ? 'is-selected' : ''} ${row.hidden ? 'is-hidden' : ''}`}
-          style={{ '--hi-layer-depth': row.depth } as CSSProperties}
+          style={{ '--hi-layer-depth': visualDepth } as CSSProperties}
+          title={fullLabel}
           onMouseEnter={() => onHover(row.path)}
           onClick={() => onSelect(row.path)}
         >
           <button className="hi-layer-fold" tabIndex={-1} aria-label={row.expanded ? 'Collapse' : 'Expand'} disabled={!row.hasChildren} onClick={(event) => { event.stopPropagation(); toggle(row.path); }}>{row.hasChildren && <ChevronDown size={12} style={{ transform: row.expanded ? undefined : 'rotate(-90deg)' }} />}</button>
           <Icon size={12} />
-          <span className="hi-layer-name">{row.label}{row.detail && <small>{row.detail}</small>}</span>
+          <span className="hi-layer-name">
+            {showDepthCue && <span className="hi-layer-depth-cue" title={`Level ${row.depth + 1}`}>L{row.depth + 1}</span>}
+            <span className="hi-layer-label">{row.label}</span>
+            {row.detail && <small className="hi-layer-detail">{row.detail}</small>}
+          </span>
           <button className="hi-layer-eye" title={row.hidden ? 'Show' : 'Hide'} aria-label={row.hidden ? `Show ${row.label}` : `Hide ${row.label}`} aria-pressed={row.hidden} onClick={(event) => { event.stopPropagation(); onToggleHidden(row.path, !row.hidden); }}>{row.hidden ? <EyeOff size={12} /> : <Eye size={12} />}</button>
         </div>;
       })}
       {rows.length >= MAX_LAYER_ROWS && <p className="hi-layers-more">Showing the first {MAX_LAYER_ROWS} layers.</p>}
       {!rows.length && <p className="hi-layers-more">{query ? 'No matching layers.' : 'Nothing on the page yet.'}</p>}
     </div>
-  </aside>;
+  </>;
 }
 
 /** Alignment and insertion lines drawn over the canvas while a drag is in progress. */
@@ -3496,7 +3965,7 @@ function SelectionChrome({ rect, scale = 1, handles, label, parentRect, classNam
   </>;
 }
 
-function DeviceOverlay({ presetId, orientation, freezeReveals, reloadKey, snapshot, dock, hidden, layers, editVersion, comments, tool, canvasEdit, canvasSize, canvasBusyRef, swallowClickRef, guides, hoverPath, onCanvasResize, onCanvasRotate, onCanvasMove, onCanvasKey, onCanvasText, onFrameDocument, onSelectPath, onReplay, onComment, onUndo, onRedo, onNotice }: {
+function DeviceOverlay({ presetId, orientation, freezeReveals, reloadKey, snapshot, dock, hidden, layers, editVersion, comments, tool, canvasEdit, canvasSize, dragging, dragLabel, canvasBusyRef, swallowClickRef, guides, hoverPath, onCanvasResize, onCanvasRotate, onCanvasMove, onCanvasKey, onCanvasText, onFrameDocument, onSelectPath, onReplay, onComment, onUndo, onRedo, onNotice }: {
   presetId: DevicePresetId;
   /** Frame settings live with the toolbar that changes them — see `DeviceControls`. */
   orientation: DeviceOrientation;
@@ -3513,6 +3982,8 @@ function DeviceOverlay({ presetId, orientation, freezeReveals, reloadKey, snapsh
   tool: 'move' | 'comment' | 'hand';
   canvasEdit: boolean;
   canvasSize: string | null;
+  dragging: boolean;
+  dragLabel: string | null;
   /** Set while a canvas drag owns the pointer, so Escape cancels the drag instead of closing the preview. */
   canvasBusyRef: { current: boolean };
   /** Set by a drag that moved something, so the click that ends it does not reselect underneath. */
@@ -3784,8 +4255,8 @@ function DeviceOverlay({ presetId, orientation, freezeReveals, reloadKey, snapsh
       if (editing && (editing === target || editing.contains(target))) return;
       const selected = resolveInDocument(frameDoc, snapshot);
       if (!selected || (selected !== target && !selected.contains(target))) return;
-      // Text would otherwise start selecting under the drag.
-      event.preventDefault();
+      // Do not prevent the press yet: without real pointer movement this is a click, and the click
+      // still needs to lock a nested element. `startMove` prevents selection after its dead zone.
       onCanvasMove(selected, event, scale, sync);
     };
     frameDoc.addEventListener('pointerdown', onPointerDown, true);
@@ -3831,10 +4302,6 @@ function DeviceOverlay({ presetId, orientation, freezeReveals, reloadKey, snapsh
       event.stopPropagation();
       // The click that ends a drag is the drag's, not a new selection.
       if (swallowClickRef.current) { swallowClickRef.current = false; return; }
-      // A selected container owns ordinary clicks inside it, so it can be dragged by any part of
-      // itself. Ctrl/Cmd-click or double-click reaches the child — Figma's group convention.
-      const selected = snapshot ? resolveInDocument(frameDoc, snapshot) : null;
-      if (selected && selected !== target && selected.contains(target) && !event.metaKey && !event.ctrlKey) return;
       if (!onSelectPath(getUniquePath(target))) onNotice('That element only exists at this screen size.');
     };
     frameDoc.addEventListener('pointermove', onMove, true);
@@ -3924,7 +4391,7 @@ function DeviceOverlay({ presetId, orientation, freezeReveals, reloadKey, snapsh
           {preset.chrome === 'browser' && <div className="hi-device-chrome" style={{ height: chromeBar }}><i /><i /><i /><span>{window.location.host}{window.location.pathname}</span></div>}
           <div className="hi-device-viewport" style={{ width, height, borderRadius: preset.radius }}>
             <iframe key={reloadKey} ref={frameRef} name={DESIGN_PREVIEW_FRAME_NAME} title={`${preset.label} live preview`} src={previewUrl} onLoad={handleLoad} style={{ width, height }} />
-            {selectionBox && <SelectionChrome rect={selectionBox} parentRect={parentBox} scale={scale} className="is-selected" label={canvasSize ?? `${round(selectionBox.width)} × ${round(selectionBox.height)}`} handles={canvasEdit && snapshot ? <CanvasHandles size={null} onStart={(direction, event) => onCanvasResize(direction, event, scale, sync)} onRotateStart={onCanvasRotate} /> : null} />}
+            {selectionBox && <SelectionChrome rect={selectionBox} parentRect={parentBox} scale={scale} className={`is-selected ${dragging ? 'is-dragging' : ''}`} label={dragLabel ?? canvasSize ?? `${round(selectionBox.width)} × ${round(selectionBox.height)}`} handles={canvasEdit && snapshot ? <CanvasHandles size={null} onStart={(direction, event) => onCanvasResize(direction, event, scale, sync)} onRotateStart={onCanvasRotate} /> : null} />}
             {tool !== 'hand' && hoverBox && (!selectionBox || hoverBox.top !== selectionBox.top || hoverBox.left !== selectionBox.left) && <SelectionChrome rect={hoverBox} scale={scale} className="is-hovered" />}
             <GuideLayer guides={measure.length ? [...guides, ...measure] : guides} scale={scale} />
             {/* Counter-scaled so a pin stays legible at 50% zoom instead of shrinking with the shell. */}
@@ -4260,55 +4727,129 @@ function TokenBindingPanel({ snapshot, colorTokens, onBind }: {
   </div>;
 }
 
-function StatePreviewTile({ snapshot, state, style, active, onClick }: { key?: ComponentStateId; snapshot: ElementSnapshot; state: ComponentStateId; style: StateOverride; active: boolean; onClick: () => void }) {
+/** State edits already recorded for an element, keyed by state then CSS property — what the stylesheet is showing right now. */
+type StateEdits = Partial<Record<ComponentStateId, Record<string, string>>>;
+
+/** Declarations the page's own CSS applies in a state, later rules winning — the source of truth for the tiles. */
+function detectedStateDeclarations(snapshot: ElementSnapshot, state: ComponentStateId) {
+  const declarations: Record<string, string> = {};
+  snapshot.stateRules.filter((rule) => ruleMatchesState(rule, state)).forEach((rule) => rule.declarations.forEach(({ property, value }) => { declarations[property] = value; }));
+  return declarations;
+}
+
+/** The look of the element at rest, carried into the panel's shadow root where the page's stylesheets do not reach. */
+const STATE_TILE_BASE_PROPERTIES = ['display', 'align-items', 'justify-content', 'gap', 'width', 'height', 'min-height', 'padding', 'margin', 'box-sizing', 'border', 'border-radius', 'outline', 'outline-offset', 'background-color', 'background-image', 'color', 'opacity', 'transform', 'box-shadow', 'font-family', 'font-size', 'font-weight', 'font-style', 'line-height', 'letter-spacing', 'text-transform', 'text-decoration', 'text-align', 'white-space'];
+/**
+ * What is painted behind the element on the page, nearest layer first until one is opaque. It
+ * looks at what actually sits under the element's centre, not only its ancestors, so a hero
+ * photo that is an `<img>` or a positioned sibling counts — a transparent nav button on a blue
+ * hero previewed on the panel's grey would read as white-on-white and look broken.
+ */
+function elementBackdrop(element: HTMLElement): string | null {
+  const layers: string[] = [];
+  const paint = (node: Element): boolean => {
+    if (isImageElement(node) && node.currentSrc) { layers.push(`url("${node.currentSrc}")`); return true; }
+    if (isVideoElement(node) && node.poster) { layers.push(`url("${node.poster}")`); return true; }
+    const style = getComputedStyle(node);
+    const color = style.backgroundColor;
+    // Computed colours come back as `rgb(r, g, b)` when opaque and `rgba(r, g, b, a)` otherwise.
+    const alpha = color === 'transparent' ? 0 : Number(color.match(/^rgba\((?:[^,]+,){3}\s*([\d.]+)\s*\)$/)?.[1] ?? 1);
+    if (style.backgroundImage !== 'none') layers.push(style.backgroundImage);
+    if (alpha > 0) layers.push(`linear-gradient(${color}, ${color})`);
+    return alpha >= 1 || style.backgroundImage.includes('url(');
+  };
+  const doc = element.ownerDocument;
+  const rect = element.getBoundingClientRect();
+  const under = doc.elementsFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+  const own = under.findIndex((node) => node === element || element.contains(node));
+  const behind = own >= 0 ? under.slice(own + 1).filter((node) => !element.contains(node)) : [];
+  // Off-screen elements have nothing under their point; the ancestor chain is the next best guess.
+  const candidates = behind.length ? behind : (() => { const chain: Element[] = []; for (let node = element.parentElement; node; node = node.parentElement) chain.push(node); return chain; })();
+  for (const node of candidates) { if (layers.length >= 6 || paint(node)) break; }
+  return layers.length ? layers.join(', ') : null;
+}
+
+const STATE_TILE_SKIP = new Set(['transition', 'transition-property', 'transition-duration', 'transition-delay', 'transition-timing-function', 'animation', 'animation-name', 'cursor', 'pointer-events', 'content', 'position', 'z-index']);
+
+/**
+ * Each tile is a clone of the real element wearing that state: the detected `:hover` / `:active` /
+ * focus declarations copied on (pseudo-classes cannot be forced), attribute states set for real so the
+ * page's own `[aria-disabled]`-style rules match, then the user's edits on top. Nothing is invented —
+ * a state the page never styles looks exactly like rest, and says so.
+ */
+function StatePreviewTile({ snapshot, state, edits, active, onClick }: { key?: ComponentStateId; snapshot: ElementSnapshot; state: ComponentStateId; edits: Record<string, string>; active: boolean; onClick: () => void }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const stateMeta = COMPONENT_STATES.find((item) => item.id === state)!;
+  const detected = useMemo(() => detectedStateDeclarations(snapshot, state), [snapshot, state]);
+  // A shorthand like `background: #fff` expands to a dozen `initial` longhands; only the meaningful ones are worth listing.
+  const detectedEntries = Object.entries(detected).filter(([, value]) => value !== 'initial');
+  const detectedCount = detectedEntries.length;
+  const editCount = Object.keys(edits).length;
   useEffect(() => {
     if (!hostRef.current) return;
     hostRef.current.innerHTML = '';
     const clone = snapshot.element.cloneNode(true) as HTMLElement;
     clone.removeAttribute('id');
     clone.querySelectorAll('[id]').forEach((node) => node.removeAttribute('id'));
+    clone.removeAttribute(STATE_MARK_ATTRIBUTE);
     clone.setAttribute('aria-hidden', 'true');
-    clone.style.setProperty('pointer-events', 'none', 'important');
-    clone.style.setProperty('max-width', '100%', 'important');
-    clone.style.setProperty('background', style.background, 'important');
-    clone.style.setProperty('color', style.color, 'important');
-    clone.style.setProperty('border-color', style.borderColor, 'important');
-    clone.style.setProperty('opacity', String(style.opacity / 100), 'important');
-    const transform = state === 'hover' ? `translateY(-2px) scale(${style.scale})` : `scale(${style.scale})`;
-    clone.style.setProperty('transform', transform, 'important');
-    if (state === 'focus') clone.style.setProperty('box-shadow', `0 0 0 4px ${inspectorVisualTokens.accent}33`, 'important');
-    if (state === 'error') clone.style.setProperty('box-shadow', '0 0 0 3px rgba(220, 38, 38, .14)', 'important');
-    if (state === 'disabled') clone.setAttribute('aria-disabled', 'true');
+    if (state === 'disabled') { clone.setAttribute('aria-disabled', 'true'); if (clone instanceof HTMLButtonElement || clone instanceof HTMLInputElement || clone instanceof HTMLSelectElement || clone instanceof HTMLTextAreaElement) clone.disabled = true; }
     if (state === 'loading') clone.setAttribute('aria-busy', 'true');
     if (state === 'error') clone.setAttribute('aria-invalid', 'true');
+    // The page's stylesheets do not reach the panel: carry the rest look over, then the state's own declarations on top.
+    const rest = getComputedStyle(snapshot.element);
+    STATE_TILE_BASE_PROPERTIES.forEach((property) => { const value = rest.getPropertyValue(property); if (value) clone.style.setProperty(property, value, 'important'); });
+    Object.entries(detected).forEach(([property, value]) => { if (!STATE_TILE_SKIP.has(property)) clone.style.setProperty(property, value, 'important'); });
+    Object.entries(edits).forEach(([property, value]) => clone.style.setProperty(property, value, 'important'));
+    clone.style.setProperty('pointer-events', 'none', 'important');
+    clone.style.setProperty('max-width', '100%', 'important');
+    clone.style.setProperty('transition', 'none', 'important');
+    clone.style.setProperty('animation', 'none', 'important');
+    hostRef.current.style.backgroundImage = elementBackdrop(snapshot.element) ?? '';
     hostRef.current.appendChild(clone);
-  }, [snapshot, state, style]);
+    // A wide component would be cropped mid-word; shrink it to the tile instead. `zoom` keeps the state's own transform intact.
+    const fit = Math.min(1, (hostRef.current.clientWidth - 12) / Math.max(1, clone.offsetWidth), 54 / Math.max(1, clone.offsetHeight));
+    if (fit < 1) clone.style.setProperty('zoom', String(fit), 'important');
+  }, [snapshot, state, detected, edits]);
   const Icon = stateMeta.Icon;
-  return <button className={`hi-state-tile ${active ? 'is-active' : ''}`} onClick={onClick}><span><Icon size={13} />{stateMeta.label}</span><div ref={hostRef} />{state === 'loading' && <LoaderCircle className="hi-state-spinner" size={15} />}</button>;
+  const note = editCount ? `${editCount} edit${editCount === 1 ? '' : 's'}` : detectedCount ? `${detectedCount} rule${detectedCount === 1 ? '' : 's'}` : 'same as rest';
+  return <button className={`hi-state-tile ${active ? 'is-active' : ''} ${!editCount && !detectedCount ? 'is-unstyled' : ''}`} onClick={onClick} title={detectedCount ? detectedEntries.map(([property, value]) => `${property}: ${value}`).join('\n') : 'The page has no rule for this state'}><span><Icon size={13} />{stateMeta.label}<small>{note}</small></span><div ref={hostRef} /></button>;
 }
 
-function ComponentStatesEditor({ snapshot, colorTokens, resetSignal, onStateChange }: { snapshot: ElementSnapshot; colorTokens: readonly BrandColorToken[]; resetSignal: number; onStateChange: (state: ComponentStateId, property: keyof StateOverride, value: string | number) => void }) {
+/** The value a field should show for a state: the recorded edit, else the page's rule, else the rest value. */
+function stateFieldValue(edits: Record<string, string> | undefined, detected: Record<string, string>, property: string, rest: string) {
+  const raw = edits?.[property] ?? detected[property] ?? (property === 'background-color' ? detected.background : property === 'border-color' ? detected.border : undefined);
+  if (raw === undefined) return rest;
+  if (property === 'background-color' || property === 'color' || property === 'border-color') {
+    // A shorthand like `1px solid #333` or `#fff url(...)` — pick the colour out of it.
+    const colour = raw.split(/\s+(?![^(]*\))/).map((part) => resolveColor(part)).find((part): part is string => Boolean(part));
+    return colour ?? rest;
+  }
+  return raw;
+}
+
+function ComponentStatesEditor({ snapshot, colorTokens, edits, onStateChange }: { snapshot: ElementSnapshot; colorTokens: readonly BrandColorToken[]; edits: StateEdits; onStateChange: (state: ComponentStateId, property: keyof StateOverride, value: string | number) => void }) {
   const [activeState, setActiveState] = useState<ComponentStateId>('hover');
-  const [overrides, setOverrides] = useState<Partial<Record<ComponentStateId, Partial<StateOverride>>>>({});
-  useEffect(() => setOverrides({}), [snapshot.selector, resetSignal]);
   const style = getComputedStyle(snapshot.element);
-  const stateValue = (state: ComponentStateId): StateOverride => ({
-    background: overrides[state]?.background ?? toHex(style.backgroundColor),
-    color: overrides[state]?.color ?? toHex(style.color),
-    borderColor: overrides[state]?.borderColor ?? toHex(style.borderColor),
-    opacity: overrides[state]?.opacity ?? (state === 'disabled' ? 45 : state === 'loading' ? 72 : 100),
-    scale: overrides[state]?.scale ?? (state === 'pressed' ? .97 : 1),
-  });
-  const update = <K extends keyof StateOverride>(property: K, value: StateOverride[K]) => {
-    setOverrides((current) => ({ ...current, [activeState]: { ...current[activeState], [property]: value } }));
-    onStateChange(activeState, property, value);
+  const stateValue = (state: ComponentStateId): StateOverride => {
+    const detected = detectedStateDeclarations(snapshot, state);
+    const opacity = Number(stateFieldValue(edits[state], detected, 'opacity', style.opacity));
+    const transform = stateFieldValue(edits[state], detected, 'transform', '');
+    const scale = transform.match(/scale\(\s*([\d.]+)/)?.[1];
+    return {
+      background: stateFieldValue(edits[state], detected, 'background-color', toHex(style.backgroundColor)),
+      color: stateFieldValue(edits[state], detected, 'color', toHex(style.color)),
+      borderColor: stateFieldValue(edits[state], detected, 'border-color', toHex(style.borderColor)),
+      opacity: Number.isFinite(opacity) ? Math.round(opacity * 100) : 100,
+      scale: scale ? Number(scale) : 1,
+    };
   };
   const activeValue = stateValue(activeState);
+  const activeDetected = detectedStateDeclarations(snapshot, activeState);
+  const activeLabel = COMPONENT_STATES.find((item) => item.id === activeState)?.label;
   return <div className="hi-state-editor">
-    <div className="hi-state-grid">{COMPONENT_STATES.map(({ id }) => <StatePreviewTile key={id} snapshot={snapshot} state={id} style={stateValue(id)} active={activeState === id} onClick={() => setActiveState(id)} />)}</div>
-    <div className="hi-state-controls"><span className="hi-state-edit-label">Editing {COMPONENT_STATES.find((item) => item.id === activeState)?.label}</span><TokenColorField label="Fill" value={activeValue.background} tokens={colorTokens} onChange={(value) => update('background', value)} /><TokenColorField label="Text" value={activeValue.color} tokens={colorTokens} onChange={(value) => update('color', value)} /><TokenColorField label="Stroke" value={activeValue.borderColor} tokens={colorTokens} onChange={(value) => update('borderColor', value)} /><div className="hi-control-pair"><NumberField label="Opacity" value={activeValue.opacity} min={0} max={100} suffix="%" onChange={(value) => update('opacity', Number(value))} /><NumberField label="Scale" value={activeValue.scale} min={.5} max={1.5} step={.01} suffix="×" onChange={(value) => update('scale', Number(value))} /></div></div>
+    <div className="hi-state-grid">{COMPONENT_STATES.map(({ id }) => <StatePreviewTile key={id} snapshot={snapshot} state={id} edits={edits[id] ?? {}} active={activeState === id} onClick={() => setActiveState(id)} />)}</div>
+    <div className="hi-state-controls"><span className="hi-state-edit-label">Editing {activeLabel}{!Object.keys(activeDetected).length && !edits[activeState] && <small> · the page has no {activeLabel?.toLowerCase()} rule, so it looks like rest</small>}</span><TokenColorField label="Fill" value={activeValue.background} tokens={colorTokens} onChange={(value) => onStateChange(activeState, 'background', value)} /><TokenColorField label="Text" value={activeValue.color} tokens={colorTokens} onChange={(value) => onStateChange(activeState, 'color', value)} /><TokenColorField label="Stroke" value={activeValue.borderColor} tokens={colorTokens} onChange={(value) => onStateChange(activeState, 'borderColor', value)} /><div className="hi-control-pair"><NumberField label="Opacity" value={activeValue.opacity} min={0} max={100} suffix="%" onChange={(value) => onStateChange(activeState, 'opacity', Number(value))} /><NumberField label="Scale" value={activeValue.scale} min={.5} max={1.5} step={.01} suffix="×" onChange={(value) => onStateChange(activeState, 'scale', Number(value))} /></div></div>
   </div>;
 }
 
@@ -4363,7 +4904,20 @@ function MeasurementDetails({ snapshot }: { snapshot: ElementSnapshot }) {
   </ToolSection>;
 }
 
-function HandoffInspectorPanel() {
+/**
+ * What the outer gate hands the workspace about the page it is on.
+ *
+ * `framedOnly` is true after a page was opened from the Pages tab: the address bar and the canvas
+ * show the new page, but the document underneath is still the one the browser loaded, so "Live page"
+ * has to be a real load rather than a lift of the overlay.
+ */
+type PageSession = {
+  framedOnly: boolean;
+  /** Switch to another page of the site inside the editor. */
+  onOpenPage: (href: string) => void;
+};
+
+function HandoffInspectorPanel({ session }: { session: PageSession }) {
   // Only reached when the design-mode gate is open, so a production bundle never pays for the
   // stylesheet injection.
   ensureDesignToolsStyles();
@@ -4379,23 +4933,33 @@ function HandoffInspectorPanel() {
   // component) in sync every render — see the comment near their declaration above.
   activeSpacingTokens = inspectorSpacingTokens;
   activeRadiusTokens = inspectorRadiusTokens;
-  const [open, setOpen] = useState(false);
+  // A page opened from the Pages tab comes up already on the canvas: the workspace was open a moment ago.
+  const [open, setOpen] = useState(session.framedOnly);
   const [scope, setScope] = useState<DesignScope>('free');
   const [dock, setDock] = useState<'left' | 'right'>(() => readStoredPreference('meraki-inspector-dock') === 'left' ? 'left' : 'right');
   const [locked, setLocked] = useState(false);
   const [snapshot, setSnapshot] = useState<ElementSnapshot | null>(null);
   const [selectedElements, setSelectedElements] = useState<HTMLElement[]>([]);
   const [changes, setChanges] = useState<DesignChange[]>([]);
-  const [stateResetSignal, setStateResetSignal] = useState(0);
-  const [devicePreset, setDevicePreset] = useState<DevicePresetId>('iphone-15');
+  /** The state edits already on the selected element, so the panel reads back what the stylesheet is applying. */
+  const stateEdits = useMemo<StateEdits>(() => {
+    const edits: StateEdits = {};
+    if (!snapshot) return edits;
+    changes.filter((change) => change.kind === 'state' && change.element === snapshot.element).forEach((change) => {
+      const [, state, ...propertyParts] = change.property.split(':');
+      (edits[state as ComponentStateId] ??= {})[propertyParts.join(':')] = change.after;
+    });
+    return edits;
+  }, [changes, snapshot]);
+  const [devicePreset, setDevicePreset] = useState<DevicePresetId>(() => session.framedOnly ? defaultDeviceForKind.desktop : 'iphone-15');
   const [deviceOrientation, setDeviceOrientation] = useState<DeviceOrientation>('portrait');
   const [freezeReveals, setFreezeReveals] = useState(true);
   const [deviceReloadKey, setDeviceReloadKey] = useState(0);
-  const [deviceOpen, setDeviceOpen] = useState(false);
+  const [deviceOpen, setDeviceOpen] = useState(session.framedOnly);
   /** The one confirmation on screen, if any. Ids let a repeat gesture restart its own timer. */
   const [toast, setToast] = useState<{ id: number; label: string } | null>(null);
   // The frame stays mounted after the first open so reopening does not reboot the app and replay every reveal.
-  const [deviceMounted, setDeviceMounted] = useState(false);
+  const [deviceMounted, setDeviceMounted] = useState(session.framedOnly);
   const [editVersion, setEditVersion] = useState(0);
   const [restorable, setRestorable] = useState<StoredSession | null>(null);
   const [restoreNote, setRestoreNote] = useState<string | null>(null);
@@ -4418,6 +4982,7 @@ function HandoffInspectorPanel() {
   const [mode, setMode] = useState<InspectorMode>('design');
   const [canvasTool, setCanvasTool] = useState<'move' | 'comment' | 'hand'>('move');
   const [actionsOpen, setActionsOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
   const [actionQuery, setActionQuery] = useState('');
   const [actionIndex, setActionIndex] = useState(0);
   const commentMode = mode === 'comment' && canvasTool === 'comment';
@@ -4442,6 +5007,8 @@ function HandoffInspectorPanel() {
   const [canvasRect, setCanvasRect] = useState<ElementSnapshot['rect'] | null>(null);
   const [canvasSize, setCanvasSize] = useState<string | null>(null);
   const [canvasNote, setCanvasNote] = useState<string | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const [dragLabel, setDragLabel] = useState<string | null>(null);
   const resizeRef = useRef<ResizeSession | null>(null);
   const moveRef = useRef<MoveSession | null>(null);
   /** What `display` was before Hide, so Show puts back flex rather than guessing block. */
@@ -4463,15 +5030,11 @@ function HandoffInspectorPanel() {
   const [ratioLocked, setRatioLocked] = useState(false);
   /** A fill type chosen in the panel before it has a value to show for itself (Image with no picture yet). */
   const [fillTypeChoice, setFillTypeChoice] = useState<FillType | null>(null);
-  const [layersOpen, setLayersOpen] = useState(() => {
-    if (!isBrowser) return false;
-    const stored = window.localStorage.getItem('meraki-inspector-layers');
-    return stored ? stored === 'open' : window.innerWidth >= 1120;
-  });
   const textEditRef = useRef<TextEditSession | null>(null);
   const canvasBusyRef = useRef(false);
   const stateMarkRef = useRef(1);
   const panelRef = useRef<HTMLElement>(null);
+  const autoFocusedTextRef = useRef<HTMLElement | null>(null);
   const panelMenuRef = useRef<HTMLDetailsElement>(null);
   const selectedRef = useRef<HTMLElement | null>(null);
   const selectedElementsRef = useRef<HTMLElement[]>([]);
@@ -4521,6 +5084,8 @@ function HandoffInspectorPanel() {
   snapshotRef.current = snapshot;
   scopeRef.current = scope;
   const openDevice = (kind: DeviceKind) => { setDevicePreset(defaultDeviceForKind[kind]); setDeviceOpen(true); setDeviceMounted(true); };
+  // After a page switch the document underneath is still the old page; the live view of the new one is a load away.
+  const showLivePage = () => { if (session.framedOnly) window.location.reload(); else setDeviceOpen(false); };
   // The framed device is the default workspace; the live page remains available from frame options.
   const toggleInspector = () => {
     if (open) { setOpen(false); return; }
@@ -4759,10 +5324,6 @@ function HandoffInspectorPanel() {
         commitSelection(next, next.includes(target) ? target : next[next.length - 1]);
         return;
       }
-      // A selected container owns ordinary clicks inside it. Double-click or Cmd/Ctrl-click drills
-      // into the child, mirroring Figma's group-selection convention.
-      const current = selectedRef.current;
-      if (locked && current && current !== target && current.contains(target) && !event.metaKey && !event.ctrlKey) return;
       commitSelection([target], target);
     };
     const onKey = (event: KeyboardEvent) => {
@@ -4813,7 +5374,8 @@ function HandoffInspectorPanel() {
       if (!selected || !(event.target instanceof Node) || (selected !== event.target && !selected.contains(event.target))) return;
       const editing = textEditRef.current?.element;
       if (editing && (editing === event.target || editing.contains(event.target))) return;
-      event.preventDefault();
+      // Keep the eventual click alive until the pointer actually crosses the drag dead zone. That
+      // click is what commits and visibly locks the selection.
       canvasMoveRef.current(selected, event, 1, null);
     };
     document.addEventListener('pointermove', onMove, true);
@@ -4862,9 +5424,6 @@ function HandoffInspectorPanel() {
     window.localStorage.setItem('meraki-inspector-dock', dock);
   }, [dock]);
 
-  useEffect(() => {
-    window.localStorage.setItem('meraki-inspector-layers', layersOpen ? 'open' : 'closed');
-  }, [layersOpen]);
 
   // Alt + hover on the live page: the distance from the selection to the element under the pointer.
   useEffect(() => {
@@ -4886,6 +5445,16 @@ function HandoffInspectorPanel() {
   }, [deviceOpen, locked, mode, open]);
 
   useEffect(() => { writeStoredComments(comments); }, [comments]);
+
+  useEffect(() => {
+    const refreshCollaboration = (event: Event) => {
+      const detail = (event as CustomEvent<{ comments?: PageComment[]; session?: StoredSession }>).detail;
+      if (Array.isArray(detail?.comments)) setComments(detail.comments);
+      if (detail?.session?.changes?.length) setRestorable(detail.session);
+    };
+    window.addEventListener('meraki-inspector-collaboration-refresh', refreshCollaboration);
+    return () => window.removeEventListener('meraki-inspector-collaboration-refresh', refreshCollaboration);
+  }, []);
 
 
 
@@ -5072,31 +5641,57 @@ function HandoffInspectorPanel() {
    */
   const selectFromDevice = useCallback((path: string) => {
     let element: HTMLElement | null = null;
-    try { element = document.querySelector<HTMLElement>(path); } catch { element = null; }
+    const frameDoc = deviceDocRef.current;
+    // A structural path can exist on both routes while pointing at completely different content.
+    // Only map back to the host document while the canvas is actually showing that same route.
+    let frameMatchesHost = true;
+    try {
+      if (frameDoc) frameMatchesHost = normalizePagePath(new URL(frameDoc.URL).pathname) === normalizePagePath(window.location.pathname);
+    } catch { frameMatchesHost = false; }
+    if (!session.framedOnly && frameMatchesHost) {
+      try { element = document.querySelector<HTMLElement>(path); } catch { element = null; }
+    }
     if (!element || element.closest(IGNORED_SELECTOR)) {
-      const doc = deviceDocRef.current;
-      try { element = doc?.querySelector<HTMLElement>(path) ?? null; } catch { element = null; }
+      try { element = frameDoc?.querySelector<HTMLElement>(path) ?? null; } catch { element = null; }
     }
     if (!element || element.closest(IGNORED_SELECTOR)) return false;
     selectElement(element);
     return true;
-  }, [selectElement]);
+  }, [selectElement, session.framedOnly]);
 
   /** Expand a panel section and bring it into view, addressed by its `data-hi-section` id. */
-  const focusSection = (id: string) => {
+  const focusSection = useCallback((id: string, controlId?: string) => {
     const node = panelRef.current?.querySelector<HTMLElement>(`[data-hi-section="${id}"]`);
     if (!node) return;
     if (node.getAttribute('data-hi-open') === 'false') node.querySelector('button')?.click();
     node.scrollIntoView({ block: 'start', behavior: 'smooth' });
     node.classList.add('is-spotlit');
     window.setTimeout(() => node.classList.remove('is-spotlit'), 1800);
-  };
+    if (controlId) window.setTimeout(() => {
+      panelRef.current?.querySelector<HTMLElement>(`[data-hi-control="${controlId}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }, 80);
+  }, []);
+
+  // Text controls sit below the surface controls. Bring the colour row into view once for each
+  // newly selected text-like element, while leaving the designer free to scroll elsewhere after.
+  useEffect(() => {
+    const element = snapshot?.element ?? null;
+    const isTextLike = Boolean(snapshot && ['text', 'button', 'link', 'input'].includes(snapshot.kind));
+    if (!element || !isTextLike) {
+      autoFocusedTextRef.current = null;
+      return;
+    }
+    if (!open || mode !== 'design' || autoFocusedTextRef.current === element) return;
+    autoFocusedTextRef.current = element;
+    const timer = window.setTimeout(() => focusSection('text', 'text-colour'), 60);
+    return () => window.clearTimeout(timer);
+  }, [focusSection, mode, open, snapshot?.element, snapshot?.kind]);
 
   useEffect(() => {
     const onRequest = (event: Event) => {
       const detail = (event as CustomEvent<InspectorRequest>).detail ?? {};
       setOpen(true);
-      if (detail.device === 'none') setDeviceOpen(false);
+      if (detail.device === 'none') showLivePage();
       else if (detail.device) openDevice(detail.device);
       // The panel has to mount before an element can be selected into it, and the device frame needs
       // a beat to resolve the same node, so the rest is queued instead of run inside this tick.
@@ -5365,7 +5960,7 @@ function HandoffInspectorPanel() {
     if (!snapshot) return;
     const cssProperty = property === 'background' ? 'background-color' : property === 'borderColor' ? 'border-color' : property === 'scale' ? 'transform' : property;
     const cssValue = property === 'scale' ? `scale(${value})` : property === 'opacity' ? String(Number(value) / 100) : String(value);
-    const before = snapshot.stateRules.find((rule) => rule.state.includes(state === 'pressed' ? 'active' : state))?.declarations.find((declaration) => declaration.property === cssProperty)?.value ?? 'default';
+    const before = snapshot.stateRules.filter((rule) => ruleMatchesState(rule, state)).flatMap((rule) => rule.declarations).reverse().find((declaration) => declaration.property === cssProperty)?.value ?? 'default';
     const targets = currentTargets();
     const applied: DesignChange[] = [];
     targets.forEach((element) => {
@@ -5643,10 +6238,18 @@ function HandoffInspectorPanel() {
       const active = moveRef.current;
       if (!active) return;
       if (!moveFrame(active, moveEvent)) return;
-      if (!canvasBusyRef.current) { canvasBusyRef.current = true; setCanvasNote(null); }
+      if (!canvasBusyRef.current) {
+        canvasBusyRef.current = true;
+        setCanvasNote(null);
+        setDragging(true);
+        previewMoveVisual(active);
+      }
       moveEvent.preventDefault();
       previewMove(active);
       setGuides(active.guides);
+      setDragLabel(active.mode === 'reorder'
+        ? active.insertion ? `Move to position ${active.insertion.index + 1} of ${active.siblingRects.length}` : 'Choose a new position'
+        : `Move ${active.delta[0] >= 0 ? '+' : ''}${active.delta[0]}, ${active.delta[1] >= 0 ? '+' : ''}${active.delta[1]}`);
       if (active.mode === 'free') {
         const rect = active.element.getBoundingClientRect();
         setCanvasRect({ top: rect.top, right: rect.right, bottom: rect.bottom, left: rect.left, width: rect.width, height: rect.height });
@@ -5662,6 +6265,8 @@ function HandoffInspectorPanel() {
       if (win !== window) window.removeEventListener('pointerup', onUp, true);
       moveRef.current = null;
       canvasBusyRef.current = false;
+      setDragging(false);
+      setDragLabel(null);
       setGuides([]);
       if (!active) return;
       try { captureTarget.releasePointerCapture(event.pointerId); } catch { /* Already released. */ }
@@ -5801,7 +6406,7 @@ function HandoffInspectorPanel() {
         if (tool === 'v' || tool === 'c' || tool === 'h' || tool === 'i') {
           event.preventDefault();
           event.stopPropagation();
-          if (tool === 'v') { setCanvasTool('move'); setMode('design'); }
+          if (tool === 'v') { setCanvasTool(mode === 'comment' ? 'comment' : 'move'); if (mode === 'handoff') setMode('design'); }
           else if (tool === 'c') { setCanvasTool('comment'); setMode('comment'); }
           else setCanvasTool('hand');
           return;
@@ -5811,6 +6416,7 @@ function HandoffInspectorPanel() {
         event.preventDefault();
         event.stopPropagation();
         setMode('handoff');
+        setCanvasTool('hand');
         return;
       }
       if (handleCanvasKey(event)) {
@@ -6011,8 +6617,7 @@ function HandoffInspectorPanel() {
   const handleCanvasKey = (event: KeyboardEvent): boolean => {
     const command = event.metaKey || event.ctrlKey;
     if (command && event.key === '/') { setActionsOpen((current) => !current); setActionQuery(''); return true; }
-    if (command && event.shiftKey && event.key.toLowerCase() === 'h') { setMode('handoff'); return true; }
-    if (command && event.shiftKey && event.key.toLowerCase() === 'l') { setLayersOpen((current) => !current); return true; }
+    if (command && event.shiftKey && event.key.toLowerCase() === 'h') { setMode('handoff'); setCanvasTool('hand'); return true; }
     if (!canvasEdit || !selectedRef.current) return false;
     if (command && !event.shiftKey && !event.altKey && event.key.toLowerCase() === 'd') { duplicateSelection(); return true; }
     if (!command && !event.altKey && (event.key === 'Delete' || event.key === 'Backspace')) { hideElements(currentTargets()); return true; }
@@ -6088,7 +6693,6 @@ function HandoffInspectorPanel() {
     syncActiveTokenVariables(next);
     changesRef.current = next;
     setChanges(next);
-    setStateResetSignal((current) => current + 1);
     const layoutParents = Array.from(new Set(Array.from(layoutTargets).map((element) => element.parentElement).filter((parent): parent is HTMLElement => Boolean(parent))));
     mirrorToDevice(layoutParents, restoreInDevice);
     mirrorToDevice(targets, restoreInDevice);
@@ -6109,7 +6713,6 @@ function HandoffInspectorPanel() {
     undoStackRef.current = [];
     redoStackRef.current = [];
     setChanges([]);
-    setStateResetSignal((current) => current + 1);
     applyStateRules(document, '');
     if (deviceDocRef.current) applyStateRules(deviceDocRef.current, '');
     const layoutParents = Array.from(new Set(Array.from(layoutTargets).map((element) => element.parentElement).filter((parent): parent is HTMLElement => Boolean(parent))));
@@ -6118,15 +6721,38 @@ function HandoffInspectorPanel() {
     refresh(snapshot?.element);
   };
 
+  /**
+   * Point a picture at a new file, whatever the site built it from.
+   *
+   * A plain `<img>` is its `src`. Inside a `<picture>` the `<source>` set wins over `src`, so those
+   * are cleared too. A `srcset` or `sizes` would let the browser pick the old file back. Image
+   * components add a lazy-loading or blur-placeholder background that has to go as well, or the
+   * placeholder stays under a transparent picture.
+   */
+  const pointImageAt = (image: HTMLImageElement, value: string) => {
+    image.parentElement?.closest('picture')?.querySelectorAll('source').forEach((source) => { source.removeAttribute('srcset'); source.removeAttribute('sizes'); });
+    image.removeAttribute('srcset'); image.removeAttribute('sizes'); image.removeAttribute('loading');
+    image.src = value;
+    if (/url\(/.test(getComputedStyle(image).backgroundImage)) image.style.setProperty('background-image', 'none', 'important');
+  };
+
   const applyAsset = (asset: AssetInfo, value: string, label: string) => {
-    const target = asset.element as HTMLElement;
+    let target = asset.element as HTMLElement;
+    // The unit of undo is the `<picture>` when there is one: its sources change with the image.
+    if (asset.type === 'img') target = target.parentElement?.closest('picture') ?? target;
     storeOriginal(target);
     const domBefore = captureOriginalState(target);
-    if (asset.type === 'img' && target instanceof HTMLImageElement) {
-      target.src = value; target.removeAttribute('srcset'); target.removeAttribute('sizes');
+    if (asset.type === 'img') {
+      const image = isImageElement(asset.element) ? asset.element : target.querySelector('img');
+      if (image) pointImageAt(image, value);
     } else if (asset.type === 'background') {
       target.style.setProperty('background-image', `url("${value.replace(/"/g, '%22')}")`, 'important');
-    } else if (asset.type === 'svg' && target instanceof SVGElement) {
+      // What is seen may be a picture or video drawn over this background — a lazy image component
+      // keeps its placeholder as the background and slides the real file in on top. Replacing "the
+      // background image" means replacing what is seen, so those follow the new file too.
+      target.querySelectorAll<HTMLImageElement>('img').forEach((image) => pointImageAt(image, value));
+      target.querySelectorAll<HTMLVideoElement>('video').forEach((video) => { video.pause(); video.removeAttribute('src'); video.querySelectorAll('source').forEach((source) => source.remove()); video.load(); video.poster = value; });
+    } else if (asset.type === 'svg' && isSvgElement(target)) {
       const parsed = new DOMParser().parseFromString(value, 'image/svg+xml').documentElement;
       if (parsed.tagName.toLowerCase() !== 'svg' || parsed.querySelector('parsererror')) return;
       parsed.querySelectorAll('script, foreignObject').forEach((node) => node.remove());
@@ -6138,13 +6764,69 @@ function HandoffInspectorPanel() {
     }
     recordChange({ element: target, selector: getSelector(target), property: `asset:${asset.id}`, before: asset.src, after: label, kind: 'asset', domBefore, domAfter: captureOriginalState(target) }, 'Replace asset');
     mirrorToDevice([target], (node, source) => {
-      if (source instanceof HTMLImageElement && node.tagName.toLowerCase() === 'img') {
-        (node as HTMLImageElement).src = source.src;
-        node.removeAttribute('srcset');
-        node.removeAttribute('sizes');
-      } else restoreInDevice(node, source);
+      if (isImageElement(source) && isImageElement(node)) pointImageAt(node, source.src);
+      else restoreInDevice(node, source);
     });
     refresh(snapshot?.element);
+  };
+
+  /**
+   * Replace by URL, with an answer either way.
+   *
+   * The address is loaded first, so a link to a web page instead of a picture, a typo, or a site whose
+   * content-security policy refuses outside images is reported rather than swallowed. An inline SVG
+   * is fetched as text, because it is markup that goes into the element, not a source to point at.
+   */
+  const applyAssetUrl = (asset: AssetInfo, raw: string) => {
+    const value = raw.trim();
+    if (!value) return;
+    const fail = (label: string) => setToast({ id: Date.now(), label });
+    let url: URL;
+    try { url = new URL(value, window.location.href); } catch { fail('That is not a valid URL.'); return; }
+    if (asset.type === 'svg') {
+      fetch(url.toString()).then((response) => (response.ok ? response.text() : Promise.reject(new Error(String(response.status)))))
+        .then((text) => { if (!/<svg[\s>]/i.test(text)) throw new Error('not svg'); applyAsset(asset, text, 'URL replacement'); setToast({ id: Date.now(), label: 'Icon replaced.' }); })
+        .catch(() => fail('That URL did not return an SVG.'));
+      return;
+    }
+    const probe = new Image();
+    probe.onload = () => { applyAsset(asset, url.toString(), 'URL replacement'); setToast({ id: Date.now(), label: asset.type === 'background' ? 'Background replaced.' : 'Image replaced.' }); };
+    probe.onerror = () => fail('That URL did not load as an image — it may be a page, not a picture, or this site blocks outside images.');
+    probe.src = url.toString();
+  };
+
+  /** Pictures and videos drawn over most of an element: what is seen there instead of its background. */
+  const coveringMedia = (element: HTMLElement): HTMLElement[] => {
+    const box = element.getBoundingClientRect();
+    if (box.width < 1 || box.height < 1) return [];
+    return Array.from(element.querySelectorAll<HTMLElement>('img, video')).filter((media) => {
+      if (media.closest(IGNORED_SELECTOR)) return false;
+      const rect = media.getBoundingClientRect();
+      const overlap = Math.max(0, Math.min(rect.right, box.right) - Math.max(rect.left, box.left)) * Math.max(0, Math.min(rect.bottom, box.bottom) - Math.max(rect.top, box.top));
+      return overlap >= box.width * box.height * 0.6;
+    });
+  };
+
+  /**
+   * The Fill panel's changes, with one exception: an image fill on a box that shows a picture.
+   *
+   * A background written under a `<picture>` or `<video>` is never seen — image components keep
+   * their placeholder as the background and draw the real file over it. Choosing an image fill for
+   * such a box means "show this instead", so the picture on top takes the file as well. One undo
+   * step covers both.
+   */
+  const applyFillStyle = (property: string, rawValue: string) => {
+    const url = property === 'background-image' ? backgroundUrl(rawValue) : '';
+    const element = snapshotRef.current?.element;
+    const media = url && element ? coveringMedia(element) : [];
+    if (!media.length) { applyStyle(property, rawValue); return; }
+    beginHistoryBatch('Set image fill');
+    applyStyle(property, rawValue);
+    media.forEach((node, index) => {
+      if (isImageElement(node)) applyAsset({ id: `img-fill-${index}`, type: 'img', label: node.alt || 'Image', src: node.currentSrc || node.src, element: node }, url, 'Fill image');
+      else applyAsset({ id: `bg-fill-${index}`, type: 'background', label: 'Video', src: (node as HTMLVideoElement).poster, element: node.parentElement ?? node }, url, 'Fill image');
+    });
+    finishHistoryBatch();
   };
 
   const onAssetFile = (asset: AssetInfo, file?: File) => {
@@ -6284,15 +6966,25 @@ function HandoffInspectorPanel() {
   const responsiveIssueCount = snapshot && deviceDocument
     ? (() => { const node = resolveInDocument(deviceDocument, snapshot); return node ? measureInFrame(node, snapshot, inspectorDevicePresets.find((item) => item.id === devicePreset)?.width ?? 1440).issues.length : 1; })()
     : 0;
+  // The side column is part of the workspace, not a toggle: it only steps aside for the handoff view.
+  const sidePanelOpen = open && mode !== 'handoff';
+  // Reaching the hub goes through the host. When it cannot — the commonest case being an extension
+  // reloaded under a page that still has the old script in it — the click must say so, or it reads
+  // as a button that does nothing.
+  const openHub = () => {
+    void Promise.resolve()
+      .then(() => (window as HubHost).__merakiInspectorHub?.())
+      .then((ok) => { if (ok === false) setToast({ id: Date.now(), label: 'The extension was updated — reload this page to open Settings.' }); })
+      .catch(() => setToast({ id: Date.now(), label: 'The extension was updated — reload this page to open Settings.' }));
+  };
   const quickActions = [
-    { label: layersOpen ? 'Hide layers' : 'Show layers', shortcut: 'Ctrl Shift L', run: () => setLayersOpen((current) => !current) },
-    { label: deviceOpen ? 'Return to live page' : 'Open device canvas', shortcut: '', run: () => deviceOpen ? setDeviceOpen(false) : openDevice('desktop') },
+    { label: deviceOpen ? 'Return to live page' : 'Open device canvas', shortcut: '', run: () => deviceOpen ? showLivePage() : openDevice('desktop') },
     { label: `Dock panel ${dock === 'left' ? 'right' : 'left'}`, shortcut: '', run: () => setDock(dock === 'left' ? 'right' : 'left') },
-    { label: mode === 'handoff' ? 'Return to edit' : 'Open handoff', shortcut: 'Ctrl Shift H', run: () => { setMode(mode === 'handoff' ? 'design' : 'handoff'); if (mode === 'handoff') setCanvasTool('move'); } },
+    { label: mode === 'handoff' ? 'Return to edit' : 'Open handoff', shortcut: 'Ctrl Shift H', run: () => { const leavingHandoff = mode === 'handoff'; setMode(leavingHandoff ? 'design' : 'handoff'); setCanvasTool(leavingHandoff ? 'move' : 'hand'); } },
     ...(locked ? [{ label: 'Clear selection', shortcut: 'Esc', run: unlock }] : []),
   ].filter((action) => action.label.toLocaleLowerCase().includes(actionQuery.trim().toLocaleLowerCase()));
 
-  return <div data-inspector-ui className="hi-root" dir="ltr" style={{
+  return <div data-inspector-ui className={`hi-root ${dragging ? 'is-dragging' : ''}`} dir="ltr" style={{
     '--hi-canvas': '#f5f5f5',
     '--hi-panel': '#ffffff',
     '--hi-surface': '#ffffff',
@@ -6322,12 +7014,12 @@ function HandoffInspectorPanel() {
       onOpenPath={setOpenThread}
       onSelect={(path) => { setOpen(true); selectByPath(path); }}
       onPost={addCommentToThread}
-      onOpenInPanel={(path) => { setOpen(true); selectByPath(path); setMode('comment'); setFocusComposer((count) => count + 1); setOpenThread(null); }}
+      onOpenInPanel={(path) => { setOpen(true); selectByPath(path); setMode('comment'); setCanvasTool('comment'); setFocusComposer((count) => count + 1); setOpenThread(null); }}
       onToggleResolved={toggleCommentResolved}
       onDelete={removeComment}
     />}
     {open && <>
-      {open && layersOpen && mode !== 'handoff' && <LayersPanel
+      {sidePanelOpen && <SidePanel
         root={deviceOpen ? deviceDocument : document}
         side={dock === 'left' ? 'right' : 'left'}
         selectedPath={snapshot?.uniquePath ?? null}
@@ -6335,7 +7027,7 @@ function HandoffInspectorPanel() {
         onHover={setLayerHoverPath}
         onSelect={(path) => { if (!selectFromDevice(path)) setToast({ id: Date.now(), label: 'That element could not be selected.' }); }}
         onToggleHidden={toggleLayerHidden}
-        onClose={() => setLayersOpen(false)}
+        onNavigate={(page) => session.onOpenPage(page.href)}
       />}
       {!deviceOpen && layerHoverRect && <SelectionChrome rect={layerHoverRect} className="hi-selection is-live is-hovered" />}
       {deviceMounted && <DeviceOverlay
@@ -6346,12 +7038,14 @@ function HandoffInspectorPanel() {
         snapshot={snapshot}
         dock={dock}
         hidden={!deviceOpen}
-        layers={layersOpen}
+        layers={sidePanelOpen}
         editVersion={editVersion}
         comments={comments}
         tool={canvasTool}
         canvasEdit={canvasEdit}
         canvasSize={canvasSize}
+        dragging={dragging}
+        dragLabel={dragLabel}
         canvasBusyRef={canvasBusyRef}
         swallowClickRef={swallowClickRef}
         guides={guides}
@@ -6363,7 +7057,7 @@ function HandoffInspectorPanel() {
         onCanvasText={applyTextFromDevice}
         onFrameDocument={registerDeviceDocument}
         onSelectPath={selectFromDevice}
-        onComment={(path) => { selectByPath(path); setMode('comment'); setFocusComposer((count) => count + 1); }}
+        onComment={(path) => { selectByPath(path); setMode('comment'); setCanvasTool('comment'); setFocusComposer((count) => count + 1); }}
         onReplay={replayIntoDevice}
         onUndo={undoHistory}
         onRedo={redoHistory}
@@ -6375,7 +7069,7 @@ function HandoffInspectorPanel() {
         const rect = element.getBoundingClientRect();
         return <div key={getUniquePath(element)} className="hi-selection hi-selection--peer is-locked" style={{ top: rect.top, left: rect.left, width: rect.width, height: rect.height }} />;
       })}
-      {!deviceOpen && mode !== 'handoff' && overlaySnapshot && overlayRect && <SelectionChrome rect={overlayRect} className={`hi-selection is-live ${locked ? 'is-locked' : ''} ${canvasSize ? 'is-resizing' : ''}`} label={`${liveSelection.length > 1 ? `${liveSelection.length} layers · ` : ''}${round(overlayRect.width)} × ${round(overlayRect.height)}`} handles={canvasHandlesVisible ? <CanvasHandles size={null} onStart={(direction, event) => startResize(overlaySnapshot.element, direction, event, 1, null)} onRotateStart={(event) => startRotate(overlaySnapshot.element, event)} onMoveStart={(event) => startMove(overlaySnapshot.element, event.nativeEvent, 1, null)} /> : null}>
+      {!deviceOpen && mode !== 'handoff' && overlaySnapshot && overlayRect && <SelectionChrome rect={overlayRect} className={`hi-selection is-live ${locked ? 'is-locked' : ''} ${canvasSize ? 'is-resizing' : ''} ${dragging ? 'is-dragging' : ''}`} label={dragLabel ?? `${liveSelection.length > 1 ? `${liveSelection.length} layers · ` : ''}${round(overlayRect.width)} × ${round(overlayRect.height)}`} handles={canvasHandlesVisible ? <CanvasHandles size={null} onStart={(direction, event) => startResize(overlaySnapshot.element, direction, event, 1, null)} onRotateStart={(event) => startRotate(overlaySnapshot.element, event)} onMoveStart={(event) => startMove(overlaySnapshot.element, event.nativeEvent, 1, null)} /> : null}>
         {/* Offered right where the selection is, so commenting is one click from picking rather
             than a hunt down the panel — but only in the tab where commenting is the job. */}
         {locked && commentMode && <button
@@ -6411,10 +7105,25 @@ function HandoffInspectorPanel() {
           {!quickActions.length && <p>No matching actions.</p>}
         </section>
       </div>}
-      <nav className={`hi-canvas-toolbar ${deviceOpen ? 'is-device' : ''} hi-canvas-toolbar--${dock} ${layersOpen ? 'has-layers' : ''}`} aria-label="Canvas tools">
-        <button className={canvasTool === 'move' && mode === 'design' ? 'is-active' : ''} aria-pressed={canvasTool === 'move' && mode === 'design'} title="Select and edit (V)" onClick={() => { setCanvasTool('move'); setMode('design'); }}><MousePointer2 size={16} /><span>Select</span><kbd>V</kbd></button>
-        <button className={canvasTool === 'comment' && mode === 'comment' ? 'is-active' : ''} aria-pressed={canvasTool === 'comment' && mode === 'comment'} title="Comment (C)" onClick={() => { setCanvasTool('comment'); setMode('comment'); }}><MessageSquare size={16} /><span>Comment</span><kbd>C</kbd></button>
-        <button className={canvasTool === 'hand' ? 'is-active' : ''} aria-pressed={canvasTool === 'hand'} title="Interact — use the page as a visitor, drag to pan (I / hold Space)" onClick={() => setCanvasTool('hand')}><MousePointerClick size={16} /><span>Interact</span><kbd>I</kbd></button>
+      <nav className={`hi-canvas-toolbar ${deviceOpen ? 'is-device' : ''} hi-canvas-toolbar--${dock} ${sidePanelOpen ? 'has-layers' : ''}`} aria-label="Canvas tools">
+        <div className="hi-canvas-mode-toggle" role="group" aria-label="Canvas behavior">
+          <button
+            className={canvasTool !== 'hand' && mode !== 'handoff' ? 'is-active' : ''}
+            aria-label="Edit canvas"
+            aria-pressed={canvasTool !== 'hand' && mode !== 'handoff'}
+            data-tooltip="Edit canvas · V"
+            title="Edit canvas (V)"
+            onClick={() => { if (mode === 'comment') setCanvasTool('comment'); else { setMode('design'); setCanvasTool('move'); } }}
+          ><Pencil size={16} /></button>
+          <button
+            className={canvasTool === 'hand' ? 'is-active' : ''}
+            aria-label="Interact with page"
+            aria-pressed={canvasTool === 'hand'}
+            data-tooltip="Interact with page · I"
+            title="Interact with page (I)"
+            onClick={() => setCanvasTool('hand')}
+          ><MousePointerClick size={16} /></button>
+        </div>
         {deviceOpen && <>
           <i />
           <DeviceControls
@@ -6425,30 +7134,34 @@ function HandoffInspectorPanel() {
             onOrientationChange={setDeviceOrientation}
             onFreezeRevealsChange={setFreezeReveals}
             onReload={() => setDeviceReloadKey((current) => current + 1)}
-            onLivePage={() => setDeviceOpen(false)}
+            onLivePage={showLivePage}
           />
         </>}
       </nav>
       <aside ref={panelRef} className={`hi-panel hi-panel--${dock} ${deviceOpen ? 'hi-panel--workspace' : ''}`}>
         <header className="hi-header">
           <div className="hi-mode-tabs" role="tablist" aria-label="Inspector mode">
-            <button role="tab" aria-selected={mode !== 'handoff'} className={mode !== 'handoff' ? 'is-active' : ''} onClick={() => { setMode('design'); setCanvasTool('move'); }}>Edit</button>
-            <button role="tab" aria-selected={mode === 'handoff'} className={mode === 'handoff' ? 'is-active' : ''} onClick={() => setMode('handoff')}>Handoff</button>
+            <button role="tab" aria-selected={mode === 'design'} className={mode === 'design' ? 'is-active' : ''} onClick={() => { setMode('design'); setCanvasTool('move'); }}>Edit</button>
+            <button role="tab" aria-selected={mode === 'comment'} className={mode === 'comment' ? 'is-active' : ''} onClick={() => { setMode('comment'); setCanvasTool('comment'); setFocusComposer((count) => count + 1); }}>Comments{comments.length > 0 && <i>{comments.length}</i>}</button>
+            <button role="tab" aria-selected={mode === 'handoff'} className={mode === 'handoff' ? 'is-active' : ''} onClick={() => { setMode('handoff'); setCanvasTool('hand'); }}>Handoff</button>
           </div>
+          <div className="hi-header-share-actions">
+          <button className={`hi-share-trigger ${shareOpen ? 'is-active' : ''}`} aria-expanded={shareOpen} title="Share notes and suggested changes" onClick={() => setShareOpen((current) => !current)}><Share2 size={14} /><span>Share</span></button>
           <details ref={panelMenuRef} className="hi-panel-menu">
             <summary title="Inspector options" aria-label="Inspector options"><MoreHorizontal size={16} /></summary>
             <div onClickCapture={() => { if (panelMenuRef.current) panelMenuRef.current.open = false; }}>
               <button onClick={() => setDock(dock === 'left' ? 'right' : 'left')}>{dock === 'left' ? <PanelRight size={14} /> : <PanelLeft size={14} />}Dock {dock === 'left' ? 'right' : 'left'}</button>
               {hasSecondCollection && <button onClick={() => setSecondaryCollectionActive((current) => !current)}><Component size={14} />{secondaryCollectionActive ? designTokens.collections[0]?.name : designTokens.collections[1]?.name}</button>}
-              {hubAvailable() && <button onClick={() => (window as HubHost).__merakiInspectorHub?.()}><Settings size={14} />Settings</button>}
-              <button onClick={() => setLayersOpen((current) => !current)}><Layers size={14} />{layersOpen ? 'Hide layers' : 'Show layers'}<kbd>Ctrl+Shift+L</kbd></button>
+              {hubAvailable() && <button onClick={openHub}><Settings size={14} />Settings</button>}
               <button onClick={() => { setActionsOpen(true); setActionQuery(''); }}><Keyboard size={14} />Quick actions<kbd>Ctrl+/</kbd></button>
-              {deviceOpen ? <button onClick={() => setDeviceOpen(false)}><ExternalLink size={14} />Live page</button> : <button onClick={() => openDevice('desktop')}><Monitor size={14} />Device canvas</button>}
+              {deviceOpen ? <button onClick={showLivePage}><ExternalLink size={14} />Live page</button> : <button onClick={() => openDevice('desktop')}><Monitor size={14} />Device canvas</button>}
               {locked && <button onClick={unlock}><Unlock size={14} />Clear selection</button>}
               <button onClick={() => setOpen(false)}><X size={14} />Close</button>
             </div>
           </details>
+          </div>
         </header>
+        {shareOpen && <SharePopover onClose={() => setShareOpen(false)} />}
         {mode !== 'handoff' && <nav className="hi-breadcrumb" aria-label="Selection breadcrumb">
           {breadcrumbNodes.length ? breadcrumbNodes.map((node, index) => <span key={getUniquePath(node)}>{index > 0 && <i>›</i>}<button title={getSelector(node)} onClick={() => selectElement(node)}>{node.tagName.toLowerCase()}{node.classList[0] ? `.${node.classList[0]}` : ''}</button></span>) : <small>Click anything to select it</small>}
         </nav>}
@@ -6618,7 +7331,7 @@ function HandoffInspectorPanel() {
                 </div>
                 {fillType === 'solid' && <ColorField label="Colour" value={liveStyle?.backgroundColor ?? snapshot.styles.background} tokens={colorTokens} onChange={(value) => applyStyle('background-color', value)} />}
                 {fillType === 'none' && <p className="hi-empty-note">No fill — the element shows what is behind it.</p>}
-                {(fillType === 'gradient' || fillType === 'image' || fillType === 'pattern') && <BackgroundField mode={fillType} image={liveStyle?.backgroundImage ?? 'none'} size={liveStyle?.backgroundSize ?? 'auto'} position={liveStyle?.backgroundPosition ?? 'center'} repeat={liveStyle?.backgroundRepeat ?? 'repeat'} fill={liveStyle?.backgroundColor ?? snapshot.styles.background} tokens={colorTokens} onChange={applyStyle} onBatch={(label, apply) => { beginHistoryBatch(label); apply(); finishHistoryBatch(); }} />}
+                {(fillType === 'gradient' || fillType === 'image' || fillType === 'pattern') && <BackgroundField mode={fillType} image={liveStyle?.backgroundImage ?? 'none'} size={liveStyle?.backgroundSize ?? 'auto'} position={liveStyle?.backgroundPosition ?? 'center'} repeat={liveStyle?.backgroundRepeat ?? 'repeat'} fill={liveStyle?.backgroundColor ?? snapshot.styles.background} tokens={colorTokens} onChange={applyFillStyle} onBatch={(label, apply) => { beginHistoryBatch(label); apply(); finishHistoryBatch(); }} />}
                 {(fillType === 'gradient' || fillType === 'image' || fillType === 'pattern') && <ColorField label="Behind it" value={liveStyle?.backgroundColor ?? snapshot.styles.background} tokens={colorTokens} onChange={(value) => applyStyle('background-color', value)} />}
                 {snapshot.kind === 'image' && <NumberField label="Image opacity" value={cssNumber(snapshot.styles.opacity, 1) * 100} min={0} max={100} suffix="%" onChange={(value) => applyStyle('opacity', String(Number(value) / 100))} />}
               </ToolSection>
@@ -6650,7 +7363,7 @@ function HandoffInspectorPanel() {
                 <div className="hi-control-pair"><SizeField label="Size" compact value={snapshot.styles['font-size']} presets={FONT_SIZES} onChange={(value) => applyStyle('font-size', value)} /><SelectField label="Weight" compact value={String(cssNumber(snapshot.styles['font-weight'], 400))} options={FONT_WEIGHTS} onChange={(value) => applyStyle('font-weight', value)} /></div>
                 <div className="hi-control-pair"><NumberField label="Line" value={snapshot.styles['line-height']} onChange={(value) => applyStyle('line-height', value)} /><NumberField label="Track" value={snapshot.styles['letter-spacing']} step={0.1} onChange={(value) => applyStyle('letter-spacing', value)} /></div>
                 <div className="hi-segmented" aria-label="Text alignment">{TEXT_ALIGNMENTS.map(({ value, label, Icon }) => <button key={value} title={label} aria-label={label} className={snapshot.styles['text-align'] === value ? 'is-active' : ''} onClick={() => applyStyle('text-align', value)}><Icon size={14} /></button>)}</div>
-                <ColorField label="Colour" value={liveStyle?.color ?? snapshot.styles.color} tokens={colorTokens} onChange={(value) => applyStyle('color', value)} />
+                <ColorField controlId="text-colour" label="Colour" value={liveStyle?.color ?? snapshot.styles.color} tokens={colorTokens} onChange={(value) => applyStyle('color', value)} />
                 <div className="hi-type-presets">{typePresets.map((recipe) => <button key={recipe.label} onClick={() => recipe.css.split(';').filter(Boolean).forEach((part) => { const [property, ...value] = part.split(':'); applyStyle(property.trim(), value.join(':').trim()); })}>{recipe.label}</button>)}</div>
                 <label className="hi-control hi-control-stack"><span>{snapshot.kind === 'input' ? 'Value' : 'Content'}</span><DraftTextArea key={snapshot.uniquePath} ariaLabel={snapshot.kind === 'input' ? 'Value' : 'Text'} value={snapshot.rawText} onChange={applyText} /></label>
                 {snapshot.hasMarkup && <p className="hi-empty-note hi-content-warning"><CircleAlert size={13} />This element wraps markup (line breaks, nested spans). Editing the text here replaces all of it with plain text.</p>}
@@ -6659,9 +7372,9 @@ function HandoffInspectorPanel() {
               </ToolSection>}
               </>}
               {mode === 'design' && deviceOpen && <ToolSection title="Responsive" icon={Monitor} defaultOpen={false} badge={responsiveIssueCount ? { text: String(responsiveIssueCount), tone: 'alert' } : undefined}><ResponsivePanel presetId={devicePreset} snapshot={snapshot} frameDocument={deviceDocument} editVersion={editVersion} onPresetChange={setDevicePreset} onReplay={replayIntoDevice} /></ToolSection>}
-              {mode === 'design' && <>{snapshot.assets.length > 0 && <ToolSection title={`Assets · ${snapshot.assets.length}`} icon={ImageIcon} defaultOpen={false}><div className="hi-design-assets">{snapshot.assets.map((asset) => <article key={asset.id}><div className="hi-asset-head"><img src={asset.src} alt="" /><span><strong>{asset.label}</strong><small>{asset.type} · {asset.id}</small></span><div className="hi-asset-actions"><a href={asset.src} download={`${asset.id}.${asset.type === 'svg' ? 'svg' : 'png'}`} title="Download asset" aria-label={`Download ${asset.label}`}><Download size={14} /></a><button className="is-danger" title="Remove from canvas · Undo restores it" aria-label={`Remove ${asset.label}`} onClick={() => removeAsset(asset)}><Trash2 size={14} /></button></div></div><label><span>Replace by URL</span><input placeholder="https://…" onKeyDown={(event) => { if (event.key === 'Enter') applyAsset(asset, event.currentTarget.value, 'URL replacement'); }} /></label><label className="hi-upload"><input type="file" accept="image/*,.svg" onChange={(event) => onAssetFile(asset, event.target.files?.[0])} />Upload image or SVG</label>{asset.type === 'svg' && <div className="hi-icon-library">{ICON_LIBRARY.map((icon) => <button key={icon.label} title={icon.label} onClick={() => applyAsset(asset, icon.svg, `${icon.label} icon`)} dangerouslySetInnerHTML={{ __html: icon.svg }} />)}</div>}</article>)}</div></ToolSection>}
+              {mode === 'design' && <>{snapshot.assets.length > 0 && <ToolSection title={`Assets · ${snapshot.assets.length}`} icon={ImageIcon} defaultOpen={false}><div className="hi-design-assets">{snapshot.assets.map((asset) => <article key={asset.id}><div className="hi-asset-head"><img src={asset.src} alt="" /><span><strong>{asset.label}</strong><small>{asset.type} · {asset.id}</small></span><div className="hi-asset-actions"><a href={asset.src} download={`${asset.id}.${asset.type === 'svg' ? 'svg' : 'png'}`} title="Download asset" aria-label={`Download ${asset.label}`}><Download size={14} /></a><button className="is-danger" title="Remove from canvas · Undo restores it" aria-label={`Remove ${asset.label}`} onClick={() => removeAsset(asset)}><Trash2 size={14} /></button></div></div><label><span>Replace by URL</span><span className="hi-asset-url"><input placeholder="https://… then Enter" onKeyDown={(event) => { if (event.key === 'Enter') { applyAssetUrl(asset, event.currentTarget.value); event.currentTarget.value = ''; } }} /><button type="button" onClick={(event) => { const input = event.currentTarget.previousElementSibling as HTMLInputElement; applyAssetUrl(asset, input.value); input.value = ''; }}>Apply</button></span></label><label className="hi-upload"><input type="file" accept="image/*,.svg" onChange={(event) => onAssetFile(asset, event.target.files?.[0])} />Upload image or SVG</label>{asset.type === 'svg' && <div className="hi-icon-library">{ICON_LIBRARY.map((icon) => <button key={icon.label} title={icon.label} onClick={() => applyAsset(asset, icon.svg, `${icon.label} icon`)} dangerouslySetInnerHTML={{ __html: icon.svg }} />)}</div>}</article>)}</div></ToolSection>}
               <ToolSection title="Component states · 6" icon={MousePointer2} defaultOpen={false}>
-                <ComponentStatesEditor snapshot={snapshot} colorTokens={colorTokens} resetSignal={stateResetSignal} onStateChange={recordStateChange} />
+                <ComponentStatesEditor snapshot={snapshot} colorTokens={colorTokens} edits={stateEdits} onStateChange={recordStateChange} />
                 {snapshot.currentStates.length > 0 && <div className="hi-state-chips">{snapshot.currentStates.map((state) => <span key={state}>{state}</span>)}</div>}
                 {/* What the stylesheet already declares, so an override is not written on top of a rule that agrees with it. */}
                 {snapshot.stateRules.length ? snapshot.stateRules.map((rule, index) => <div className="hi-state-rule" key={`${rule.selector}-${index}`}><span>{rule.state}</span><code>{rule.selector} {'{'}{rule.declarations.map((item) => `\n  ${item.property}: ${item.value};`).join('')}\n{'}'}</code><CopyButton value={`${rule.selector} {\n${rule.declarations.map((item) => `  ${item.property}: ${item.value};`).join('\n')}\n}`} /></div>) : <p className="hi-empty-note">No readable pseudo-state rules matched this element.</p>}
@@ -6671,7 +7384,7 @@ function HandoffInspectorPanel() {
               {designSystemConnected ? <>
                 <ToolSection title="Token binding" icon={Link2} defaultOpen={false}><TokenBindingPanel snapshot={snapshot} colorTokens={colorTokens} onBind={applyTokenBinding} /></ToolSection>
                 <ToolSection title="Page token audit" icon={ScanSearch} defaultOpen={false}><PageTokenAudit colorTokens={colorTokens} onSelect={selectElement} /></ToolSection>
-              </> : <button className="hi-connect-system" title={DESIGN_SYSTEM_REQUIRED} disabled={!hubAvailable()} onClick={() => (window as HubHost).__merakiInspectorHub?.()}><Link2 size={14} /><span><strong>Connect design system</strong><small>Unlock variants and token tools</small></span><ChevronDown size={13} /></button>}</>}
+              </> : <button className="hi-connect-system" title={DESIGN_SYSTEM_REQUIRED} disabled={!hubAvailable()} onClick={openHub}><Link2 size={14} /><span><strong>Connect design system</strong><small>Unlock variants and token tools</small></span><ChevronDown size={13} /></button>}</>}
               {<ToolSection title={mode === 'comment' ? `Notes · ${comments.length}` : `Designer changes · ${changes.length + comments.length}`} icon={Code2} defaultOpen openWhen={changes.length + comments.length > 0}>{(changes.length || comments.length) ? <>
                 <div className="hi-handoff-actions">
                   <CopyButton value={handoffText} label="Copy everything" />
@@ -6923,7 +7636,28 @@ export default function HandoffInspector({ enabled }: HandoffInspectorProps = {}
     return () => window.removeEventListener('popstate', read);
   }, [enabled]);
 
+  // Which page the workspace is on. Opening another page from the Pages tab moves the address bar
+  // there and remounts the workspace, so it comes up with that page's notes, edits and layers — the
+  // same as arriving on it — while the canvas frame does the actual loading. The document under the
+  // overlay stays the page the browser loaded, which `framedOnly` records.
+  const [page, setPage] = useState(() => ({ key: 0, framedOnly: false }));
+  const openPage = useCallback((href: string) => {
+    const url = new URL(href, window.location.href);
+    // The flag that opened the inspector travels with the page, so a reload on the new page keeps it.
+    const current = new URL(window.location.href);
+    [DESIGN_MODE_PARAM, 'inspect', 'design', 'system'].forEach((parameter) => { const value = current.searchParams.get(parameter); if (value !== null) url.searchParams.set(parameter, value); });
+    try { window.history.pushState(window.history.state, '', url.toString()); } catch { window.location.assign(url.toString()); return; }
+    setPage((previous) => ({ key: previous.key + 1, framedOnly: true }));
+  }, []);
+  // Back and forward after a switch land on a page the document does not show; load it properly.
+  useEffect(() => {
+    if (!page.framedOnly) return;
+    const onPop = () => window.location.reload();
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, [page.framedOnly]);
+
   if (insidePreview) return null;
   if (!(enabled ?? urlEnabled)) return null;
-  return <HandoffInspectorPanel />;
+  return <HandoffInspectorPanel key={page.key} session={{ framedOnly: page.framedOnly, onOpenPage: openPage }} />;
 }

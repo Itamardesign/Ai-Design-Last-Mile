@@ -2,196 +2,284 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>Meraki Design Inspector — settings</title>
+    <title>Meraki Design Inspector — your hub</title>
     <link rel="stylesheet" href="ui.css" />
-    <style>
-      body { padding: 28px 20px 64px; }
-      main { display: grid; max-width: 760px; margin: 0 auto; gap: 18px; }
-      header { display: grid; gap: 12px; justify-items: start; }
-      section { display: grid; gap: 10px; }
-      .section-head { display: grid; gap: 2px; }
-      .tabs { display: flex; gap: 4px; padding: 3px; border-radius: 9px; background: #efeff1; width: fit-content; }
-      .tabs button { border: 0; background: transparent; color: var(--tool-muted); padding: 5px 12px; }
-      .tabs button[aria-selected='true'] { background: #fff; color: var(--tool-text); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08); }
-      .system { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--tool-border); border-radius: 10px; background: #fff; }
-      .system.is-default { border-color: var(--tool-accent); box-shadow: 0 0 0 3px var(--tool-accent-soft); }
-      table { width: 100%; border-collapse: collapse; }
-      td { padding: 6px 0; border-bottom: 1px solid var(--tool-border); vertical-align: middle; }
-      tr:last-child td { border-bottom: 0; }
-      td.pick { width: 220px; }
-      td.act { width: 40px; text-align: right; }
-      pre {
-        margin: 0;
-        padding: 10px;
-        overflow-x: auto;
-        border-radius: 8px;
-        background: #f4f4f6;
-        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-        font-size: 10.5px;
-        line-height: 1.5;
-      }
-      .examples { display: grid; gap: 10px; grid-template-columns: 1fr 1fr; }
-      @media (max-width: 620px) { .examples { grid-template-columns: 1fr; } }
-    </style>
+    <link rel="stylesheet" href="hub.css" />
   </head>
   <body>
-    <main>
-      <header>
+    <!--
+      The same shape as the inspector: a column of places on the left, one page at a time on the
+      right. The column's counts are the summary; the pages are the detail; "Advanced" is where the
+      knobs went, so the first screen a designer sees is a summary and not a settings form.
+    -->
+    <div class="hub">
+      <aside class="hub-side">
         <div class="brand">
           <span class="brand-mark">M</span>
           <div>
-            <h1>Design Inspector</h1>
-            <p class="muted">
-              Everything the tool keeps for you: the systems you design against, every review you have
-              left, the handoffs you kept, and whether any of it follows you to another machine.
-            </p>
+            <strong>Design Inspector</strong>
+            <small>Your hub</small>
           </div>
         </div>
-        <!--
-          A hub is only a hub if you can see what is in it. These jump rather than navigate, so the page
-          stays one scroll with a table of contents instead of five screens to click between.
-        -->
-        <nav class="hub-nav" aria-label="Sections">
-          <a href="#section-systems">Design systems</a>
-          <a href="#section-sites">Where they apply</a>
-          <a href="#section-notes">Review notes</a>
-          <a href="#section-handoffs">Kept handoffs</a>
-          <a href="#section-account">Your account</a>
+
+        <nav class="hub-nav" aria-label="Pages">
+          <a href="#overview" data-page="overview">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
+            Overview
+          </a>
+          <a href="#systems" data-page="systems">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="10.5" r="2.5"/><circle cx="8.5" cy="7.5" r="2.5"/><circle cx="6.5" cy="12.5" r="2.5"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.9 0 1.7-.7 1.7-1.7 0-.4-.2-.8-.4-1.1-.3-.3-.4-.7-.4-1.1 0-.9.7-1.7 1.7-1.7H16c3.3 0 6-2.7 6-6 0-4.9-4.5-8.4-10-8.4z"/></svg>
+            Design systems
+            <span class="count" id="nav-systems"></span>
+          </a>
+          <a href="#notes" data-page="notes">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            Review notes
+            <span class="count" id="nav-notes"></span>
+          </a>
+          <a href="#handoffs" data-page="handoffs">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/></svg>
+            Handoffs
+            <span class="count" id="nav-handoffs"></span>
+          </a>
+          <a href="#account" data-page="account">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+            Account
+          </a>
+          <div class="hub-nav-group">More</div>
+          <a href="#advanced" data-page="advanced">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+            Advanced
+          </a>
         </nav>
-      </header>
 
-      <section class="card" id="section-systems">
-        <div class="section-head">
-          <h2>Connect a design system</h2>
-          <p class="muted">
-            Paste a tokens file or point at a URL. Inspector tokens, DTCG / Style Dictionary, Tokens Studio, a
-            Tailwind config or a plain <span class="mono">{ "colors": … }</span> object all work.
-          </p>
-        </div>
-
-        <div class="tabs" role="tablist">
-          <button role="tab" id="tab-paste" aria-selected="true">Paste JSON</button>
-          <button role="tab" id="tab-url" aria-selected="false">From a URL</button>
-        </div>
-
-        <label class="field">
-          <span>Name</span>
-          <input type="text" id="name" placeholder="Acme product system" />
-        </label>
-
-        <label class="field" id="paste-field">
-          <span>Tokens</span>
-          <textarea id="raw" spellcheck="false" placeholder='{ "colors": { "brand": { "500": "#7C3CFF" } }, "spacing": { "sm": "8px" } }'></textarea>
-        </label>
-
-        <label class="field hidden" id="url-field">
-          <span>Tokens URL</span>
-          <input type="url" id="url" placeholder="https://design.acme.com/tokens.json" />
-        </label>
-
-        <div id="preview" class="notice hidden"></div>
-
-        <div class="row">
-          <button class="primary" id="connect">Connect system</button>
-          <button class="ghost" id="clear">Clear</button>
-        </div>
-      </section>
-
-      <section>
-        <div class="section-head">
-          <h2>Connected systems</h2>
-          <p class="muted">The one marked default applies to every site without a rule of its own.</p>
-        </div>
-        <div class="stack" id="systems"></div>
-      </section>
-
-      <section class="card" id="section-sites">
-        <div class="section-head">
-          <h2>Where systems apply</h2>
-          <p class="muted">Per-site rules win over the default. Sites are matched by origin.</p>
-        </div>
-        <label class="field">
-          <span>Default for all sites</span>
-          <select id="default-system"></select>
-        </label>
-        <div class="divider"></div>
-        <h3 class="label">Per-site rules</h3>
-        <table id="sites"></table>
-        <p class="faint" id="sites-empty">No per-site rules yet. Set one from the popup while you are on the site.</p>
-      </section>
-
-      <section class="card">
-        <div class="section-head">
-          <h2>Starts automatically on</h2>
-          <p class="muted">The inspector mounts itself on these sites as soon as a page finishes loading.</p>
-        </div>
-        <table id="auto"></table>
-        <p class="faint" id="auto-empty">Nothing yet. Turn on “Start automatically on this site” in the popup.</p>
-      </section>
-
-      <section class="card" id="section-notes">
-        <div class="section-head">
-          <h2>Review notes</h2>
-          <p class="muted">
-            Every note you leave is kept here as well as on the page, so a site clearing its own storage
-            cannot take a review with it.
-          </p>
-        </div>
-        <div class="stack" id="notes"></div>
-        <p class="faint" id="notes-empty">No notes yet. Open the inspector, click an element, and leave one.</p>
-      </section>
-
-      <section class="card" id="section-account">
-        <div class="section-head">
-          <h2>Your account</h2>
-          <p class="muted">
-            Sign in and your review notes, unfinished edits and kept handoffs follow you to any machine
-            you use. Skip and everything stays on this one — the tool works the same either way.
-          </p>
-        </div>
-        <div class="stack" id="account"></div>
-      </section>
-
-      <section class="card" id="section-handoffs">
-        <div class="section-head">
-          <h2>Kept handoffs</h2>
-          <p class="muted">
-            Handoffs you saved from the panel, newest first. Each one is the document as it read when you
-            handed it over, so a page that changed later cannot rewrite what you said about it.
-          </p>
-        </div>
-        <div class="stack" id="handoffs"></div>
-        <p class="faint hidden" id="handoffs-empty">
-          Nothing kept yet. Open the Handoff tab in the panel and choose “Save to my account”.
-        </p>
-      </section>
-
-      <section class="card">
-        <div class="section-head">
-          <h2>Advanced</h2>
-        </div>
-        <label class="switch">
-          <input type="checkbox" id="relax" />
-          <span class="grow">
-            Relax <span class="mono">Content-Security-Policy</span> and <span class="mono">X-Frame-Options</span>
-            while inspecting
-            <span class="faint" style="display: block">
-              Only on the tab you turn the inspector on, and dropped the moment you turn it off. Without this, the
-              device preview cannot frame the page and font previews will not download on strict sites.
+        <div class="hub-side-foot">
+          <button class="hub-account" id="side-account" title="Your account">
+            <span class="avatar" id="side-avatar">?</span>
+            <span class="lines">
+              <strong id="side-account-title">Checking…</strong>
+              <small id="side-account-detail"></small>
             </span>
-          </span>
-        </label>
-      </section>
-
-      <section class="card">
-        <div class="section-head">
-          <h2>Accepted formats</h2>
-          <p class="muted">All of these describe the same thing, and all of them are read.</p>
+          </button>
+          <p class="hub-shortcut">Inspect any page with <kbd>Alt</kbd> <kbd>Shift</kbd> <kbd>D</kbd></p>
         </div>
-        <div class="examples">
-          <div class="stack">
-            <h3 class="label">Plain / hand-written</h3>
-            <pre>{
+      </aside>
+
+      <main class="hub-main">
+        <header class="hub-head">
+          <div>
+            <h1 id="page-title">Overview</h1>
+            <p id="page-subtitle">What the inspector keeps for you, at a glance.</p>
+          </div>
+          <div class="row" id="page-actions"></div>
+        </header>
+
+        <div class="hub-content">
+          <!-- ====== Overview ====== -->
+          <section class="page" data-page="overview">
+            <div class="hero">
+              <div>
+                <h2>Poke any UI.<br />Hand off <em>real</em> CSS.</h2>
+              </div>
+              <p>
+                Open any website, turn the inspector on, click an element and edit it by eye. Nothing on the site
+                changes — you copy the result out as CSS and written notes.
+              </p>
+              <div class="steps">
+                <div class="step">
+                  <span>1</span>
+                  <strong>Turn it on</strong>
+                  <p>Click the toolbar mark on any page, or press <kbd>Alt</kbd> <kbd>Shift</kbd> <kbd>D</kbd>.</p>
+                </div>
+                <div class="step">
+                  <span>2</span>
+                  <strong>Click an element, edit it</strong>
+                  <p>Colour, type, spacing, layout — with Figma's gestures. Leave a note on anything.</p>
+                </div>
+                <div class="step">
+                  <span>3</span>
+                  <strong>Hand it off</strong>
+                  <p>The Handoff tab writes one CSS rule per element plus the notes. Copy, download or keep it here.</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="stats">
+              <a href="#systems"><strong id="stat-systems">0</strong><span>Design systems</span></a>
+              <a href="#notes"><strong id="stat-notes">0</strong><span>Open notes</span></a>
+              <a href="#handoffs"><strong id="stat-handoffs">0</strong><span>Kept handoffs</span></a>
+              <a href="#account"><strong class="is-text" id="stat-account">…</strong><span id="stat-account-label">Account</span></a>
+            </div>
+
+            <div class="two">
+              <section class="card">
+                <div class="recent-head">
+                  <div class="section-head">
+                    <h2>Latest notes</h2>
+                    <p class="muted">The last pages you reviewed.</p>
+                  </div>
+                  <a href="#notes">See all</a>
+                </div>
+                <div class="stack" id="recent-notes"></div>
+              </section>
+              <section class="card">
+                <div class="recent-head">
+                  <div class="section-head">
+                    <h2>Latest handoffs</h2>
+                    <p class="muted">Documents you kept from the panel.</p>
+                  </div>
+                  <a href="#handoffs">See all</a>
+                </div>
+                <div class="stack" id="recent-handoffs"></div>
+              </section>
+            </div>
+          </section>
+
+          <!-- ====== Design systems ====== -->
+          <section class="page" data-page="systems" hidden>
+            <section class="card" id="section-systems">
+              <div class="section-head">
+                <h2>Connect a design system</h2>
+                <p class="muted">
+                  Paste a tokens file or point at a URL. Inspector tokens, DTCG / Style Dictionary, Tokens Studio, a
+                  Tailwind config or a plain <span class="mono">{ "colors": … }</span> object all work —
+                  <a href="#advanced">see the accepted formats</a>.
+                </p>
+              </div>
+
+              <div class="tabs" role="tablist">
+                <button role="tab" id="tab-paste" aria-selected="true">Paste JSON</button>
+                <button role="tab" id="tab-url" aria-selected="false">From a URL</button>
+              </div>
+
+              <label class="field">
+                <span>Name</span>
+                <input type="text" id="name" placeholder="Acme product system" />
+              </label>
+
+              <label class="field" id="paste-field">
+                <span>Tokens</span>
+                <textarea id="raw" spellcheck="false" placeholder='{ "colors": { "brand": { "500": "#7C3CFF" } }, "spacing": { "sm": "8px" } }'></textarea>
+              </label>
+
+              <label class="field hidden" id="url-field">
+                <span>Tokens URL</span>
+                <input type="url" id="url" placeholder="https://design.acme.com/tokens.json" />
+              </label>
+
+              <div id="preview" class="notice hidden"></div>
+
+              <div class="row">
+                <button class="primary" id="connect">Connect system</button>
+                <button class="ghost" id="clear">Clear</button>
+              </div>
+            </section>
+
+            <section class="card">
+              <div class="section-head">
+                <h2>Connected systems</h2>
+                <p class="muted">The one marked default applies to every site without a rule of its own.</p>
+              </div>
+              <div class="stack" id="systems"></div>
+              <label class="field">
+                <span>Default for all sites</span>
+                <select id="default-system"></select>
+              </label>
+            </section>
+          </section>
+
+          <!-- ====== Review notes ====== -->
+          <section class="page" data-page="notes" hidden>
+            <section class="card" id="section-notes">
+              <div class="section-head">
+                <h2>Review notes</h2>
+                <p class="muted">
+                  Every note you leave is kept here as well as on the page, so a site clearing its own storage
+                  cannot take a review with it.
+                </p>
+              </div>
+              <div class="stack" id="notes"></div>
+              <p class="empty" id="notes-empty">No notes yet. Open the inspector, click an element, and leave one.</p>
+            </section>
+          </section>
+
+          <!-- ====== Handoffs ====== -->
+          <section class="page" data-page="handoffs" hidden>
+            <section class="card" id="section-handoffs">
+              <div class="section-head">
+                <h2>Kept handoffs</h2>
+                <p class="muted">
+                  Handoffs you saved from the panel, newest first. Each one is the document as it read when you
+                  handed it over, so a page that changed later cannot rewrite what you said about it.
+                </p>
+              </div>
+              <div class="stack" id="handoffs"></div>
+              <p class="empty hidden" id="handoffs-empty">
+                Nothing kept yet. Open the Handoff tab in the panel and choose “Save to my account”.
+              </p>
+            </section>
+          </section>
+
+          <!-- ====== Account ====== -->
+          <section class="page" data-page="account" hidden>
+            <section class="card" id="section-account">
+              <div class="section-head">
+                <h2>Your account</h2>
+                <p class="muted">
+                  Sign in and your review notes, unfinished edits and kept handoffs follow you to any machine
+                  you use. Skip and everything stays on this one — the tool works the same either way.
+                </p>
+              </div>
+              <div class="stack" id="account"></div>
+            </section>
+          </section>
+
+          <!-- ====== Advanced ====== -->
+          <section class="page" data-page="advanced" hidden>
+            <section class="card" id="section-sites">
+              <div class="section-head">
+                <h2>Where systems apply</h2>
+                <p class="muted">Per-site rules win over the default. Sites are matched by origin.</p>
+              </div>
+              <table id="sites"></table>
+              <p class="empty" id="sites-empty">No per-site rules yet. Set one from the popup while you are on the site.</p>
+            </section>
+
+            <section class="card">
+              <div class="section-head">
+                <h2>Starts automatically on</h2>
+                <p class="muted">The inspector mounts itself on these sites as soon as a page finishes loading.</p>
+              </div>
+              <table id="auto"></table>
+              <p class="empty" id="auto-empty">Nothing yet. Turn on “Start automatically on this site” in the popup.</p>
+            </section>
+
+            <section class="card">
+              <div class="section-head">
+                <h2>Strict sites</h2>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="relax" />
+                <span class="grow">
+                  Relax <span class="mono">Content-Security-Policy</span> and <span class="mono">X-Frame-Options</span>
+                  while inspecting
+                  <span class="faint" style="display: block">
+                    Only on the tab you turn the inspector on, and dropped the moment you turn it off. Without this, the
+                    device preview cannot frame the page and font previews will not download on strict sites.
+                  </span>
+                </span>
+              </label>
+            </section>
+
+            <section class="card" id="section-formats">
+              <div class="section-head">
+                <h2>Accepted token formats</h2>
+                <p class="muted">All of these describe the same thing, and all of them are read.</p>
+              </div>
+              <div class="examples">
+                <div class="stack">
+                  <h3 class="label">Plain / hand-written</h3>
+                  <pre>{
   "name": "Acme",
   "colors": {
     "brand-500": "#7C3CFF",
@@ -204,10 +292,10 @@
     "h1": { "fontSize": "32px", "fontWeight": 600 }
   }
 }</pre>
-          </div>
-          <div class="stack">
-            <h3 class="label">DTCG / Style Dictionary</h3>
-            <pre>{
+                </div>
+                <div class="stack">
+                  <h3 class="label">DTCG / Style Dictionary</h3>
+                  <pre>{
   "color": {
     "brand": {
       "500": { "$value": "#7C3CFF", "$type": "color" }
@@ -217,10 +305,10 @@
     "md": { "$value": "16px", "$type": "dimension" }
   }
 }</pre>
-          </div>
-          <div class="stack">
-            <h3 class="label">Tailwind config (as JSON)</h3>
-            <pre>{
+                </div>
+                <div class="stack">
+                  <h3 class="label">Tailwind config (as JSON)</h3>
+                  <pre>{
   "theme": {
     "extend": {
       "colors": { "brand": { "500": "#7C3CFF" } },
@@ -229,10 +317,10 @@
     }
   }
 }</pre>
-          </div>
-          <div class="stack">
-            <h3 class="label">Inspector tokens (exact shape)</h3>
-            <pre>{
+                </div>
+                <div class="stack">
+                  <h3 class="label">Inspector tokens (exact shape)</h3>
+                  <pre>{
   "collections": [{
     "id": "product",
     "name": "Product",
@@ -242,14 +330,17 @@
   "spacing": [{ "name": "md", "value": "16px" }],
   "radius": [{ "name": "card", "value": "12px" }]
 }</pre>
-          </div>
+                </div>
+              </div>
+              <p class="faint">
+                Connecting a real system also unlocks token binding, the page token audit and “apply to all variants” —
+                the three features that need a source of truth rather than a guess.
+              </p>
+            </section>
+          </section>
         </div>
-        <p class="faint">
-          Connecting a real system also unlocks token binding, the page token audit and “apply to all variants” —
-          the three features that need a source of truth rather than a guess.
-        </p>
-      </section>
-    </main>
+      </main>
+    </div>
     <script src="options.js"></script>
   </body>
 </html>

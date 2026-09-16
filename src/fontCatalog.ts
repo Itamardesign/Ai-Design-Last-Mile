@@ -1,3 +1,5 @@
+import { GOOGLE_FONT_FAMILIES } from './googleFontsCatalog.js';
+
 /**
  * The fonts the picker offers, beyond the ones already on the page.
  *
@@ -10,6 +12,8 @@ export type FontOption = {
   label: string;
   /** The full stack applied to the element, fallbacks intact. */
   stack: string;
+  /** Google Fonts' broad classification, used for the fallback and future filtering. */
+  category?: string;
 };
 
 export type FontGroup = {
@@ -38,44 +42,46 @@ export const SYSTEM_FONTS: FontOption[] = [
   { label: 'Courier New', stack: '"Courier New", Courier, monospace' },
 ];
 
-/**
- * The ten most-used families on Google Fonts.
- *
- * Ten is a deliberate cap: the point is a quick way to try a different direction, not a browsable
- * catalogue of thousands. Anything more specific belongs in the project's own CSS.
- */
-export const GOOGLE_FONTS: FontOption[] = [
-  { label: 'Roboto', stack: 'Roboto, sans-serif' },
-  { label: 'Open Sans', stack: '"Open Sans", sans-serif' },
-  { label: 'Montserrat', stack: 'Montserrat, sans-serif' },
-  { label: 'Lato', stack: 'Lato, sans-serif' },
-  { label: 'Poppins', stack: 'Poppins, sans-serif' },
-  { label: 'Inter', stack: 'Inter, sans-serif' },
-  { label: 'Roboto Condensed', stack: '"Roboto Condensed", sans-serif' },
-  { label: 'Oswald', stack: 'Oswald, sans-serif' },
-  { label: 'Raleway', stack: 'Raleway, sans-serif' },
-  { label: 'Nunito', stack: 'Nunito, sans-serif' },
-];
+const GOOGLE_FALLBACKS: Record<string, string> = {
+  'Sans Serif': 'sans-serif',
+  Serif: 'serif',
+  Monospace: 'monospace',
+  Handwriting: 'cursive',
+  Display: 'sans-serif',
+};
 
-const GOOGLE_LINK_ID = 'merakimind-design-inspector-google-fonts';
+/** Every family in Google's public catalogue, generated from its metadata endpoint. */
+export const GOOGLE_FONTS: FontOption[] = GOOGLE_FONT_FAMILIES.map(([label, category]) => ({
+  label,
+  category,
+  stack: `${JSON.stringify(label)}, ${GOOGLE_FALLBACKS[category] ?? 'sans-serif'}`,
+}));
+
+const loadedGoogleFonts = new Set<string>();
+let googleFontBatch = 0;
 
 /**
- * Fetches the Google families so their previews render in the real face.
+ * Fetches a displayed batch of Google families so their previews render in the real face.
  *
- * Called only when the font picker is first opened, never on mount: this is the one thing the
- * inspector does that reaches the network, and a page that never opens the picker should not pay
- * for it or contact fonts.googleapis.com at all.
+ * Called only while the font picker is open, never on mount. Keeping the full catalogue as local
+ * data and loading only visible rows avoids thousands of requests when somebody opens the picker.
  */
-export function ensureGoogleFontsLoaded(): void {
+export function ensureGoogleFontsLoaded(fonts: FontOption[]): void {
   if (typeof document === 'undefined') return;
-  if (document.getElementById(GOOGLE_LINK_ID)) return;
+  const pending = fonts.filter((font) => !loadedGoogleFonts.has(font.label));
+  pending.forEach((font) => loadedGoogleFonts.add(font.label));
 
-  const families = GOOGLE_FONTS.map((font) => `family=${font.label.replace(/ /g, '+')}:wght@400;700`).join('&');
-  const link = document.createElement('link');
-  link.id = GOOGLE_LINK_ID;
-  link.rel = 'stylesheet';
-  link.href = `https://fonts.googleapis.com/css2?${families}&display=swap`;
-  document.head.appendChild(link);
+  // Short URLs are more reliable across browsers and proxies than one catalogue-sized request.
+  for (let index = 0; index < pending.length; index += 12) {
+    const families = pending.slice(index, index + 12)
+      .map((font) => `family=${encodeURIComponent(font.label).replace(/%20/g, '+')}`)
+      .join('&');
+    const link = document.createElement('link');
+    link.id = `merakimind-design-inspector-google-fonts-${googleFontBatch++}`;
+    link.rel = 'stylesheet';
+    link.href = `https://fonts.googleapis.com/css2?${families}&display=swap`;
+    document.head.appendChild(link);
+  }
 }
 
 /** Groups the page's own fonts first — those are the ones a designer should reach for by default. */
@@ -85,6 +91,6 @@ export function buildFontGroups(projectFonts: FontOption[]): FontGroup[] {
     groups.push({ id: 'project', label: 'Project fonts', hint: 'Already used on this site', fonts: projectFonts });
   }
   groups.push({ id: 'system', label: 'System fonts', hint: 'Installed everywhere · no download', fonts: SYSTEM_FONTS });
-  groups.push({ id: 'google', label: 'Google Fonts', hint: 'Ten most popular · needs adding to your project', fonts: GOOGLE_FONTS });
+  groups.push({ id: 'google', label: 'Google Fonts', hint: `${GOOGLE_FONTS.length} families · previews load as needed`, fonts: GOOGLE_FONTS });
   return groups;
 }

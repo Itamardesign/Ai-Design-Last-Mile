@@ -1,0 +1,483 @@
+<template>
+  <div id="root" data-composition-id="01-inspect" data-width="1920" data-height="1080">
+    <div class="clip f01-ground" data-start="0" data-duration="4.5" data-track-index="0">
+      <div class="f01-orb f01-orb-a"></div>
+      <div class="f01-orb f01-orb-b"></div>
+    </div>
+
+    <div class="clip f01-scene" data-start="0" data-duration="4.5" data-track-index="1">
+      <div class="f01-browser" id="f01-browser">
+        <div class="f01-browser-bar">
+          <div class="f01-traffic"><i></i><i></i><i></i></div>
+          <div class="f01-address"><span class="f01-lock"></span><span>design.workspace</span></div>
+          <div class="f01-browser-action"></div>
+        </div>
+
+        <div class="f01-depth f01-depth-back"></div>
+        <div class="f01-depth f01-depth-mid"></div>
+        <main class="f01-page">
+          <div class="f01-page-kicker">DESIGN WORKSPACE</div>
+          <h1 class="f01-page-title" id="f01-page-title">
+            Make every detail<br />feel intentional.
+          </h1>
+          <div class="f01-page-copy">A focused surface for shaping clear, polished interfaces.</div>
+          <button class="f01-cta" id="f01-cta">Open workspace <span>↗</span></button>
+          <div class="f01-proof-row">
+            <span class="f01-proof-dot"></span><span>Ready to inspect</span>
+          </div>
+        </main>
+
+        <svg class="f01-trace-layer" viewBox="0 0 1320 780" aria-hidden="true">
+          <rect id="f01-heading-trace" x="130" y="224" width="650" height="164" rx="12"></rect>
+          <rect id="f01-button-trace" x="322" y="498" width="256" height="72" rx="36"></rect>
+          <rect id="f01-selection-trace" x="326" y="502" width="248" height="64" rx="32"></rect>
+        </svg>
+
+        <div class="f01-selector-chip" id="f01-selector-chip">
+          <div class="f01-sequence-title" id="f01-sequence-title">h1.hero</div>
+          <div class="f01-sequence-body" id="f01-sequence-body">hover</div>
+        </div>
+        <span class="f01-handle f01-handle-nw"></span>
+        <span class="f01-handle f01-handle-ne"></span>
+        <span class="f01-handle f01-handle-sw"></span>
+        <span class="f01-handle f01-handle-se"></span>
+      </div>
+
+      <div class="f01-message" id="f01-message">
+        <span class="f01-message-rule"></span>
+        <span id="f01-word-inspect">Inspect</span>
+        <span id="f01-word-any">any</span>
+        <span id="f01-word-interface">interface</span><span id="f01-word-dot">.</span>
+      </div>
+
+      <div class="f01-ripple" id="f01-ripple"></div>
+
+      <div class="f01-panel" id="f01-panel">
+        <div class="f01-panel-old"><span></span></div>
+        <div class="f01-panel-new" id="f01-panel-new">
+          <div class="f01-panel-head" id="f01-panel-head">
+            <div>
+              <div class="f01-panel-eyebrow">DESIGN INSPECTOR</div>
+              <div class="f01-panel-title">Selection</div>
+            </div>
+            <div class="f01-close">×</div>
+          </div>
+          <div class="f01-tabs" id="f01-tabs">
+            <div class="f01-tab f01-tab-active">Inspect</div>
+            <div class="f01-tab">Styles</div>
+            <div class="f01-tab">Design</div>
+          </div>
+          <div class="f01-target" id="f01-target">
+            <div class="f01-target-icon">&lt;/&gt;</div>
+            <div>
+              <div class="f01-target-label">TARGET</div>
+              <div class="f01-target-value">button.cta</div>
+            </div>
+            <div class="f01-target-live">LIVE</div>
+          </div>
+          <div class="f01-panel-section" id="f01-panel-section-a">
+            <div class="f01-section-label">LAYOUT</div>
+            <div class="f01-property"><span>Display</span><strong>inline-flex</strong></div>
+            <div class="f01-property"><span>Padding</span><strong>16 × 28</strong></div>
+          </div>
+          <div class="f01-panel-section" id="f01-panel-section-b">
+            <div class="f01-section-label">APPEARANCE</div>
+            <div class="f01-property"><span>Radius</span><strong>100 px</strong></div>
+            <div class="f01-color-row"><span class="f01-color-swatch"></span><strong>#7C3CFF</strong></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="f01-cursor" id="f01-cursor">
+        <svg viewBox="0 0 48 58" aria-hidden="true">
+          <path d="M5 4L39 34L23 36L15 52Z" fill="#7c3cff" stroke="#ffffff" stroke-width="3" stroke-linejoin="round"></path>
+        </svg>
+      </div>
+    </div>
+  </div>
+
+  <style>
+    #root {
+      position: relative;
+      width: 1920px;
+      height: 1080px;
+      overflow: hidden;
+      container-type: size;
+      color: #171e31;
+      font: inherit;
+    }
+
+    .clip { position: absolute; inset: 0; overflow: hidden; }
+
+    .f01-ground {
+      background: #171e31;
+    }
+
+    .f01-ground::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background-image: linear-gradient(rgba(124, 60, 255, 0.075) 1px, transparent 1px), linear-gradient(90deg, rgba(124, 60, 255, 0.075) 1px, transparent 1px);
+      background-size: 64px 64px;
+      -webkit-mask-image: linear-gradient(to bottom, rgba(0,0,0,.6), transparent 82%);
+      mask-image: linear-gradient(to bottom, rgba(0,0,0,.6), transparent 82%);
+    }
+
+    .f01-orb { position: absolute; border-radius: 50%; filter: blur(90px); opacity: .24; }
+    .f01-orb-a { width: 440px; height: 440px; left: -140px; top: 80px; background: #7c3cff; }
+    .f01-orb-b { width: 360px; height: 360px; right: -100px; top: 480px; background: #3b82f6; opacity: .14; }
+
+    .f01-browser {
+      position: absolute;
+      left: 70px;
+      top: 70px;
+      width: 1320px;
+      height: 780px;
+      border-radius: 14px;
+      overflow: hidden;
+      background: #ffffff;
+      border: 1.5px solid rgba(124, 60, 255, 0.2);
+    }
+
+    .f01-browser-bar {
+      height: 64px;
+      display: grid;
+      grid-template-columns: 150px 1fr 150px;
+      align-items: center;
+      padding: 0 24px;
+      box-sizing: border-box;
+      background: #f7f7f8;
+      border-bottom: 1px solid rgba(124, 60, 255, 0.15);
+    }
+
+    .f01-traffic { display: flex; gap: 9px; }
+    .f01-traffic i { width: 11px; height: 11px; border-radius: 50%; background: rgba(124, 60, 255, 0.2); }
+    .f01-traffic i:first-child { background: #7c3cff; }
+    .f01-address {
+      justify-self: center;
+      width: 430px;
+      height: 34px;
+      border-radius: 100px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      color: #9a9a9a;
+      font-size: 13px;
+      letter-spacing: .02em;
+      background: rgba(124, 60, 255, 0.08);
+    }
+    .f01-lock { width: 8px; height: 9px; border: 1.5px solid #7c3cff; border-radius: 2px; }
+    .f01-browser-action { justify-self: end; width: 30px; height: 30px; border-radius: 50%; border: 1px solid rgba(124, 60, 255, 0.2); }
+
+    .f01-page { position: absolute; inset: 64px 0 0 0; overflow: hidden; }
+    .f01-depth {
+      position: absolute;
+      border: 1.5px solid rgba(124, 60, 255, 0.2);
+      background: rgba(124, 60, 255, 0.04);
+      border-radius: 14px;
+    }
+    .f01-depth-back { width: 330px; height: 420px; right: -120px; top: 185px; opacity: .48; }
+    .f01-depth-mid { width: 270px; height: 340px; right: 80px; top: 255px; opacity: .72; }
+
+    .f01-page-kicker {
+      position: absolute;
+      left: 150px;
+      top: 122px;
+      color: #7c3cff;
+      font-size: 15px;
+      font-weight: 600;
+      letter-spacing: .12em;
+    }
+    .f01-page-title {
+      position: absolute;
+      left: 142px;
+      top: 174px;
+      margin: 0;
+      max-width: 700px;
+      font-size: 64px;
+      line-height: 1.08;
+      letter-spacing: -.035em;
+      font-weight: 700;
+      color: #171e31;
+    }
+    .f01-page-copy {
+      position: absolute;
+      left: 146px;
+      top: 365px;
+      width: 520px;
+      color: #3b82f6;
+      font-size: 22px;
+      line-height: 1.5;
+    }
+    .f01-cta {
+      position: absolute;
+      left: 330px;
+      top: 442px;
+      width: 240px;
+      height: 56px;
+      border: 0;
+      border-radius: 100px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 20px;
+      background: #7c3cff;
+      color: #ffffff;
+      font: inherit;
+      font-size: 18px;
+      font-weight: 600;
+      transform-origin: center;
+    }
+    .f01-cta span { font-size: 20px; }
+    .f01-proof-row {
+      position: absolute;
+      left: 410px;
+      top: 524px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: #9a9a9a;
+      font-size: 14px;
+    }
+    .f01-proof-dot { width: 8px; height: 8px; border-radius: 50%; background: #059669; }
+
+    .f01-trace-layer { position: absolute; inset: 0; width: 1320px; height: 780px; pointer-events: none; }
+    .f01-trace-layer rect { fill: none; stroke: #7c3cff; stroke-width: 2; vector-effect: non-scaling-stroke; }
+    #f01-selection-trace { stroke-width: 2.5; }
+
+    .f01-selector-chip {
+      position: absolute;
+      left: 584px;
+      top: 566px;
+      min-width: 92px;
+      padding: 8px 12px;
+      border-radius: 10px;
+      color: #ffffff;
+      background: #7c3cff;
+      opacity: 0;
+      pointer-events: none;
+    }
+    .f01-sequence-title { font-size: 14px; line-height: 18px; font-weight: 600; white-space: nowrap; }
+    .f01-sequence-body { min-height: 18px; font-size: 11px; line-height: 18px; opacity: .74; }
+
+    .f01-handle {
+      position: absolute;
+      width: 8px;
+      height: 8px;
+      border-radius: 2px;
+      background: #ffffff;
+      border: 2px solid #7c3cff;
+      opacity: 0;
+    }
+    .f01-handle-nw { left: 322px; top: 498px; }
+    .f01-handle-ne { left: 570px; top: 498px; }
+    .f01-handle-sw { left: 322px; top: 558px; }
+    .f01-handle-se { left: 570px; top: 558px; }
+
+    .f01-message {
+      position: absolute;
+      left: 120px;
+      top: 104px;
+      z-index: 8;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      color: #171e31;
+      font-size: 36px;
+      line-height: 1.08;
+      letter-spacing: -.02em;
+      font-weight: 700;
+      white-space: nowrap;
+      opacity: 0;
+    }
+    .f01-message-rule { width: 54px; height: 4px; border-radius: 2px; background: #7c3cff; margin-right: 6px; }
+    .f01-message > span:not(.f01-message-rule) { display: inline-block; opacity: 0; }
+
+    .f01-panel {
+      position: absolute;
+      left: 1450px;
+      top: 80px;
+      width: 390px;
+      height: 730px;
+      border-radius: 14px;
+      overflow: hidden;
+      background: #ffffff;
+      border: 1.5px solid rgba(124, 60, 255, 0.2);
+      transform-origin: right top;
+      opacity: 0;
+    }
+    .f01-panel-old, .f01-panel-new { position: absolute; inset: 0; }
+    .f01-panel-old { display: grid; place-items: center; }
+    .f01-panel-old span { width: 116px; height: 116px; border-radius: 50%; background: #7c3cff; }
+    .f01-panel-new { opacity: 0; padding: 28px; box-sizing: border-box; }
+    .f01-panel-head { display: flex; justify-content: space-between; align-items: center; opacity: 0; }
+    .f01-panel-eyebrow { color: #7c3cff; font-size: 12px; font-weight: 600; letter-spacing: .1em; }
+    .f01-panel-title { color: #171e31; font-size: 28px; line-height: 1.2; font-weight: 700; margin-top: 6px; }
+    .f01-close { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; color: #9a9a9a; background: rgba(124,60,255,.08); font-size: 22px; }
+    .f01-tabs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-top: 26px; padding: 4px; border-radius: 100px; background: rgba(124,60,255,.08); opacity: 0; }
+    .f01-tab { height: 35px; display: grid; place-items: center; border-radius: 100px; color: #9a9a9a; font-size: 13px; font-weight: 600; }
+    .f01-tab-active { color: #ffffff; background: #7c3cff; }
+    .f01-target { margin-top: 22px; min-height: 82px; border-radius: 12px; border: 1.5px solid rgba(124,60,255,.2); background: rgba(124,60,255,.04); display: grid; grid-template-columns: 46px 1fr auto; align-items: center; gap: 14px; padding: 0 16px; box-sizing: border-box; opacity: 0; }
+    .f01-target-icon { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 10px; color: #7c3cff; background: rgba(124,60,255,.08); font-size: 13px; font-weight: 700; }
+    .f01-target-label, .f01-section-label { color: #9a9a9a; font-size: 11px; font-weight: 600; letter-spacing: .1em; }
+    .f01-target-value { color: #171e31; font-size: 17px; font-weight: 700; margin-top: 4px; }
+    .f01-target-live { color: #059669; font-size: 11px; font-weight: 700; letter-spacing: .08em; }
+    .f01-panel-section { margin-top: 18px; padding: 18px; border-radius: 12px; border: 1.5px solid rgba(124,60,255,.2); background: rgba(124,60,255,.04); opacity: 0; }
+    .f01-property, .f01-color-row { min-height: 42px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid rgba(124,60,255,.12); color: #3b82f6; font-size: 14px; }
+    .f01-property:last-child, .f01-color-row:last-child { border-bottom: 0; }
+    .f01-property strong, .f01-color-row strong { color: #171e31; font-size: 13px; font-weight: 600; }
+    .f01-color-row { justify-content: flex-start; gap: 12px; }
+    .f01-color-swatch { width: 24px; height: 24px; border-radius: 50%; background: #7c3cff; }
+
+    .f01-ripple {
+      position: absolute;
+      left: 470px;
+      top: 554px;
+      width: 100px;
+      height: 100px;
+      border-radius: 50%;
+      border: 2px solid #7c3cff;
+      box-sizing: border-box;
+      opacity: 0;
+      transform-origin: center;
+      pointer-events: none;
+      z-index: 18;
+    }
+    .f01-cursor { position: absolute; left: 250px; top: 760px; width: 42px; height: 52px; z-index: 30; pointer-events: none; transform-origin: 5px 4px; }
+    .f01-cursor svg { width: 100%; height: 100%; display: block; }
+  </style>
+
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+  <script>
+    (() => {
+      const root = document.querySelector('[data-composition-id="01-inspect"]');
+      const q = (selector) => root.querySelector(selector);
+      const qa = (selector) => Array.from(root.querySelectorAll(selector));
+      const tl = gsap.timeline({ paused: true });
+
+      const traced = qa('.f01-trace-layer rect');
+      traced.forEach((path) => {
+        const length = path.getTotalLength();
+        path.style.strokeDasharray = String(length);
+        path.style.strokeDashoffset = String(length);
+      });
+
+      tl.fromTo('#f01-browser', { opacity: 0, y: 28, scale: 0.985 }, { opacity: 1, y: 0, scale: 1, duration: 0.46, ease: 'power3.out' }, 0);
+      tl.fromTo('.f01-depth-back', { opacity: 0, x: 70 }, { opacity: 0.48, x: 0, duration: 0.55, ease: 'power3.out' }, 0.12);
+      tl.fromTo('.f01-depth-mid', { opacity: 0, x: 55 }, { opacity: 0.72, x: 0, duration: 0.5, ease: 'power3.out' }, 0.2);
+      tl.fromTo('.f01-page-kicker', { opacity: 0, y: 22 }, { opacity: 1, y: 0, duration: 0.34, ease: 'power3.out' }, 0.16);
+      tl.fromTo('#f01-page-title', { opacity: 0, y: 52 }, { opacity: 1, y: 0, duration: 0.58, ease: 'power4.out' }, 0.2);
+      tl.fromTo('.f01-page-copy', { opacity: 0, y: 34 }, { opacity: 1, y: 0, duration: 0.46, ease: 'power3.out' }, 0.38);
+      tl.fromTo('#f01-cta', { opacity: 0, y: 46, scale: 0.96 }, { opacity: 1, y: 0, scale: 1, duration: 0.45, ease: 'power4.out' }, 0.48);
+      tl.fromTo('.f01-proof-row', { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: 0.35, ease: 'power3.out' }, 0.68);
+
+      tl.fromTo('#f01-cursor', { opacity: 0, x: 0, y: 0, rotation: -8 }, { opacity: 1, x: 270, y: -156, rotation: 0, duration: 0.88, ease: 'power2.inOut' }, 0.25);
+
+      tl.to('#f01-heading-trace', { strokeDashoffset: 0, duration: 0.42, ease: 'power2.out' }, 1.2);
+      tl.to('#f01-heading-trace', { opacity: 0.18, duration: 0.18, ease: 'power1.out' }, 1.58);
+      tl.to('#f01-button-trace', { strokeDashoffset: 0, duration: 0.38, ease: 'power2.out' }, 1.68);
+      tl.to('#f01-button-trace', { opacity: 0.22, duration: 0.18, ease: 'power1.out' }, 2.02);
+      tl.to('#f01-selection-trace', { strokeDashoffset: 0, duration: 0.42, ease: 'power2.out' }, 2.08);
+      tl.to('.f01-handle', { opacity: 1, duration: 0.16, stagger: 0.035, ease: 'power1.out' }, 2.34);
+
+      const sequence = [
+        { key: 'heading', title: 'h1.hero', body: 'hover', hold: 0.22 },
+        { key: 'button', title: '.cta', body: 'hover', hold: 0.28 },
+        { key: 'selected', title: '.cta', body: 'selected', hold: 0.46 }
+      ];
+      let cumulative = 0;
+      const sequenceTimeline = sequence.map((entry) => {
+        const duration = 0.18 + entry.body.length * 0.014 + entry.hold;
+        const start = cumulative;
+        cumulative += duration;
+        return { ...entry, start, end: cumulative };
+      });
+      const sequenceDriver = { t: 0 };
+      let lastKey = '';
+      const entryAt = (time) => {
+        for (let i = sequenceTimeline.length - 1; i >= 0; i -= 1) {
+          if (time >= sequenceTimeline[i].start) return sequenceTimeline[i];
+        }
+        return sequenceTimeline[0];
+      };
+      tl.to(sequenceDriver, {
+        t: cumulative,
+        duration: 1.42,
+        ease: 'none',
+        onUpdate: () => {
+          const entry = entryAt(sequenceDriver.t);
+          if (entry.key !== lastKey) {
+            q('#f01-sequence-title').textContent = entry.title;
+            q('#f01-sequence-body').textContent = entry.body;
+            const chip = q('#f01-selector-chip');
+            if (entry.key === 'heading') {
+              chip.style.left = '774px';
+              chip.style.top = '204px';
+            } else {
+              chip.style.left = '584px';
+              chip.style.top = '502px';
+            }
+            lastKey = entry.key;
+          }
+        }
+      }, 1.2);
+      tl.fromTo('#f01-selector-chip', { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.22, ease: 'power2.out' }, 1.25);
+
+      tl.to('#f01-cursor', { scale: 0.86, duration: 0.08, ease: 'power2.in' }, 2.72);
+      tl.to('#f01-cta', { scale: 0.95, duration: 0.08, ease: 'power2.in' }, 2.72);
+      tl.to('#f01-cursor', { scale: 1, duration: 0.08, ease: 'power2.out' }, 2.8);
+      tl.to('#f01-cta', { scale: 1, duration: 0.08, ease: 'power2.out' }, 2.8);
+      tl.set('#f01-ripple', { opacity: 1, scale: 0 }, 2.74);
+      tl.to('#f01-ripple', { scale: 4.2, opacity: 0, duration: 0.68, ease: 'power2.out', immediateRender: false }, 2.74);
+
+      tl.set('#f01-panel', { opacity: 1, x: 350, scale: 0.14, borderRadius: 100 }, 2.7);
+      tl.to('#f01-panel', {
+        x: 0,
+        scale: 1,
+        borderRadius: 14,
+        backgroundColor: '#ffffff',
+        duration: 0.78,
+        ease: 'power2.inOut'
+      }, 2.78);
+      tl.to('.f01-panel-old', { opacity: 0, duration: 0.3, ease: 'power1.in' }, 2.78);
+      tl.to('#f01-panel-new', { opacity: 1, duration: 0.3, ease: 'power1.out' }, 3.25);
+
+      const F = 1 / 60;
+      const waterfall = [
+        { selector: '#f01-panel-head', y: 76, duration: 0.19, overlap: 0 },
+        { selector: '#f01-tabs', y: 48, duration: 0.15, overlap: 1 },
+        { selector: '#f01-target', y: 44, duration: 0.145, overlap: 1 },
+        { selector: '#f01-panel-section-a', y: 40, duration: 0.13, overlap: 2 },
+        { selector: '#f01-panel-section-b', y: 36, duration: 0.115, overlap: 2 }
+      ];
+      let waterfallAt = 3.32;
+      waterfall.forEach((item) => {
+        tl.set(item.selector, { opacity: 1, y: item.y }, waterfallAt);
+        tl.to(item.selector, { y: 0, duration: item.duration, ease: 'power4.out' }, waterfallAt);
+        waterfallAt += item.duration - item.overlap * F;
+      });
+
+      tl.set('#f01-message', { opacity: 1 }, 3.46);
+      const messageParts = [
+        { selector: '.f01-message-rule', y: 72, duration: 0.19, overlap: 0 },
+        { selector: '#f01-word-inspect', y: 50, duration: 0.16, overlap: 1 },
+        { selector: '#f01-word-any', y: 44, duration: 0.14, overlap: 1 },
+        { selector: '#f01-word-interface', y: 66, duration: 0.16, overlap: 2 },
+        { selector: '#f01-word-dot', y: 38, duration: 0.11, overlap: 2 }
+      ];
+      let wordAt = 3.46;
+      messageParts.forEach((item) => {
+        tl.set(item.selector, { opacity: 1, y: item.y }, wordAt);
+        tl.to(item.selector, { y: 0, duration: item.duration, ease: 'power4.out' }, wordAt);
+        wordAt += item.duration - item.overlap * F;
+      });
+
+      tl.to('#f01-selector-chip', { backgroundColor: '#171e31', duration: 0.24, ease: 'power1.out' }, 3.98);
+      tl.to('#f01-selection-trace', { strokeWidth: 3, duration: 0.24, ease: 'power1.out' }, 3.98);
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines['01-inspect'] = tl;
+    })();
+  </script>
+</template>

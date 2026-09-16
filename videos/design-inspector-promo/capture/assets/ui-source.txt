@@ -1,0 +1,3 @@
+Reference-only asset. Reconstruct the Design Inspector as live HTML/DOM using the visual
+tokens and product behavior described in capture/extracted/asset-descriptions.md. Do not
+render this text file and do not use raster imagery.

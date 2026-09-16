@@ -68,7 +68,7 @@ async function copyStatic() {
   const files = ['manifest.json'];
   await Promise.all(files.map((file) => cp(join(here, file), join(outdir, file))));
   await Promise.all(
-    ['popup.html', 'options.html', 'ui.css'].map((file) => cp(join(here, 'src', file), join(outdir, file))),
+    ['popup.html', 'options.html', 'ui.css', 'hub.css'].map((file) => cp(join(here, 'src', file), join(outdir, file))),
   );
   // Stamp the extension version from the package, so there is one version number to bump.
   const pkg = JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8'));

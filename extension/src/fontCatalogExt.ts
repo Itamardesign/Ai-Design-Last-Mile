@@ -9,20 +9,19 @@
 export { SYSTEM_FONTS, GOOGLE_FONTS, buildFontGroups } from '../../src/fontCatalog.js';
 export type { FontOption, FontGroup } from '../../src/fontCatalog.js';
 
-import { GOOGLE_FONTS } from '../../src/fontCatalog.js';
+import type { FontOption } from '../../src/fontCatalog.js';
 import { loadGoogleFamilies } from './webfont.js';
 
-let started = false;
+const loaded = new Set<string>();
 
 /**
- * Fetches the Google families so their previews render in the real face.
+ * Fetches a displayed batch of Google families so their previews render in the real face.
  *
- * Called only when the font picker is first opened, never on mount: this is the one thing the
- * inspector does that reaches the network, and a page that never opens the picker should not pay
- * for it or contact fonts.googleapis.com at all.
+ * Called only while the picker is open. The extension fetches only newly displayed families and
+ * registers them through FontFace so a host page's content security policy cannot block previews.
  */
-export function ensureGoogleFontsLoaded(): void {
-  if (started) return;
-  started = true;
-  void loadGoogleFamilies(GOOGLE_FONTS.map((font) => `${font.label}:wght@400;700`));
+export function ensureGoogleFontsLoaded(fonts: FontOption[]): void {
+  const pending = fonts.filter((font) => !loaded.has(font.label));
+  pending.forEach((font) => loaded.add(font.label));
+  if (pending.length) void loadGoogleFamilies(pending.map((font) => font.label));
 }

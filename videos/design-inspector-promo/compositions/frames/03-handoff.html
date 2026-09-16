@@ -1,0 +1,387 @@
+<template>
+  <div id="root" data-composition-id="03-handoff" data-width="1920" data-height="1080">
+    <div class="clip frame-03-handoff-ground" data-start="0" data-duration="4" data-track-index="0">
+      <div class="frame-03-handoff-orb frame-03-handoff-orb-a"></div>
+      <div class="frame-03-handoff-orb frame-03-handoff-orb-b"></div>
+    </div>
+
+    <div class="clip frame-03-handoff-stage" data-start="0" data-duration="4" data-track-index="1">
+      <div class="frame-03-handoff-page" id="frame-03-handoff-page">
+        <div class="frame-03-handoff-page-top">
+          <span class="frame-03-handoff-page-mark"></span>
+          <span class="frame-03-handoff-page-line frame-03-handoff-page-line-short"></span>
+          <span class="frame-03-handoff-page-line"></span>
+        </div>
+        <div class="frame-03-handoff-page-copy">
+          <span></span><span></span><span></span>
+        </div>
+        <button class="frame-03-handoff-selected" id="frame-03-handoff-selected">button.cta</button>
+      </div>
+
+      <div class="frame-03-handoff-morph-card" id="frame-03-handoff-morph-card">
+        <div class="frame-03-handoff-old" id="frame-03-handoff-old">
+          <div class="frame-03-handoff-panel-tabs">
+            <span>Inspect</span>
+            <span class="frame-03-handoff-tab-active">Handoff</span>
+          </div>
+          <div class="frame-03-handoff-inspector-row">
+            <span>Selection</span><strong>button.cta</strong>
+          </div>
+          <div class="frame-03-handoff-inspector-row">
+            <span>Component</span><strong>Button / Primary</strong>
+          </div>
+          <div class="frame-03-handoff-inspector-row frame-03-handoff-row-muted">
+            <span>State</span><strong>Ready</strong>
+          </div>
+        </div>
+
+        <div class="frame-03-handoff-new" id="frame-03-handoff-new">
+          <div class="frame-03-handoff-card-chrome">
+            <span class="frame-03-handoff-code-dot"></span>
+            <span>HANDOFF</span>
+            <span class="frame-03-handoff-code-tag">CSS</span>
+          </div>
+          <div class="frame-03-handoff-component-line">
+            <span class="frame-03-handoff-chevron">›</span>
+            <strong>button.cta</strong>
+          </div>
+          <div class="frame-03-handoff-code-block">
+            <div class="frame-03-handoff-code-line"><span class="frame-03-handoff-code-key">padding</span><span>: </span><span id="frame-03-handoff-type-1"></span><i id="frame-03-handoff-cursor-1"></i></div>
+            <div class="frame-03-handoff-code-line"><span class="frame-03-handoff-code-key">border-radius</span><span>: </span><span id="frame-03-handoff-type-2"></span><i id="frame-03-handoff-cursor-2"></i></div>
+            <div class="frame-03-handoff-code-line"><span class="frame-03-handoff-code-key">background</span><span>: </span><span id="frame-03-handoff-type-3"></span><i id="frame-03-handoff-cursor-3"></i></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="frame-03-handoff-action-wrap" id="frame-03-handoff-action-wrap">
+        <button class="frame-03-handoff-action frame-03-handoff-copy" id="frame-03-handoff-copy">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="10" height="10" rx="2"></rect><path d="M6 15H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1"></path></svg>
+          <span>Copy handoff</span>
+        </button>
+        <button class="frame-03-handoff-action frame-03-handoff-copied" id="frame-03-handoff-copied">
+          <span>Copied</span><b>✓</b>
+        </button>
+      </div>
+
+      <div class="frame-03-handoff-final" id="frame-03-handoff-final">Design decisions. Ready to ship.</div>
+      <div class="frame-03-handoff-ripple" id="frame-03-handoff-ripple"></div>
+
+      <svg class="frame-03-handoff-pointer" id="frame-03-handoff-pointer" viewBox="0 0 64 76" aria-hidden="true">
+        <path d="M7 5 L7 58 L21 45 L31 68 L42 63 L31 40 L50 39 Z"></path>
+      </svg>
+    </div>
+  </div>
+
+  <style>
+    #root {
+      position: relative;
+      width: 1920px;
+      height: 1080px;
+      overflow: hidden;
+      container-type: size;
+      color: #171e31;
+      font-family: sans-serif;
+    }
+
+    .frame-03-handoff-ground,
+    .frame-03-handoff-stage {
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+    }
+
+    .frame-03-handoff-ground {
+      background: #ffffff;
+    }
+
+    .frame-03-handoff-orb {
+      position: absolute;
+      border: 1.5px solid rgba(124, 60, 255, 0.12);
+      border-radius: 50%;
+    }
+
+    .frame-03-handoff-orb-a { width: 760px; height: 760px; left: 580px; top: 62px; }
+    .frame-03-handoff-orb-b { width: 880px; height: 880px; left: 520px; top: 0; opacity: .55; }
+
+    .frame-03-handoff-page {
+      position: absolute;
+      inset: 0;
+      background: #ffffff;
+    }
+
+    .frame-03-handoff-page-top {
+      position: absolute;
+      left: 96px;
+      top: 72px;
+      display: flex;
+      align-items: center;
+      gap: 22px;
+    }
+
+    .frame-03-handoff-page-mark { width: 42px; height: 42px; border-radius: 12px; background: #7c3cff; }
+    .frame-03-handoff-page-line { width: 128px; height: 10px; border-radius: 100px; background: rgba(23, 30, 49, .12); }
+    .frame-03-handoff-page-line-short { width: 84px; }
+    .frame-03-handoff-page-copy { position: absolute; left: 190px; top: 292px; display: grid; gap: 24px; }
+    .frame-03-handoff-page-copy span { display: block; width: 560px; height: 26px; border-radius: 100px; background: rgba(23, 30, 49, .08); }
+    .frame-03-handoff-page-copy span:nth-child(2) { width: 470px; }
+    .frame-03-handoff-page-copy span:nth-child(3) { width: 390px; }
+
+    .frame-03-handoff-selected {
+      position: absolute;
+      left: 520px;
+      top: 604px;
+      width: 220px;
+      height: 64px;
+      border: 0;
+      border-radius: 100px;
+      background: #7c3cff;
+      color: #ffffff;
+      font: 600 22px/1 sans-serif;
+      box-shadow: 0 0 0 5px rgba(59, 130, 246, .18);
+    }
+
+    .frame-03-handoff-morph-card {
+      position: absolute;
+      left: 1104px;
+      top: -6px;
+      width: 720px;
+      height: 560px;
+      border: 1.5px solid rgba(124, 60, 255, .2);
+      border-radius: 18px;
+      background: #ffffff;
+      overflow: hidden;
+      transform-origin: 50% 50%;
+      box-shadow: none;
+    }
+
+    .frame-03-handoff-old,
+    .frame-03-handoff-new {
+      position: absolute;
+      inset: 0;
+    }
+
+    .frame-03-handoff-old { padding: 94px 48px 48px; box-sizing: border-box; }
+    .frame-03-handoff-new { padding: 42px 48px; box-sizing: border-box; }
+
+    .frame-03-handoff-panel-tabs {
+      position: absolute;
+      left: 44px;
+      right: 44px;
+      top: 10px;
+      height: 58px;
+      display: flex;
+      justify-content: flex-end;
+      align-items: center;
+      gap: 8px;
+      color: #9a9a9a;
+      font-size: 17px;
+    }
+
+    .frame-03-handoff-panel-tabs span { padding: 11px 18px; border-radius: 100px; }
+    .frame-03-handoff-panel-tabs .frame-03-handoff-tab-active { color: #7c3cff; background: rgba(124, 60, 255, .08); font-weight: 600; }
+    .frame-03-handoff-inspector-row { display: flex; justify-content: space-between; padding: 24px 0; border-bottom: 1px solid rgba(124, 60, 255, .12); color: #3b82f6; font-size: 20px; }
+    .frame-03-handoff-inspector-row strong { color: #171e31; font-weight: 600; }
+    .frame-03-handoff-row-muted { opacity: .66; }
+
+    .frame-03-handoff-card-chrome {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      color: #7c3cff;
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: .08em;
+    }
+
+    .frame-03-handoff-code-dot { width: 10px; height: 10px; border-radius: 50%; background: #7c3cff; }
+    .frame-03-handoff-code-tag { margin-left: auto; padding: 8px 14px; border-radius: 100px; background: rgba(124, 60, 255, .08); }
+    .frame-03-handoff-component-line { display: flex; align-items: center; gap: 14px; margin-top: 46px; font-size: 31px; letter-spacing: -.02em; }
+    .frame-03-handoff-chevron { color: #7c3cff; font-size: 46px; line-height: .7; }
+
+    .frame-03-handoff-code-block {
+      margin-top: 34px;
+      padding: 30px 34px;
+      border: 1.5px solid rgba(124, 60, 255, .2);
+      border-radius: 14px;
+      background: rgba(124, 60, 255, .04);
+      font-family: monospace;
+    }
+
+    .frame-03-handoff-code-line {
+      display: flex;
+      align-items: baseline;
+      min-height: 49px;
+      color: #171e31;
+      font-size: 22px;
+      line-height: 1.5;
+      white-space: nowrap;
+    }
+
+    .frame-03-handoff-code-key { color: #3b82f6; min-width: 196px; }
+    .frame-03-handoff-code-line i { display: inline-block; width: 10px; height: 22px; margin-left: 4px; background: #7c3cff; border-radius: 2px; opacity: 0; }
+    #frame-03-handoff-type-1, #frame-03-handoff-type-2, #frame-03-handoff-type-3 { display: inline-block; min-width: 300px; }
+
+    .frame-03-handoff-action-wrap {
+      position: absolute;
+      left: 710px;
+      top: 442px;
+      width: 500px;
+      height: 104px;
+      transform-origin: 50% 50%;
+    }
+
+    .frame-03-handoff-action {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 18px;
+      border: 0;
+      border-radius: 100px;
+      color: #ffffff;
+      font: 600 29px/1 sans-serif;
+      transform-origin: 50% 50%;
+    }
+
+    .frame-03-handoff-action svg { width: 30px; height: 30px; fill: none; stroke: currentColor; stroke-width: 1.8; }
+    .frame-03-handoff-copy { z-index: 1; background: #7c3cff; }
+    .frame-03-handoff-copied { z-index: 2; background: #059669; }
+    .frame-03-handoff-copied b { font-size: 32px; }
+
+    .frame-03-handoff-final {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 278px;
+      text-align: center;
+      color: #171e31;
+      font-size: 54px;
+      line-height: 1.1;
+      font-weight: 700;
+      letter-spacing: -.02em;
+    }
+
+    .frame-03-handoff-ripple {
+      position: absolute;
+      left: 906px;
+      top: 438px;
+      width: 108px;
+      height: 108px;
+      border: 3px solid rgba(5, 150, 105, .32);
+      border-radius: 50%;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .frame-03-handoff-pointer {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 60px;
+      height: 72px;
+      fill: #ffffff;
+      stroke: #171e31;
+      stroke-width: 3;
+      stroke-linejoin: round;
+      pointer-events: none;
+      transform-origin: 0 0;
+      filter: drop-shadow(0 5px 8px rgba(23, 30, 49, .16));
+    }
+  </style>
+
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+  <script>
+    (() => {
+      const root = document.querySelector('[data-composition-id="03-handoff"]');
+      const q = (selector) => root.querySelector(selector);
+      const page = q('#frame-03-handoff-page');
+      const selected = q('#frame-03-handoff-selected');
+      const morph = q('#frame-03-handoff-morph-card');
+      const oldContent = q('#frame-03-handoff-old');
+      const newContent = q('#frame-03-handoff-new');
+      const actionWrap = q('#frame-03-handoff-action-wrap');
+      const copy = q('#frame-03-handoff-copy');
+      const copied = q('#frame-03-handoff-copied');
+      const pointer = q('#frame-03-handoff-pointer');
+      const finalLine = q('#frame-03-handoff-final');
+      const ripple = q('#frame-03-handoff-ripple');
+
+      const tl = gsap.timeline({ paused: true });
+      window.__timelines = window.__timelines || {};
+      window.__timelines['03-handoff'] = tl;
+
+      gsap.set(morph, { scale: 0.72, transformOrigin: '50% 50%' });
+      gsap.set(pointer, { x: 1420, y: 700, opacity: 0, scale: 1, transformOrigin: '0 0' });
+
+      tl.to(page, { opacity: 0.18, duration: 0.72, ease: 'power2.out' }, 0.05);
+      tl.to(selected, { scale: 0.72, x: 880, y: -531, borderRadius: 24, duration: 0.78, ease: 'power2.inOut' }, 0.12);
+      tl.to(morph, {
+        x: -504,
+        y: 156,
+        scale: 1,
+        borderRadius: 14,
+        backgroundColor: '#ffffff',
+        boxShadow: '0 0 0 rgba(0,0,0,0)',
+        duration: 0.82,
+        ease: 'power2.inOut'
+      }, 0.12);
+      tl.to(oldContent, { opacity: 0, duration: 0.34, ease: 'power1.in' }, 0.18);
+      tl.fromTo(newContent, { opacity: 0 }, { opacity: 1, duration: 0.34, ease: 'power1.out' }, 0.62);
+      tl.to(page, { opacity: 0, duration: 0.2, ease: 'power1.out' }, 0.78);
+
+      const sequences = [
+        [
+          { t: 1.00, text: '' }, { t: 1.08, text: '14' }, { t: 1.18, text: '14px' }, { t: 1.28, text: '14px 32px' }
+        ],
+        [
+          { t: 1.00, text: '' }, { t: 1.38, text: '2' }, { t: 1.48, text: '24' }, { t: 1.58, text: '24px' }
+        ],
+        [
+          { t: 1.00, text: '' }, { t: 1.70, text: 'var(' }, { t: 1.82, text: 'var(--brand' }, { t: 1.95, text: 'var(--brand-50' }, { t: 2.04, text: 'var(--brand-5' }, { t: 2.13, text: 'var(--brand-500)' }
+        ]
+      ];
+
+      const typeNodes = [q('#frame-03-handoff-type-1'), q('#frame-03-handoff-type-2'), q('#frame-03-handoff-type-3')];
+      const cursorNodes = [q('#frame-03-handoff-cursor-1'), q('#frame-03-handoff-cursor-2'), q('#frame-03-handoff-cursor-3')];
+      const typeDriver = { t: 0 };
+      const latest = (states, time) => {
+        for (let i = states.length - 1; i >= 0; i -= 1) {
+          if (time >= states[i].t) return states[i].text;
+        }
+        return '';
+      };
+
+      tl.to(typeDriver, {
+        t: 4,
+        duration: 4,
+        ease: 'none',
+        onUpdate: () => {
+          typeNodes.forEach((node, i) => { node.textContent = latest(sequences[i], typeDriver.t); });
+          cursorNodes.forEach((node, i) => {
+            const starts = [1.0, 1.34, 1.66];
+            const ends = [1.34, 1.66, 2.18];
+            const active = typeDriver.t >= starts[i] && typeDriver.t < ends[i];
+            node.style.opacity = active && Math.sin(typeDriver.t * Math.PI * 12) > 0 ? '1' : '0';
+          });
+        }
+      }, 0);
+
+      tl.to(morph, { scale: 0.72, opacity: 0, duration: 0.38, ease: 'power2.in' }, 2.20);
+      tl.fromTo(actionWrap, { scale: 0.72, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.55, ease: 'back.out(1.8)' }, 2.43);
+      tl.to(pointer, { x: 940, y: 470, opacity: 1, duration: 0.45, ease: 'power2.inOut' }, 2.20);
+      tl.to([copy, pointer], { scale: 0.9, duration: 0.12, ease: 'power1.in' }, 2.66);
+      tl.to(copy, { boxShadow: 'inset 0 0 0 5px rgba(255,255,255,.24)', duration: 0.12, ease: 'power1.in' }, 2.66);
+      tl.to([copy, pointer], { scale: 1, duration: 0.22, ease: 'back.out(1.6)' }, 2.80);
+      tl.to(copy, { boxShadow: 'inset 0 0 0 0 rgba(255,255,255,0)', duration: 0.22, ease: 'power2.out' }, 2.80);
+
+      tl.to(copy, { scale: 0.72, opacity: 0, duration: 0.20, ease: 'power2.in' }, 3.00);
+      tl.fromTo(copied, { scale: 0.72, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.34, ease: 'back.out(1.5)' }, 3.08);
+      tl.fromTo(finalLine, { opacity: 0, y: 22 }, { opacity: 1, y: 0, duration: 0.48, ease: 'power3.out' }, 3.12);
+      tl.fromTo(ripple, { opacity: 0.45, scale: 0.55 }, { opacity: 0, scale: 2.1, duration: 0.64, ease: 'power2.out' }, 3.10);
+      tl.to(pointer, { opacity: 0.35, x: 1010, y: 550, duration: 0.34, ease: 'power2.out' }, 3.20);
+      tl.to({}, { duration: 0.46 }, 3.54);
+    })();
+  </script>
+</template>
+

@@ -304,6 +304,27 @@ chrome.runtime.onMessage.addListener((message: PopupRequest & { type: string }, 
         respond({ handoffs: await listHandoffs() });
         return;
       }
+      case 'share:state': {
+        const { shareState } = await import('./sharing.js');
+        respond(await shareState(message.pageKey, message.url, message.title, message.token));
+        return;
+      }
+      case 'share:link': {
+        const { setShareLink } = await import('./sharing.js');
+        respond(await setShareLink(message.pageKey, message.url, message.title, message.access));
+        return;
+      }
+      case 'share:invite': {
+        const { createInvite } = await import('./sharing.js');
+        respond(await createInvite(message.pageKey, message.url, message.title, message.email, message.role));
+        return;
+      }
+      case 'share:removeMember': {
+        const { removeShareMember } = await import('./sharing.js');
+        await removeShareMember(message.pageKey, message.url, message.title, message.uid);
+        respond({ ok: true });
+        return;
+      }
       case 'openOptions':
         // A `chrome-extension://` URL is not navigable from a page, so the panel asks for this rather
         // than opening it itself.

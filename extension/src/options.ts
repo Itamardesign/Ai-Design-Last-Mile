@@ -1,5 +1,10 @@
 /**
- * The settings page: connect design systems, and decide where each one applies.
+ * The hub: one page at a time behind a column of places, the way the inspector panel is built.
+ *
+ * The overview is a summary of what the other pages hold — counts, the latest notes and handoffs,
+ * whether the account is syncing — so the first screen answers "where am I" before it asks for
+ * anything. Design systems, notes, handoffs and the account each get a page; per-site rules,
+ * auto-start, the CSP switch and the format reference are behind "Advanced".
  *
  * Parsing happens here rather than at use time so a bad file is caught while the designer is
  * looking at it — the page says what it recognised, what it ignored, and shows the palette back,
@@ -40,6 +45,157 @@ const handoffsList = el<HTMLDivElement>('handoffs');
 const handoffsEmpty = el<HTMLParagraphElement>('handoffs-empty');
 const tabPaste = el<HTMLButtonElement>('tab-paste');
 const tabUrl = el<HTMLButtonElement>('tab-url');
+const recentNotes = el<HTMLDivElement>('recent-notes');
+const recentHandoffs = el<HTMLDivElement>('recent-handoffs');
+
+// What the overview and the column's counts are built from — the last render of each list.
+let latestNotes: Array<[string, NotePage]> = [];
+let latestHandoffs: KeptHandoff[] = [];
+let latestAccount: Account | undefined;
+
+/* ---- Pages ------------------------------------------------------------------------------ */
+
+type PageId = 'overview' | 'systems' | 'notes' | 'handoffs' | 'account' | 'advanced';
+const PAGES: Record<PageId, { title: string; subtitle: string }> = {
+  overview: { title: 'Overview', subtitle: 'What the inspector keeps for you, at a glance.' },
+  systems: { title: 'Design systems', subtitle: 'The palettes and type the inspector designs against.' },
+  notes: { title: 'Review notes', subtitle: 'Every page you have left a note on, newest first.' },
+  handoffs: { title: 'Handoffs', subtitle: 'Documents you kept, exactly as they read when you handed them over.' },
+  account: { title: 'Account', subtitle: 'Whether your work follows you to another machine.' },
+  advanced: { title: 'Advanced', subtitle: 'Per-site rules, auto-start, strict sites and the formats the tool reads.' },
+};
+
+const isPage = (value: string): value is PageId => value in PAGES;
+
+/** The page is the hash, so a link into the hub can land on the right place and Back works. */
+function currentPage(): PageId {
+  const hash = window.location.hash.replace(/^#/, '');
+  if (isPage(hash)) return hash;
+  // The old one-scroll hub linked to `#section-…`; those still land somewhere sensible.
+  const legacy = hash.replace(/^section-/, '');
+  return isPage(legacy) ? legacy : 'overview';
+}
+
+function showPage(): void {
+  const page = currentPage();
+  for (const node of document.querySelectorAll<HTMLElement>('.page[data-page]')) {
+    node.hidden = node.dataset.page !== page;
+  }
+  for (const link of document.querySelectorAll<HTMLAnchorElement>('.hub-nav a[data-page]')) {
+    if (link.dataset.page === page) link.setAttribute('aria-current', 'page');
+    else link.removeAttribute('aria-current');
+  }
+  el('page-title').textContent = PAGES[page].title;
+  el('page-subtitle').textContent = PAGES[page].subtitle;
+  window.scrollTo({ top: 0 });
+}
+
+window.addEventListener('hashchange', showPage);
+el('side-account').addEventListener('click', () => {
+  window.location.hash = 'account';
+});
+
+/** The column's counts and the overview's tiles: the same numbers, read from the last renders. */
+function renderSummary(): void {
+  const openNotes = latestNotes.reduce((total, [, page]) => total + openNoteCount(page.notes), 0);
+  el('nav-systems').textContent = settings.systems.length ? String(settings.systems.length) : '';
+  const notesCount = el('nav-notes');
+  notesCount.textContent = openNotes ? String(openNotes) : '';
+  notesCount.classList.toggle('warn', openNotes > 0);
+  el('nav-handoffs').textContent = latestHandoffs.length ? String(latestHandoffs.length) : '';
+
+  el('stat-systems').textContent = String(settings.systems.length);
+  el('stat-notes').textContent = String(openNotes);
+  el('stat-handoffs').textContent = String(latestHandoffs.length);
+
+  const account = latestAccount;
+  const stat = el('stat-account');
+  const statLabel = el('stat-account-label');
+  const sideTitle = el('side-account-title');
+  const sideDetail = el('side-account-detail');
+  const avatar = el('side-avatar');
+  avatar.replaceChildren();
+  if (account?.mode === 'cloud' && account.profile) {
+    const name = account.profile.name || account.profile.email || 'Signed in';
+    stat.textContent = account.error ? 'Not syncing' : 'Syncing';
+    statLabel.textContent = name;
+    sideTitle.textContent = name;
+    sideDetail.textContent = account.error ? 'Sync stopped — sign in again' : 'Syncing to your account';
+    if (account.profile.photo) {
+      const img = document.createElement('img');
+      img.src = account.profile.photo;
+      img.alt = '';
+      avatar.append(img);
+    } else {
+      avatar.textContent = name.slice(0, 1).toUpperCase();
+    }
+  } else if (account?.mode === 'local') {
+    stat.textContent = 'This machine';
+    statLabel.textContent = 'Not signed in';
+    sideTitle.textContent = 'This machine only';
+    sideDetail.textContent = 'Sign in to sync';
+    avatar.textContent = '·';
+  } else {
+    stat.textContent = account ? 'Not signed in' : '…';
+    statLabel.textContent = 'Account';
+    sideTitle.textContent = account ? 'Not signed in' : 'Checking…';
+    sideDetail.textContent = account ? 'Choose where your work lives' : '';
+    avatar.textContent = '?';
+  }
+}
+
+/** A one-line row for the overview: title, where, and one fact — the full card is on its page. */
+function recentRow(title: string, url: string, fact: string, onOpen: () => void): HTMLButtonElement {
+  const row = document.createElement('button');
+  row.className = 'recent-row';
+  row.type = 'button';
+  row.title = url;
+  const label = document.createElement('strong');
+  label.className = 'truncate';
+  label.textContent = title || url;
+  const meta = document.createElement('small');
+  meta.className = 'truncate';
+  meta.textContent = fact;
+  row.append(label, meta);
+  row.addEventListener('click', onOpen);
+  return row;
+}
+
+const hostOf = (url: string): string => {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+};
+
+function renderOverview(): void {
+  recentNotes.replaceChildren();
+  if (!latestNotes.length) {
+    const empty = document.createElement('p');
+    empty.className = 'empty';
+    empty.textContent = 'No notes yet. Click an element on any page and leave one.';
+    recentNotes.append(empty);
+  }
+  for (const [, page] of latestNotes.slice(0, 4)) {
+    const open = openNoteCount(page.notes);
+    const fact = `${open ? `${open} open` : 'all resolved'} · ${hostOf(page.url)}`;
+    recentNotes.append(recentRow(page.title, page.url, fact, () => void chrome.tabs.create({ url: page.url })));
+  }
+
+  recentHandoffs.replaceChildren();
+  if (!latestHandoffs.length) {
+    const empty = document.createElement('p');
+    empty.className = 'empty';
+    empty.textContent = 'Nothing kept yet. Save one from the Handoff tab in the panel.';
+    recentHandoffs.append(empty);
+  }
+  for (const handoff of latestHandoffs.slice(0, 4)) {
+    const fact = `${handoff.changeCount} change${handoff.changeCount === 1 ? '' : 's'} · ${handoff.noteCount} note${handoff.noteCount === 1 ? '' : 's'} · ${new Date(handoff.savedAt).toLocaleDateString()}`;
+    recentHandoffs.append(recentRow(handoff.title, handoff.url, fact, () => void chrome.tabs.create({ url: handoff.url })));
+  }
+  renderSummary();
+}
 
 let mode: 'paste' | 'url' = 'paste';
 // Starts from the defaults and is replaced by what is stored, so nothing has to await before the
@@ -156,6 +312,7 @@ function systemCard(system: StoredSystem): HTMLDivElement {
       if (system.source === 'url') urlInput.value = system.url ?? '';
       else rawInput.value = system.raw;
       validate();
+      window.location.hash = 'systems';
       nameInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }),
     button('Remove', 'ghost danger', () => {
@@ -250,6 +407,7 @@ function render(): void {
   }
 
   relax.checked = settings.relaxCsp;
+  renderSummary();
 }
 
 /**
@@ -296,6 +454,8 @@ async function renderAccount(): Promise<void> {
   accountPanel.append(card);
 
   const account = (await chrome.runtime.sendMessage({ type: 'account' })) as Account | undefined;
+  latestAccount = account;
+  renderSummary();
   if (!account) {
     label.textContent = 'Unavailable';
     detail.textContent = 'The extension’s service worker did not answer. Reload the extension and try again.';
@@ -372,6 +532,7 @@ async function renderHandoffs(): Promise<void> {
   handoffsList.replaceChildren();
   const answer = (await chrome.runtime.sendMessage({ type: 'handoffs' })) as { handoffs?: KeptHandoff[] } | undefined;
   const handoffs = answer?.handoffs ?? [];
+  latestHandoffs = handoffs;
   handoffsEmpty.classList.toggle('hidden', handoffs.length > 0);
 
   for (const handoff of handoffs) {
@@ -414,11 +575,13 @@ async function renderHandoffs(): Promise<void> {
     card.append(head);
     handoffsList.append(card);
   }
+  renderOverview();
 }
 
 async function renderNotes(): Promise<void> {
   const pages = await readAllNotes();
   const entries = Object.entries(pages).sort(([, a], [, b]) => b.savedAt - a.savedAt);
+  latestNotes = entries;
 
   notesList.replaceChildren();
   notesEmpty.classList.toggle('hidden', entries.length > 0);
@@ -495,6 +658,7 @@ async function renderNotes(): Promise<void> {
     card.append(preview);
     notesList.append(card);
   }
+  renderOverview();
 }
 
 /** Live feedback on the pasted JSON — what was recognised, and anything that was guessed. */
@@ -593,6 +757,7 @@ relax.addEventListener('change', async () => {
   await chrome.runtime.sendMessage({ type: 'setRelaxCsp', relaxCsp: relax.checked });
 });
 
+showPage();
 void (async () => {
   settings = await readSettings();
   render();
