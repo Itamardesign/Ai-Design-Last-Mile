@@ -95,10 +95,10 @@ async function paintBadge(tabId: number, active: boolean, openNotes = 0): Promis
     await chrome.action.setTitle({
       tabId,
       title: !active
-        ? 'Meraki Design Inspector'
+        ? 'Pixel Poke'
         : openNotes > 0
-          ? `Meraki Design Inspector — ${openNotes} open note${openNotes === 1 ? '' : 's'} on this page`
-          : 'Meraki Design Inspector — running on this tab',
+          ? `Pixel Poke — ${openNotes} open note${openNotes === 1 ? '' : 's'} on this page`
+          : 'Pixel Poke — running on this tab',
     });
   } catch {
     // The tab went away mid-update; nothing to paint.

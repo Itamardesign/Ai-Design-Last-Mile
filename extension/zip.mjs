@@ -53,7 +53,7 @@ if (!files.length) {
 }
 
 const manifest = JSON.parse(await readFile(join(dist, 'manifest.json'), 'utf8'));
-const outPath = join(here, `meraki-design-inspector-${manifest.version}.zip`);
+const outPath = join(here, `pixel-poke-${manifest.version}.zip`);
 
 const chunks = [];
 const central = [];

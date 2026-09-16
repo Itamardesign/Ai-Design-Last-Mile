@@ -68,7 +68,8 @@
       </div>
     </main>
 
-    <div style="position: fixed; left: 12px; bottom: 12px; display: flex; gap: 8px; z-index: 10">
+    <!-- `data-inspector-passthrough`: the inspector ignores these, so they still act as buttons while it is on. -->
+    <div data-inspector-passthrough style="position: fixed; left: 12px; bottom: 12px; display: flex; gap: 8px; z-index: 10">
       <button id="on" style="font-size: 13px !important">inspector: on</button>
       <button id="off" style="font-size: 13px !important">off</button>
       <button id="tokens" style="font-size: 13px !important">send tokens</button>
