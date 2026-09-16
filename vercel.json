@@ -1,0 +1,8 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "installCommand": "npm install --ignore-scripts",
+  "buildCommand": "npm run build:landing",
+  "outputDirectory": "landing/dist",
+  "framework": null,
+  "cleanUrls": true
+}
