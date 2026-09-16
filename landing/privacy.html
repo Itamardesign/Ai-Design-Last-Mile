@@ -80,10 +80,11 @@
 
       <h2>Permissions the extension asks for</h2>
       <ul>
-        <li><strong>Access to websites (<code>&lt;all_urls&gt;</code>, scripting, tabs)</strong> — to run the inspector on the page you choose and preview your edits in place. It runs only when you toggle it on.</li>
+        <li><strong>Active tab</strong> — when you click the toolbar button, the popup, or press the keyboard shortcut, Chrome gives the extension access to that one tab so the inspector can run there and preview your edits in place. It has no access to any other tab or site.</li>
+        <li><strong>Scripting and tabs</strong> — to load the inspector into the tab you chose, keep the toolbar badge in sync, and take a screenshot of that tab when you save a handoff.</li>
         <li><strong>Storage</strong> — to keep your notes, edits, handoffs and settings on your device.</li>
         <li><strong>Identity</strong> — to let you optionally sign in with the Google account already in Chrome. No password is ever handled by the extension.</li>
-        <li><strong>Declarative net request (with host access)</strong> — to let the inspector load inside pages that would otherwise block embedded tools; it does not read or alter your traffic.</li>
+        <li><strong>Optional site access</strong> — two settings act without a click and ask Chrome for extra access only when you turn them on: <em>Start automatically on this site</em> asks for that one site, and <em>Relax strict sites</em> (which removes the headers that stop some pages from being previewed at device sizes) asks for all sites. Declining leaves the setting off. Neither reads or alters your traffic.</li>
       </ul>
 
       <h2>Google user data</h2>

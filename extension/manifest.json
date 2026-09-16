@@ -13,6 +13,7 @@
   "background": { "service_worker": "background.js" },
   "options_page": "options.html",
   "permissions": [
+    "activeTab",
     "storage",
     "scripting",
     "tabs",
@@ -23,7 +24,7 @@
     "client_id": "328403266454-easgn1aie4nm9faolqp0s4p0iokaiej1.apps.googleusercontent.com",
     "scopes": ["openid", "email", "profile"]
   },
-  "host_permissions": ["<all_urls>"],
+  "optional_host_permissions": ["<all_urls>"],
   "commands": {
     "toggle-inspector": {
       "suggested_key": { "default": "Alt+Shift+D", "mac": "Alt+Shift+D" },
